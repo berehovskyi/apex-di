@@ -1,0 +1,23 @@
+{
+    "packageDirectories": [
+        {
+            "path": "sfdx-source/apex-di",
+            "package": "apex-di",
+            "versionName": "ver 0.0.1",
+            "versionNumber": "0.0.1.NEXT",
+            "default": true,
+            "versionDescription": "",
+            "dependencies": [
+                {
+                    "package": "apex-validate",
+                    "versionNumber": "2.0.0.LATEST"
+                }
+            ]
+        }],
+    "name": "apex-di",
+    "namespace": "",
+    "pushPackageDirectoriesSequentially": true,
+    "packageAliases": {
+        "apex-validate@latest": "04t1t000003f3UVAAY"
+    }
+}
