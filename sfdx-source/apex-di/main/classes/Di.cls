@@ -73,27 +73,15 @@ public virtual inherited sharing class Di {
     private Di() {}
 
     public static ModuleImport import(final String token) {
-        return new ModuleImport(token, true);
+        return new ModuleImport(token);
     }
 
     public static ModuleImport import(final Type token) {
-        return new ModuleImport(token, true);
+        return new ModuleImport(token);
     }
 
     public static ModuleImport import(final Module module) {
-        return new ModuleImport(module, true);
-    }
-
-    public static ModuleImport defer(final String token) {
-        return new ModuleImport(token, false);
-    }
-
-    public static ModuleImport defer(final Type token) {
-        return new ModuleImport(token, false);
-    }
-
-    public static ModuleImport defer(final Module module) {
-        return new ModuleImport(module, false);
+        return new ModuleImport(module);
     }
 
     public static ModuleRef addModule(final Module module) {
@@ -193,7 +181,26 @@ public virtual inherited sharing class Di {
         replaceModule(token?.getName(), newModule);
     }
 
-    public static void loadGlobalModules() {
+    public static void clear() {
+        MODULE_REGISTRY.clear();
+        globalRegistry.clear();
+        GLOBAL_PROVIDERS.clear();
+        hasGlobalLoadBeenAttempted = false;
+    }
+
+    @TestVisible
+    private static void mockGlobalModules(final Iterable<DI_GlobalModule__mdt> mockModules) {
+        mockGlobalModules = mockModules;
+    }
+
+    @SuppressWarnings('PMD.ApexDangerousMethods')
+    private static void warnIfGlobalModuleShadowed(String token) {
+        if (globalRegistry.containsKey(token)) {
+            System.debug(LoggingLevel.WARN, String.format(MODULE_SHADOWING_WARNING, new List<String>{ token }));
+        }
+    }
+
+    private static void loadGlobalModules() {
         for (DI_GlobalModule__mdt moduleDef : getGlobalModuleDefinitions()) {
             if (!moduleDef.IsActive__c) {
                 continue;
@@ -210,7 +217,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    public static Module forName(final String token) {
+    private static Module forName(final String token) {
         Type moduleType = Type.forName(token);
         Validate.isTrue(
             moduleType != null,
@@ -227,23 +234,11 @@ public virtual inherited sharing class Di {
         return module;
     }
 
-    @TestVisible
-    private static void mockGlobalModules(final Iterable<DI_GlobalModule__mdt> mockModules) {
-        mockGlobalModules = mockModules;
-    }
-
     private static Iterable<DI_GlobalModule__mdt> getGlobalModuleDefinitions() {
         if (Test.isRunningTest() && mockGlobalModules != null) {
             return mockGlobalModules;
         }
         return DI_GlobalModule__mdt.getAll().values();
-    }
-
-    @SuppressWarnings('PMD.ApexDangerousMethods')
-    private static void warnIfGlobalModuleShadowed(String token) {
-        if (globalRegistry.containsKey(token)) {
-            System.debug(LoggingLevel.WARN, String.format(MODULE_SHADOWING_WARNING, new List<String>{ token }));
-        }
     }
 
     private static void addGlobalProviders(Module module) {
@@ -380,14 +375,14 @@ public virtual inherited sharing class Di {
             }
         }
 
-        public Boolean equals(final Object obj) {
+        public virtual Boolean equals(final Object obj) {
             if (obj instanceof Module) {
                 return ((Module) obj).getToken().equals(token);
             }
             return false;
         }
 
-        public override Integer hashCode() {
+        public virtual override Integer hashCode() {
             return System.hashCode(token);
         }
     }
@@ -486,7 +481,7 @@ public virtual inherited sharing class Di {
             return false;
         }
 
-        public override Integer hashCode() {
+        public virtual Integer hashCode() {
             return System.hashCode(token);
         }
     }
@@ -619,46 +614,50 @@ public virtual inherited sharing class Di {
 
     public virtual class ModuleImport {
         protected final String token;
-        protected final Module cachedModule;
-        protected final Boolean isEager;
+        protected Boolean isEager = false;
+        protected Module cachedModule;
 
-        protected ModuleImport(String token, Boolean eager) {
+        protected ModuleImport(String token) {
             Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
 
             this.token = token;
-            isEager = eager;
-            if (eager) {
-                cachedModule = Di.getModuleRef(token).getModule();
-            }
         }
 
-        protected ModuleImport(Type type, Boolean eager) {
-            this(type?.getName(), eager);
+        protected ModuleImport(Type type) {
+            this(type?.getName());
         }
 
-        protected ModuleImport(Module module, Boolean eager) {
+        protected ModuleImport(Module module) {
             Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
 
             token = module.getToken();
-            isEager = eager;
-            cachedModule = eager ? Di.getModuleRef(module).getModule() : module;
+            cachedModule = module;
         }
 
-        public Module resolve() {
+        public virtual ModuleImport immediately() {
+            isEager = true;
+            // eagerly registers the module if it isn't already
+            cachedModule = cachedModule != null
+                ? Di.getModuleRef(cachedModule).getModule()
+                : Di.getModuleRef(token).getModule();
+            return this;
+        }
+
+        public virtual Module resolve() {
             if (cachedModule != null) {
                 return isEager ? cachedModule : Di.getModuleRef(cachedModule).getModule();
             }
             return Di.getModuleRef(token).getModule();
         }
 
-        public Boolean equals(Object obj) {
+        public virtual Boolean equals(Object obj) {
             if (obj instanceof ModuleImport) {
                 return ((ModuleImport) obj).token.equals(token);
             }
             return false;
         }
 
-        public Integer hashCode() {
+        public virtual Integer hashCode() {
             return System.hashCode(token);
         }
     }

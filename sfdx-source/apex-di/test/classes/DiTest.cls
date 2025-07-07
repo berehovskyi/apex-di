@@ -1,5 +1,5 @@
 @IsTest(IsParallel = true)
-@SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs, PMD.ApexDoc')
+@SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs, PMD.ApexDoc, PMD.CyclomaticComplexity')
 private class DiTest {
     static {
         new Di();
