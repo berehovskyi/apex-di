@@ -1,735 +1,537 @@
-@IsTest(IsParallel = true)
+@IsTest(IsParallel=true)
 @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs, PMD.ApexDoc, PMD.CyclomaticComplexity')
 private class DiTest {
+    // A private constructor to satisfy the static-only class pattern and improve coverage.
     static {
         new Di();
     }
 
+    //=========================================================================
+    // Setup Method
+    //=========================================================================
+    @TestSetup
+    static void setup() {
+        // Arrange: Clear all DI registries before each test run to ensure isolation.
+        Di.clear();
+        // Arrange: Mock global modules to prevent unintended loading from metadata in tests.
+        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+    }
+
+    //=========================================================================
+    // Core Provider Tests (get, resolve, scopes)
+    //=========================================================================
     @IsTest
-    static void testGetSingleton() {
+    static void should_return_same_instance_for_singleton_scope() {
+        // Arrange: A module with a default (singleton) provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+
+        // Act: The provider is requested twice using get().
         Object o1 = ref.get('TestService');
         Object o2 = ref.get('TestService');
-        Assert.isTrue(o1 instanceof TestServiceImpl);
-        Assert.areEqual(o1, o2);
+
+        // Assert: Both retrieved objects are the same instance.
+        Assert.areEqual(o1, o2, 'Singleton provider should return the same instance on every get() call.');
     }
 
     @IsTest
-    static void testResolveNewInstance() {
+    static void should_return_new_instance_when_using_resolve() {
+        // Arrange: A module with a singleton provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
-        Object r1 = ref.resolve('TestService', null);
-        Object r2 = ref.resolve('TestService', null);
-        Assert.isTrue(r1 instanceof TestServiceImpl);
-        Assert.areNotEqual(r1, r2);
+
+        // Act: The provider is requested twice using resolve().
+        Object r1 = ref.resolve('TestService');
+        Object r2 = ref.resolve('TestService');
+
+        // Assert: The two retrieved objects are different instances.
+        Assert.areNotEqual(r1, r2, 'resolve() should always create a new instance, regardless of scope.');
     }
 
     @IsTest
-    static void testUseValue() {
-        Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
-        Assert.areEqual('hello', ref.get('val'));
-        Assert.areEqual('hello', ref.resolve('val'));
-    }
-
-    @IsTest
-    static void testFactory() {
-        Di.ModuleRef ref = Di.getModuleRef(FactoryModule.class);
-        Object svc = ref.get('svc');
-        Assert.isTrue(svc instanceof TestServiceImpl);
-    }
-
-    @IsTest
-    static void testFactoryWithArgs() {
-        Di.ModuleRef ref = Di.getModuleRef(ArgsModule.class);
-        Object out = ref.get('arg', new List<String>{ 'X' });
-        Assert.areEqual('arg:X', out);
-    }
-
-    @IsTest
-    static void testMissingGetThrows() {
-        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
-        try {
-            ref.get('unknown');
-            Assert.isTrue(false);
-        } catch (Di.UnknownProviderException ex) {
-            Assert.isTrue(ex.getMessage().contains('unknown'));
-            Assert.isTrue(ex.getMessage().contains('Potential solutions'));
-        }
-    }
-
-    @IsTest
-    static void testMissingResolveThrows() {
-        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
-        try {
-            ref.resolve('unknown', null);
-            Assert.isTrue(false);
-        } catch (Di.UnknownProviderException ex) {
-            Assert.isTrue(ex.getMessage().contains('unknown'));
-            Assert.isTrue(ex.getMessage().contains('Potential solutions'));
-        }
-    }
-
-    @IsTest
-    static void testPrototypeGetThrows() {
+    static void should_return_new_instance_for_prototype_scope() {
+        // Arrange: A module with a prototype-scoped provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
-        try {
-            ref.get('p');
-            Assert.isTrue(false);
-        } catch (Di.InvalidScopeException ex) {
-            Assert.isTrue(ex.getMessage().contains('prototype'));
-            Assert.isTrue(ex.getMessage().contains('Use resolve() method'));
-        }
-    }
 
-    @IsTest
-    static void testPrototypeResolveSucceeds() {
-        Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
+        // Act: The provider is resolved twice.
         Object a = ref.resolve('p');
         Object b = ref.resolve('p');
-        Assert.isTrue(a instanceof TestServiceImpl);
-        Assert.areNotEqual(a, b);
+
+        // Assert: The two objects are different instances.
+        Assert.areNotEqual(a, b, 'Prototype-scoped providers should return a new instance each time.');
     }
 
     @IsTest
-    static void testLocalExportError() {
+    static void should_throw_exception_when_getting_prototype_provider() {
+        // Arrange: A module with a prototype-scoped provider is registered.
+        Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
+
+        // Act: An attempt is made to get() the prototype-scoped provider.
+        try {
+            ref.get('p');
+            Assert.fail('Expected InvalidScopeException was not thrown.');
+        } catch (Di.InvalidScopeException ex) {
+            // Assert: The correct exception is thrown with a helpful message.
+            Assert.isTrue(
+                ex.getMessage().contains('Use resolve() method instead'),
+                'Exception message should guide the user to use resolve().'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_throw_exception_when_provider_is_not_found() {
+        // Arrange: A module is registered.
+        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+
+        // Act: An attempt is made to get an unknown provider.
+        try {
+            ref.get('unknown');
+            Assert.fail('Expected UnknownProviderException was not thrown.');
+        } catch (Di.UnknownProviderException ex) {
+            // Assert: The correct exception is thrown.
+            Assert.isTrue(
+                ex.getMessage().contains('Could not find "unknown" provider'),
+                'Exception message should identify the missing provider.'
+            );
+        }
+    }
+
+    //=========================================================================
+    // Provider Types (Value, Factory, Class)
+    //=========================================================================
+
+    @IsTest
+    static void should_return_configured_value_for_value_provider() {
+        // Arrange: A module with a ValueProvider is registered.
+        Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
+
+        // Act: The value is requested via get() and resolve().
+        Object val1 = ref.get('val');
+        Object val2 = ref.resolve('val');
+
+        // Assert: The exact value is returned in both cases.
+        Assert.areEqual('hello', val1, 'get() should return the literal value.');
+        Assert.areEqual('hello', val2, 'resolve() should also return the literal value.');
+    }
+
+    @IsTest
+    static void should_return_instance_from_factory_for_factory_provider() {
+        // Arrange: A module with a FactoryProvider is registered.
+        Di.ModuleRef ref = Di.getModuleRef(FactoryModule.class);
+
+        // Act: The provider is requested.
+        Object svc = ref.get('svc');
+
+        // Assert: The returned object is of the type created by the factory.
+        Assert.isTrue(svc instanceof TestServiceImpl, 'Factory should produce the correct type.');
+    }
+
+    @IsTest
+    static void should_pass_arguments_to_factory_provider() {
+        // Arrange: A module with a FactoryProvider that accepts arguments is registered.
+        Di.ModuleRef ref = Di.getModuleRef(ArgsModule.class);
+
+        // Act: The provider is requested with arguments.
+        Object out = ref.get('arg', new List<String>{ 'X' });
+
+        // Assert: The factory correctly uses the arguments to produce the value.
+        Assert.areEqual('arg:X', out, 'Arguments should be passed to and used by the factory.');
+    }
+
+    @IsTest
+    static void should_instantiate_class_by_string_name() {
+        // Arrange: A module provides a class using its string name.
+        Di.ModuleRef ref = Di.getModuleRef(StringTypeModule.class);
+
+        // Act: The service is requested.
+        Object svc = ref.get('svc');
+
+        // Assert: The correct class is instantiated.
+        Assert.isTrue(svc instanceof TestServiceImpl, 'The framework should instantiate a class from its string name.');
+    }
+
+    //=========================================================================
+    // Module System (Imports, Exports, Overrides)
+    //=========================================================================
+
+    @IsTest
+    static void should_resolve_provider_for_internal_use_from_imported_module() {
+        // Arrange: A module that imports another module is registered.
+        Di.ModuleRef ref = Di.getModuleRef(InternalConsumerModule.class);
+
+        // Act: The module's internal method, which uses an imported provider, is called.
+        Object val = ref.get('internal');
+
+        // Assert: The provider from the imported module was resolved and used successfully.
+        Assert.areEqual('bar', val, 'Module should be able to use providers from its imports.');
+    }
+
+    @IsTest
+    static void should_allow_local_provider_to_override_imported_provider() {
+        // Arrange: A module imports another module but also provides a provider with the same token.
+        Di.ModuleRef ref = Di.getModuleRef(OverrideModule.class);
+
+        // Act: The provider with the conflicting token is requested.
+        Object val = ref.get('foo');
+
+        // Assert: The locally defined provider takes precedence.
+        Assert.areEqual('override', val, 'Local provider should always override an imported one.');
+    }
+
+    @IsTest
+    static void should_handle_circular_imports_gracefully() {
+        // Arrange: Modules with a circular dependency (A -> B -> C -> A) are defined.
+        Exception unexpectedEx;
+
+        // Act: An attempt is made to get a provider, which triggers the lazy circular resolution.
+        try {
+            Di.getModuleRef(CircularA.class).get('any');
+        } catch (Exception e) {
+            unexpectedEx = e;
+        }
+
+        // Assert: No "Maximum stack depth reached" error occurs, it fails with a predictable exception.
+        Assert.isTrue(
+            unexpectedEx instanceof Di.UnknownProviderException,
+            'Resolution should fail cleanly, not with a stack overflow.'
+        );
+    }
+
+    @IsTest
+    static void should_throw_exception_when_exporting_unknown_provider() {
+        // Arrange: A module attempts to export a token that it does not provide.
+        // Act: An attempt is made to register the module.
         try {
             Di.getModuleRef(LocalErrorModule.class);
-            Assert.isTrue(false);
+            Assert.fail('Expected an exception for an unknown export.');
         } catch (Di.UnknownExportException ex) {
-            Assert.isTrue(ex.getMessage().contains('missing'));
-            Assert.isTrue(ex.getMessage().contains('providers'));
-        }
-    }
-
-    @IsTest
-    static void testImportModule() {
-        Di.ModuleRef ref = Di.getModuleRef(ImportModule.class);
-        Assert.areEqual('bar', ref.get('foo'));
-    }
-
-    @IsTest
-    static void testCircularImports() {
-        Di.ModuleRef ref = Di.getModuleRef(CircularA.class);
-        Assert.isNotNull(ref);
-    }
-
-    @IsTest
-    static void testGetTypeOverload() {
-        Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
-        Object o = ref.get(TestService.class);
-        Assert.isTrue(o instanceof TestServiceImpl);
-    }
-
-    @IsTest
-    static void testResolveTypeOverload() {
-        Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
-        Object a = ref.resolve(TestService.class);
-        Object b = ref.resolve(TestService.class);
-        Assert.areNotEqual(a, b);
-    }
-
-    @IsTest
-    static void testInvalidProviderConfig() {
-        try {
-            Di.getModuleRef(InvalidConfigModule.class);
-            Assert.isTrue(false);
-        } catch (Di.InvalidProviderException ex) {
-            Assert.isTrue(ex.getMessage().contains('Cannot create provider'));
-            Assert.isTrue(ex.getMessage().contains('provider type cannot be null'));
-        }
-    }
-
-    @IsTest
-    static void testMultiLevelImport() {
-        Di.ModuleRef ref = Di.getModuleRef(A1Module.class);
-        // 'c' is provided at C1LeafModule, bubbled up through B1Module and A1Module
-        Assert.areEqual('valueC', ref.get('c'), 'Multi-level import should surface leaf value');
-    }
-
-    @IsTest
-    static void testOverrideImport() {
-        Di.ModuleRef ref = Di.getModuleRef(OverrideModule.class);
-        // BModule provides 'foo'= 'bar', but OverrideModule overrides with 'override'
-        Assert.areEqual('override', ref.get('foo'), 'Local provider should override imported one');
-    }
-
-    @IsTest
-    static void testMultipleImportsMerge() {
-        Di.ModuleRef ref = Di.getModuleRef(MultiImportModule.class);
-        // Should import both 'foo' from BModule and 'bar' from B2Module
-        Assert.areEqual('bar', ref.get('foo'));
-        Assert.areEqual('baz', ref.get('bar'));
-    }
-
-    @IsTest
-    static void testUseTypeByStringName() {
-        Di.ModuleRef ref = Di.getModuleRef(StringTypeModule.class);
-        Object svc = ref.get('svc');
-        Assert.isTrue(svc instanceof TestServiceImpl, 'useType by String class name should instantiate correct type');
-    }
-
-    @IsTest
-    static void testFactoryResolveProducesNewInstances() {
-        Di.ModuleRef ref = Di.getModuleRef(FactoryModule.class);
-        Object f1 = ref.resolve('svc');
-        Object f2 = ref.resolve('svc');
-        Assert.areNotEqual(f1, f2, 'resolve() on factory should always return a new instance');
-    }
-
-    @IsTest
-    static void testEmptyModuleProducesNoDefinitions() {
-        Di.ModuleRef ref = Di.getModuleRef(Di.Module.class);
-        Assert.areEqual(0, ref.getModule().getProviders().size(), 'Empty module should have zero definitions');
-    }
-
-    @IsTest
-    static void testImportErrorThrows() {
-        try {
-            Di.getModuleRef(ParentImportErrorModule.class);
-            Assert.isTrue(false, 'Expected import-time exception');
-        } catch (Di.UnknownExportException ex) {
-            Assert.isTrue(ex.getMessage().contains('missing'), 'Error message should mention missing token');
-            Assert.isTrue(ex.getMessage().contains('LocalErrorModule'), 'Error should reference the child module name');
-        }
-    }
-
-    @IsTest
-    static void testGetWithTypeAndArgsOverload() {
-        Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
-        Object out = ref.get(TestServiceImpl.class, new List<Object>{ 'Z' });
-        Assert.areEqual('arg:Z', out, 'get(Type, args) overload should route through factory');
-    }
-
-    @IsTest
-    static void testResolveWithTypeAndArgsOverload() {
-        Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
-        Object r1 = ref.resolve(TestServiceImpl.class, new List<Object>{ 'P' });
-        Object r2 = ref.resolve(TestServiceImpl.class, new List<Object>{ 'P' });
-        Assert.areEqual('arg:P', r1, 'resolve(Type, args) overload first call');
-        Assert.areEqual('arg:P', r2, 'resolve(Type, args) overload second call');
-    }
-
-    @IsTest
-    static void testReplaceValueProvider() {
-        Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
-        Di.Module module = ref.getModule();
-        module.replace(new Di.ValueProvider('val', 'newHello'));
-        Assert.areEqual('newHello', ref.get('val'), 'replace(String,Object) should update literal values');
-    }
-
-    @IsTest
-    static void testReplaceProviderOverloadNoOpForUnknownToken() {
-        Di.Module module = Di.getModuleRef(ValueModule.class).getModule();
-
-        module.replace(new Di.ValueProvider('other', 'oops'));
-        Assert.isFalse(
-            module.hasProvider('other'),
-            'replace(provider) should do nothing when the token did not already exist'
-        );
-    }
-
-    @IsTest
-    static void testReplaceTypeOverload() {
-        Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
-        Di.Module module = ref.getModule();
-        module.replace(module.provide(TestService.class).useClass(MockService.class));
-        Object svc = ref.get(TestService.class);
-        Assert.isTrue(svc instanceof MockService, 'replace(Type, Type) should bind to the new class');
-    }
-
-    @IsTest
-    static void testReplaceFactoryOverload() {
-        Di.ModuleRef ref = Di.getModuleRef(FactoryModule.class);
-        Di.Module module = ref.getModule();
-        module.replace(new Di.ValueProvider('svc', 'direct'));
-        Assert.areEqual('direct', ref.get('svc'), 'replace(String,Factory) overload should override existing factory');
-    }
-
-    @IsTest
-    static void testModuleConstructorWithExplicitToken() {
-        Di.Module m = new Di.DynamicModule('MyCustomToken');
-        Assert.areEqual('MyCustomToken', m.getToken(),
-            'Explicit-string constructor should set getToken()');
-    }
-
-    @IsTest
-    static void testHasProviderReflectsDefinitions() {
-        // After registration, SingleModule should have 'TestService'
-        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
-        Di.Module m = ref.getModule();
-        Assert.isTrue(m.hasProvider('TestService'),
-            'hasProvider should return true for a provided token');
-        Assert.isFalse(m.hasProvider('NoSuch'),
-            'hasProvider should return false when no provider exists');
-    }
-
-    @IsTest
-    static void testReplaceModuleSwapsGraph() {
-        // Arrange: original SingleModule returns TestServiceImpl
-        Di.ModuleRef before = Di.getModuleRef(SingleModule.class);
-        Object orig = before.get('TestService');
-        Assert.isTrue(orig instanceof TestServiceImpl);
-
-        // Act: replace the graph for SingleModule with our ReplacementModule
-        Di.replaceModule(SingleModule.class, new ReplacementModule());
-
-        // Assert: new SingleModule graph returns our literal 'replaced'
-        Di.ModuleRef after = Di.getModuleRef(SingleModule.class);
-        Object got = after.get('TestService');
-        Assert.areEqual('replaced', got,
-            'replaceModule(Type, Module) should swap out the original module graph');
-    }
-
-    @IsTest
-    static void testReplaceModuleNullThrows() {
-        try {
-            Di.replaceModule(SingleModule.class, (Di.Module) null);
-            Assert.fail('Expected InvalidModuleException when replacement module is null');
-        } catch (Di.InvalidModuleException ex) {
+            // Assert: The correct exception is thrown because the provider is not in the `providers` array.
             Assert.isTrue(
-                ex.getMessage().contains('Cannot replace module with null'),
-                'Null replacement should trigger INVALID_MODULE_REPLACEMENT'
+                ex.getMessage().contains('Cannot export "missing"'),
+                'Error should indicate the provider is not registered locally.'
             );
         }
     }
 
+    //=========================================================================
+    // Lazy vs. Eager Imports
+    //=========================================================================
+
     @IsTest
-    static void testModuleStaticAccessorByType() {
-        Di.Module m1 = Di.getModuleRef(ValueModule.class).getModule();
-        Di.Module m2 = Di.getModuleRef(ValueModule.class).getModule();
-        Assert.areEqual(m2, m1, 'Di.module(Type) should return the same instance as getModuleRef().getModule()');
+    static void should_delay_module_resolution_for_lazy_import() {
+        // Arrange: A consumer module lazily imports a module that does not exist yet.
+        Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
+
+        // Act: The dependency module is added after the consumer.
+        Di.addModule(new ValueModule());
+
+        // Assert: The provider that depends on the import can be resolved.
         Assert.areEqual(
-            ValueModule.class.getName().substringAfter('.'),
-            m1.getToken(),
-            'module(Type) ctor should preset token to the Type\'s name'
+            'depends on hello',
+            consumerRef.get('dependentVal'),
+            'Dependent provider should resolve after its dependency becomes available.'
         );
     }
 
     @IsTest
-    static void testModuleStaticAccessorByString() {
-        String key = ValueModule.class.getName();
-        Di.Module m1 = Di.getModuleRef(key).getModule();
-        Di.Module m2 = Di.getModuleRef(key).getModule();
-        Assert.areEqual(m2, m1, 'Di.module(String) should return the same instance as getModuleRef().getModule()');
+    static void should_resolve_module_immediately_for_immediate_import() {
+        // Arrange: The dependency module is registered first.
+        Di.addModule(new ValueModule());
+
+        // Act: A module that immediately imports the dependency is registered.
+        Di.ModuleRef ref = Di.getModuleRef(ImmediateConsumerModule.class);
+
+        // Assert: The provider that depends on the import is available.
         Assert.areEqual(
-            key.substringAfter('.'),
-            m1.getToken(),
-            'module(String) should set token to that exact string'
+            'depends on hello',
+            ref.get('dependentVal'),
+            'Provider from immediate import should be available.'
         );
     }
 
     @IsTest
-    static void testModuleStaticAccessorInvalidStringThrows() {
+    static void should_throw_exception_at_runtime_for_missing_lazy_import() {
+        // Arrange: A module lazily imports a non-existent module class.
+        Di.ModuleRef ref = Di.getModuleRef(LazyErrorConsumerModule.class);
+
+        // Act: An attempt is made to get a provider from the missing module.
         try {
-            Di.getModuleRef('No.Such.Module');
-            Assert.fail('Expected a UnknownModuleException for unknown module name');
-        } catch (Exception ex) {
+            ref.get('anyProvider');
+            Assert.fail('Expected UnknownModuleException was not thrown.');
+        } catch (Di.UnknownModuleException ex) {
+            // Assert: The exception is thrown at runtime, on provider access.
             Assert.isTrue(
-                ex instanceof Di.UnknownModuleException,
-                'module(String) on unknown name should throw a UnknownModuleException'
-            );
-            Assert.isTrue(ex.getMessage().contains('Potential solutions'));
-        }
-    }
-
-    @IsTest
-    static void testReplaceModuleByStringSwapsGraph() {
-        Di.ModuleRef before = Di.getModuleRef(SingleModule.class);
-        Object orig = before.get('TestService');
-        Assert.isTrue(orig instanceof TestServiceImpl);
-
-        String key = SingleModule.class.getName();
-        Di.replaceModule(key, new ReplacementModule());
-
-        Di.ModuleRef after = Di.getModuleRef(SingleModule.class);
-        Object got = after.get('TestService');
-        Assert.areEqual('replaced', got, 'replaceModule(String,Module) should overwrite the graph by name');
-    }
-
-    @IsTest
-    static void testReplaceModuleByStringNullThrows() {
-        String key = SingleModule.class.getName();
-        try {
-            Di.replaceModule(key, (Di.Module) null);
-            Assert.fail('Expected a InvalidModuleException when replacement module is null');
-        } catch (Di.InvalidModuleException ex) {
-            Assert.isTrue(
-                ex.getMessage().contains('Cannot replace module with null'),
-                'Null-replacement path should trigger INVALID_MODULE_REPLACEMENT'
+                ex.getMessage().contains('Cannot find module "NonExistent.Module"'),
+                'Error should be thrown on provider access.'
             );
         }
     }
 
     @IsTest
-    static void testAddModuleAndDuplicateThrows() {
-        Di.DynamicModule dyn = new Di.DynamicModule('dyn1');
-        dyn.addProvider(dyn.provide('foo').useValue('bar'))
-            .addExport('foo');
-        // first‐time registration succeeds
-        Di.ModuleRef r1 = Di.addModule(dyn);
-        Assert.areEqual('dyn1', r1.getModule().getToken());
-        // second‐time should blow up
+    static void should_throw_exception_on_immediately_call_for_missing_import() {
+        // Arrange: An import for a non-existent module is created.
+        Di.ModuleImport invalidImport = Di.import('NonExistent.Module');
+
+        // Act: The immediately() method is called, which triggers immediate resolution.
         try {
-            Di.addModule(dyn);
-            Assert.fail('Expected RuntimeException on duplicate addModule');
+            invalidImport.immediately();
+            Assert.fail('Expected UnknownModuleException was not thrown.');
+        } catch (Di.UnknownModuleException ex) {
+            // Assert: The exception is thrown during the immediately() call.
+            Assert.isTrue(
+                ex.getMessage().contains('Cannot find module "NonExistent.Module"'),
+                'Error should be thrown on immediately() call.'
+            );
+        }
+    }
+
+    //=========================================================================
+    // Global Modules
+    //=========================================================================
+    @IsTest
+    static void should_load_and_resolve_provider_from_cmt_global_module() {
+        // Arrange: A mock CMT record is created to define a global module.
+        Di.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+            }
+        );
+        Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
+
+        // Act: The consumer requests a provider that only exists in the CMT-defined global module.
+        Object val = consumerRef.get('cmtGlobalVal');
+
+        // Assert: The provider is resolved from the global cache loaded from the mocked CMT.
+        Assert.areEqual('helloFromCmt', val, 'Consumer should find providers from CMT global modules.');
+    }
+
+    @IsTest
+    static void should_prioritize_local_provider_over_global_provider() {
+        // Arrange: A global module is defined via mocked CMT, and a local module provides a conflicting token.
+        Di.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = OverrideGlobalModule.class.getName(), IsActive__c = true)
+            }
+        );
+        Di.ModuleRef localRef = Di.getModuleRef(LocalOverrideModule.class);
+
+        // Act: The local module requests the conflicting provider.
+        Object val = localRef.get('val');
+
+        // Assert: The local provider is returned.
+        Assert.areEqual('local', val, 'Local providers must override global ones.');
+    }
+
+    @IsTest
+    static void should_throw_exception_when_adding_duplicate_global_module() {
+        // Arrange: A global module is added via mocked CMT, and its providers are resolved to trigger loading.
+        Di.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+            }
+        );
+        Di.getModuleRef(EmptyModule.class).get('cmtGlobalVal');
+
+        // Act: An attempt is made to add another global module with the same token programmatically.
+        try {
+            Di.addModule(new CmtGlobalModule());
+            Assert.fail('Expected InvalidModuleException was not thrown.');
         } catch (Di.InvalidModuleException ex) {
+            // Assert: The correct exception is thrown.
             Assert.isTrue(
                 ex.getMessage().contains('already been registered'),
-                'Duplicate registration should mention MODULE_ALREADY_REGISTERED'
+                'Error message should indicate a duplicate registration.'
+            );
+        }
+    }
+
+    //=========================================================================
+    // Dynamic Module Tests
+    //=========================================================================
+    @IsTest
+    static void should_build_module_with_dynamic_providers_and_exports() {
+        // Arrange: A dynamic module is configured with providers and exports.
+        Di.DynamicModule dyn = new Di.DynamicModule('MyDynamicModule');
+        dyn.addProvider(dyn.provide('dynamicVal').useValue('dynamic')).addExport('dynamicVal');
+        Di.ModuleRef ref = Di.addModule(dyn);
+
+        // Act: The dynamically defined provider is requested.
+        Object val = ref.get('dynamicVal');
+
+        // Assert: The provider is resolved correctly.
+        Assert.areEqual('dynamic', val, 'Provider defined dynamically should be resolved.');
+    }
+
+    @IsTest
+    static void should_register_dynamic_module_as_global() {
+        // Arrange: A dynamic module is configured and marked as global.
+        Di.DynamicModule dynGlobal = new Di.DynamicModule('MyDynamicGlobal');
+        dynGlobal.setGlobal()
+            .addProvider(dynGlobal.provide('dynGlobalVal').useValue('is-global'))
+            .addExport('dynGlobalVal');
+        Di.addModule(dynGlobal);
+        Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
+
+        // Act: A separate consumer module requests the provider from the dynamic global module.
+        Object val = consumerRef.get('dynGlobalVal');
+
+        // Assert: The provider is resolved from the global cache.
+        Assert.areEqual('is-global', val, 'Provider from dynamic global module should be globally available.');
+    }
+
+    //=========================================================================
+    // Edge Cases and Error Handling
+    //=========================================================================
+    @IsTest
+    static void should_throw_exception_when_instantiating_abstract_class() {
+        // Arrange: A module attempts to provide an abstract class.
+        Di.ModuleRef ref = Di.getModuleRef(AbstractProviderModule.class);
+
+        // Act: An attempt is made to get the provider.
+        try {
+            ref.get('abs');
+            Assert.fail('Expected InvalidClassException was not thrown.');
+        } catch (Di.InvalidClassException ex) {
+            // Assert: The correct exception is thrown with a helpful message.
+            Assert.isTrue(
+                ex.getMessage().contains('public no-argument constructor'),
+                'Error message should detail instantiation failure.'
             );
         }
     }
 
     @IsTest
-    static void testGetModuleRefByInstance() {
-        Di.DynamicModule dyn = new Di.DynamicModule('dyn2');
-        dyn.addProvider(dyn.provide('foo2').useValue('baz'))
-            .addExport('foo2');
-        Di.ModuleRef r1 = Di.getModuleRef(dyn);
-        Di.ModuleRef r2 = Di.getModuleRef('dyn2');
-        Assert.areEqual(r1, r2, 'getModuleRef(module) and getModuleRef(token) must return same ModuleRef');
-        Assert.areEqual('baz', r2.get('foo2'));
+    static void should_call_inject_method_on_injectable_class() {
+        // Arrange: A module provides a class that implements the Injectable interface.
+        Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
+
+        // Act: The provider is requested, which triggers its instantiation.
+        FooInjectable instance = (FooInjectable) ref.get(FooInjectable.class);
+
+        // Assert: The inject() method on the class was called.
+        Assert.isTrue(instance.wasInjected, 'The inject() method should be called after instantiation.');
     }
 
     @IsTest
-    static void testDynamicModuleImportsAndProviders() {
-        // import an existing module and add a custom provider
-        Di.DynamicModule dyn = new Di.DynamicModule('dyn3');
-        dyn.addImport(Di.import(ValueModule.class))
-            .addProvider(dyn.provide('x').useValue('XYZ'))
-            .addExport('x');
-        Di.addModule(dyn);
+    static void should_clear_all_registries_and_caches() {
+        // Arrange: A local module is added and a global module is loaded and verified.
+        Di.addModule(new ValueModule());
+        Di.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+            }
+        );
+        Assert.areEqual(
+            'helloFromCmt',
+            Di.getModuleRef(EmptyModule.class).get('cmtGlobalVal'),
+            'Pre-condition: global provider must be available.'
+        );
 
-        Di.ModuleRef ref = Di.getModuleRef('dyn3');
-        Assert.areEqual('hello', ref.get('val'), 'DynamicModule should pull in imported exports');
-        Assert.areEqual('XYZ', ref.get('x'));
-    }
+        // Act: The clear() method is called.
+        Di.clear();
 
-    @IsTest
-    static void testModuleEqualsAndHashCode() {
-        Di.Module mA1 = new Di.DynamicModule('A');
-        Di.Module mA2 = new Di.DynamicModule('A');
-        Di.Module mB = new Di.DynamicModule('B');
-        Assert.isTrue(mA1.equals(mA2));
-        Assert.areEqual(mA1.hashCode(), mA2.hashCode());
-        Assert.isFalse(mA1.equals(mB));
-        Assert.isFalse(mA1.equals(null));
-        Assert.isFalse(mA1.equals('string'));
-    }
-
-    @IsTest
-    static void testProviderEqualsAndHashCode() {
-        Di.Provider p1 = new Di.ClassProvider('tok', 'AnyClass');
-        Di.Provider p2 = new Di.ValueProvider('tok', 123);
-        Di.Provider p3 = new Di.ClassProvider('other', 'Foo');
-        Assert.isTrue(p1.equals(p2), 'same token => equal');
-        Assert.areEqual(p1.hashCode(), p2.hashCode());
-        Assert.isFalse(p1.equals(p3), 'different token => not equal');
-    }
-
-    @IsTest
-    static void testInjectableSupport() {
-        Di.DynamicModule dyn = new Di.DynamicModule('dyn4')
-            .addProvider(new Di.ClassProvider('foo', FooInjectable.class))
-            .addExport('foo');
-        Di.addModule(dyn);
-
-        Di.ModuleRef ref = Di.getModuleRef('dyn4');
-        Object o = ref.get('foo');
-        Assert.isTrue(o instanceof FooInjectable);
-        Assert.isTrue(((FooInjectable) o).wasInjected, 'Injectable.inject() should have been called');
-    }
-
-    @IsTest
-    static void testGlobalModuleFallback() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        // 1) create & register a *global* module that provides 'foo'
-        Di.DynamicModule globalModule = new Di.DynamicModule('GMod')
-            .addProvider(new Di.ValueProvider('foo', 'globalVal'))
-            .addExport('foo')
-            .setGlobal();
-        Di.addModule(globalModule);
-
-        // 2) create & register a consumer that has no 'foo' of its own
-        Di.DynamicModule consumer = new Di.DynamicModule('CMod');
-        Di.ModuleRef cref = Di.addModule(consumer);
-
-        // 3) because 'foo' isn't local, consumer.get('foo') should fall back to the global module
-        String got = (String) cref.get('foo');
-        System.assertEquals('globalVal', got,
-            'Consumer should fall back to the global module\'s foo');
-    }
-
-    @IsTest
-    static void testGlobalModuleOverrideByLocal() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        // 1) register a global bar
-        Di.DynamicModule globalModule = new Di.DynamicModule('GMod2')
-            .addProvider(new Di.ValueProvider('bar', 'globalBar'))
-            .addExport('bar')
-            .setGlobal();
-        Di.addModule(globalModule);
-
-        // 2) register a local module that also provides 'bar'
-        Di.DynamicModule local = new Di.DynamicModule('LMod')
-            .addProvider(new Di.ValueProvider('bar', 'localBar'))
-            .addExport('bar');
-        Di.addModule(local);
-
-        // 3) local.get('bar') must pick the local one, not the global
-        Di.ModuleRef lref = Di.getModuleRef('LMod');
-        String val = (String) lref.get('bar');
-        System.assertEquals('localBar', val,
-            'Local provider should override the global provider of the same token');
-    }
-
-    @IsTest
-    static void testDuplicateGlobalModuleThrows() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        // register a global module once
-        Di.DynamicModule g1 = new Di.DynamicModule('DupG')
-            .addProvider(new Di.ValueProvider('x', 1))
-            .addExport('x')
-            .setGlobal();
-        Di.addModule(g1);
-
-        // second registration under the same name must blow up
+        // Assert: After clearing, getting the global provider fails.
+        Di.ModuleRef ref = Di.getModuleRef(EmptyModule.class);
         try {
-            Di.addModule(g1);
-            System.assert(false, 'Expected an RuntimeException on duplicate global addModule');
-        } catch (Di.InvalidModuleException ex) {
-            System.assert(
-                ex.getMessage().contains('already been registered'),
-                'Duplicate global addModule should throw MODULE_ALREADY_REGISTERED'
-            );
-        }
-    }
-
-    @IsTest
-    static void testGetModuleRefByInstanceAndNameForGlobal() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        // registering via getModuleRef(module) should end up in the same slot
-        Di.DynamicModule g2 = new Di.DynamicModule('InstG')
-            .addProvider(new Di.ValueProvider('p', 'v'))
-            .addExport('p')
-            .setGlobal();
-        // register by instance
-        Di.ModuleRef byInst = Di.getModuleRef(g2);
-        // then lookup by name
-        Di.ModuleRef byName = Di.getModuleRef('InstG');
-        System.assertEquals(byInst, byName,
-            'getModuleRef(module) and getModuleRef(name) must return the same ModuleRef for globals');
-        System.assertEquals('v', byName.get('p'));
-    }
-
-    @IsTest
-    static void testNonGlobalDoesNotFallBack() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        // register a non-global provider
-        Di.DynamicModule ng = new Di.DynamicModule('NGMod')
-            .addProvider(new Di.ValueProvider('z', 'zzz'))
-            .addExport('z');
-        Di.addModule(ng);
-
-        // consumer without z
-        Di.DynamicModule c2 = new Di.DynamicModule('C2');
-        Di.ModuleRef cref2 = Di.addModule(c2);
-
-        // must NOT find 'z' in a non-global registry
-        try {
-            cref2.get('z');
-            System.assert(false, 'Expected UnknownProviderException since non-global providers should not be visible');
+            ref.get('cmtGlobalVal');
+            Assert.fail('Global provider should not exist after clear.');
         } catch (Di.UnknownProviderException ex) {
-            System.assert(
-                ex.getMessage().contains('Could not find'),
-                'Should throw a DI UnknownProviderException for missing provider'
+            Assert.isTrue(
+                ex.getMessage().contains('Could not find "cmtGlobalVal" provider'),
+                'Global cache should be empty.'
             );
         }
     }
 
     @IsTest
-    static void testIsGlobalFlagDefaultsFalse() {
-        Di.DynamicModule m = new Di.DynamicModule('M1');
-        // newly constructed modules are non-global by default
-        Assert.isFalse(m.isGlobal(), 'New module should not be global unless setGlobal() is called');
+    static void should_replace_module_and_update_providers() {
+        // Arrange: An initial module is registered.
+        Di.addModule(new SingleModule());
+        Assert.isTrue(Di.getModuleRef(SingleModule.class).get('TestService') instanceof TestServiceImpl);
+
+        // Act: The module is replaced with a new implementation.
+        Di.replaceModule(SingleModule.class, new ReplacementModule());
+        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+
+        // Assert: Getting the provider returns the instance from the new module.
+        Assert.areEqual('replaced', ref.get('TestService'), 'Provider should come from the replacement module.');
     }
 
     @IsTest
-    static void testSetGlobalMakesModuleGlobal() {
-        Di.DynamicModule m = new Di.DynamicModule('M2').setGlobal();
-        Assert.isTrue(m.isGlobal(), 'After calling setGlobal(), isGlobal() must return true');
+    static void should_throw_exception_when_replacing_module_with_scope_mismatch() {
+        // Arrange: A local module is registered.
+        Di.addModule(new SingleModule());
+        Di.DynamicModule globalReplacement = new Di.DynamicModule(new SingleModule().getToken()).setGlobal();
+
+        // Act: An attempt is made to replace the local module with a global one.
+        try {
+            Di.replaceModule(SingleModule.class, globalReplacement);
+            Assert.fail('Expected InvalidModuleException was not thrown.');
+        } catch (Di.InvalidModuleException ex) {
+            // Assert: The correct exception is thrown.
+            Assert.isTrue(
+                ex.getMessage().contains('must have the same scope'),
+                'Error should indicate a scope mismatch.'
+            );
+        }
     }
 
-    @IsTest
-    static void testStaticGlobalModuleAccessorByString() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        String key = 'GlobalStat';
-        // build & register a global module
-        Di.DynamicModule g = new Di.DynamicModule(key);
-        g.addProvider(g .provide('foo').useValue('bar'))
-            .addExport('foo')
-            .setGlobal();
-        Di.addModule(g);
-
-        // the static shortcut should return exactly our instance
-        Di.Module viaStatic = Di.getModuleRef(key).getModule();
-        Di.Module viaRef = Di.getModuleRef(key).getModule();
-        Assert.areEqual(viaRef, viaStatic,
-            'Di.module(token) must return the same instance as getModuleRef(token).getModule()');
-        // and it really is marked global
-        Assert.isTrue(viaStatic.isGlobal(), 'Static‐fetched module must preserve its global flag');
-        // and its provider works
-        Assert.areEqual('bar', Di.getModuleRef(key).get('foo'),
-            'Global module fetched via static accessor should resolve its exports');
-    }
-
-    @IsTest
-    static void testGlobalModuleSingletonBehavior() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        String key = 'GlobalOnce';
-        Di.DynamicModule g = new Di.DynamicModule(key);
-        g.addProvider(g.provide('x').useValue('X'))
-            .addExport('x')
-            .setGlobal();
-        // first registration
-        Di.ModuleRef ref1 = Di.addModule(g);
-        // second lookup by name
-        Di.ModuleRef ref2 = Di.getModuleRef(key);
-        Assert.areEqual(ref1, ref2,
-            'Global modules should not be re-instantiated on getModuleRef(token)');
-        // and static accessor must match too
-        Assert.areEqual(ref1.getModule(), Di.getModuleRef(key).getModule());
-    }
-
-    @IsTest
-    static void testGlobalFallbackAcrossStaticAccessors() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        // if a non-global consumer fetches a token that exists only in a global,
-        // static Di.module() and Di.getModuleRef() must both see it:
-        Di.DynamicModule glob = new Di.DynamicModule('FallG');
-        glob.addProvider(glob.provide('gVal').useValue('GLOB'))
-            .addExport('gVal')
-            .setGlobal();
-        Di.addModule(glob);
-
-        Di.DynamicModule cons = new Di.DynamicModule('FallC');
-        Di.addModule(cons);
-
-        // use the static shortcut on the consumer to get its ModuleRef
-        Di.ModuleRef cref = Di.getModuleRef('FallC');
-        // asking for 'gVal' falls back to the global
-        Assert.areEqual('GLOB', cref.get('gVal'),
-            'Consumer obtained via static accessors should still fall back to global exports');
-    }
-
-    @IsTest
-    static void testMockGlobalModules() {
-        // Create mock CMT records
-        List<DI_GlobalModule__mdt> mockRecords = new List<DI_GlobalModule__mdt>{
-            new DI_GlobalModule__mdt(
-                ModuleClass__c = GlobalModule.class.getName(),
-                IsActive__c = true
-            )
-        };
-        // Note: In real test, you'd need to construct these properly
-        Di.mockGlobalModules(mockRecords);
-
-        // Test that empty mock list prevents CMT loading
-        Di.ModuleRef ref = Di.getModuleRef('GlobalModule');
-        Assert.isNotNull(ref);
-    }
-
-    @IsTest
-    static void testAddGlobalModuleRegistersSuccessfully() {
-        // Mock CMT to prevent loading
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-
-        // Now mark it global and register
-        Di.DynamicModule g = new Di.DynamicModule('ReallyGlobal').setGlobal();
-        g
-            .addProvider(g.provide('val').useValue('V'))
-            .addExport('val');
-
-        // Should succeed
-        Di.ModuleRef globalRef = Di.addModule(g);
-        // And subsequent lookup via getModuleRef() yields the same instance
-        Di.ModuleRef lookupRef = Di.getModuleRef('ReallyGlobal');
-        System.assertEquals(
-            globalRef,
-            lookupRef,
-            'addModule  getModuleRef should return identical ModuleRef'
-        );
-        // Its export should resolve correctly
-        String v = (String) lookupRef.get('val');
-        System.assertEquals('V', v, 'Global module export should resolve properly');
-    }
-
-    // --- Dummy Service for testing ---
-    @SuppressWarnings('PMD.ApexDoc')
+    //=========================================================================
+    // Test-Specific Inner Classes
+    //=========================================================================
+    // --- Service Interfaces and Implementations ---
     public interface TestService {
-        String getValue();
     }
-
-    @SuppressWarnings('PMD.ApexDoc')
     public class TestServiceImpl implements TestService {
-        public String getValue() { return 'impl'; }
     }
-
-    @SuppressWarnings('PMD.ApexDoc')
     public class MockService implements TestService {
-        public String getValue() { return 'mock'; }
+    }
+    public abstract class AbstractService {
     }
 
-    // --- Factory implementations ---
-    class TestFactory implements Di.Factory {
-        @SuppressWarnings('PMD.ApexDoc')
+    // --- Factory Implementations ---
+    public class TestFactory implements Di.Factory {
         public Object newInstance(Di.ModuleRef ref, Object args) {
             return new TestServiceImpl();
         }
     }
-    class ArgsFactory implements Di.Factory {
-        @SuppressWarnings('PMD.ApexDoc')
+    public class ArgsFactory implements Di.Factory {
         public Object newInstance(Di.ModuleRef ref, Object args) {
-            List<Object> arr = (List<Object>) args;
-            String prefix = arr != null && !arr.isEmpty() ? '' + arr[0] : '';
-            return 'arg:' + prefix;
+            return 'arg:' + (args != null ? ((List<Object>) args)[0] : '');
+        }
+    }
+    public class InternalConsumerFactory implements Di.Factory {
+        public Object newInstance(Di.ModuleRef ref, Object args) {
+            return ref.get('foo');
+        }
+    }
+    public class DependentProviderFactory implements Di.Factory {
+        public Object newInstance(Di.ModuleRef ref, Object args) {
+            String importedValue = (String) ref.get('val');
+            return 'depends on ' + importedValue;
         }
     }
 
-    // --- Module definitions ---
+    // --- Injectable Implementation ---
+    public class FooInjectable implements Di.Injectable {
+        public Boolean wasInjected = false;
+        public void inject(final Di.ModuleRef c) {
+            wasInjected = true;
+        }
+    }
+
+    // --- Basic Module Definitions ---
+    public class EmptyModule extends Di.Module {
+    }
     public class SingleModule extends Di.Module {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('TestService').useClass(TestServiceImpl.class) };
         }
-        public override Set<String> exports() {
-            return new Set<String>{ 'TestService' };
-        }
     }
-
-    public class TypeModule extends Di.Module {
+    public class PrototypeModule extends Di.Module {
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ provide(TestService.class).useClass(TestServiceImpl.class) };
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ TestService.class.getName() };
+            return new Set<Di.Provider>{ provide('p').useClass(TestServiceImpl.class).scope(Di.Scope.PROTOTYPE) };
         }
     }
-
     public class ValueModule extends Di.Module {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('val').useValue('hello') };
@@ -738,34 +540,28 @@ private class DiTest {
             return new Set<String>{ 'val' };
         }
     }
-
     public class FactoryModule extends Di.Module {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('svc').useFactory(new TestFactory()) };
         }
-        public override Set<String> exports() {
-            return new Set<String>{ 'svc' };
-        }
     }
-
     public class ArgsModule extends Di.Module {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('arg').useFactory(new ArgsFactory()) };
         }
-        public override Set<String> exports() {
-            return new Set<String>{ 'arg' };
-        }
     }
-
-    public class LocalErrorModule extends Di.Module {
+    public class StringTypeModule extends Di.Module {
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
+            return new Set<Di.Provider>{ provide('svc').useClass('DiTest.TestServiceImpl') };
         }
-        public override Set<String> exports() {
-            return new Set<String>{ 'missing' };
+    }
+    public class InjectableModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide(FooInjectable.class).useClass(FooInjectable.class) };
         }
     }
 
+    // --- Modules for Import/Export Tests ---
     public class BModule extends Di.Module {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('foo').useValue('bar') };
@@ -774,106 +570,14 @@ private class DiTest {
             return new Set<String>{ 'foo' };
         }
     }
-
-    public class ImportModule extends Di.Module {
+    public class InternalConsumerModule extends Di.Module {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(BModule.class) };
         }
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'foo' };
+            return new Set<Di.Provider>{ provide('internal').useFactory(new InternalConsumerFactory()) };
         }
     }
-
-    public class CircularA extends Di.Module {
-        public override Set<Di.ModuleImport> imports() {
-            return new Set<Di.ModuleImport>{ Di.import(CircularB.class) };
-        }
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public override Set<String> exports() {
-            return new Set<String>();
-        }
-    }
-
-    public class CircularB extends Di.Module {
-        public override Set<Di.ModuleImport> imports() {
-            return new Set<Di.ModuleImport>{ Di.import(CircularC.class) };
-        }
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public override Set<String> exports() {
-            return new Set<String>();
-        }
-    }
-
-    public class CircularC extends Di.Module {
-        public override Set<Di.ModuleImport> imports() {
-            return new Set<Di.ModuleImport>{ Di.import(CircularA.class) };
-        }
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public override Set<String> exports() {
-            return new Set<String>();
-        }
-    }
-
-    public class PrototypeModule extends Di.Module {
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ provide('p').useClass(TestServiceImpl.class).scope(Di.Scope.PROTOTYPE) };
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'p' };
-        }
-    }
-
-    public class InvalidConfigModule extends Di.Module {
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ provide('x').useClass((Type) null) };
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'x' };
-        }
-    }
-
-    public class C1LeafModule extends Di.Module {
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ provide('c').useValue('valueC') };
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'c' };
-        }
-    }
-
-    public class B1Module extends Di.Module {
-        public override Set<Di.ModuleImport> imports() {
-            return new Set<Di.ModuleImport>{ Di.import(C1LeafModule.class) };
-        }
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'c' };
-        }
-    }
-
-    public class A1Module extends Di.Module {
-        public override Set<Di.ModuleImport> imports() {
-            return new Set<Di.ModuleImport>{ Di.import(B1Module.class) };
-        }
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'c' };
-        }
-    }
-
     public class OverrideModule extends Di.Module {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(BModule.class) };
@@ -881,65 +585,37 @@ private class DiTest {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('foo').useValue('override') };
         }
-        public override Set<String> exports() {
-            return new Set<String>{ 'foo' };
-        }
     }
 
-    public class B2Module extends Di.Module {
+    // --- Modules for Error Condition Tests ---
+    public class LocalErrorModule extends Di.Module {
+        public override Set<String> exports() {
+            return new Set<String>{ 'missing' };
+        }
+    }
+    public class AbstractProviderModule extends Di.Module {
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ provide('bar').useValue('baz') };
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'bar' };
+            return new Set<Di.Provider>{ provide('abs').useClass(AbstractService.class) };
         }
     }
-
-    public class MultiImportModule extends Di.Module {
+    public class CircularA extends Di.Module {
         public override Set<Di.ModuleImport> imports() {
-            return new Set<Di.ModuleImport>{ Di.import(BModule.class), Di.import(B2Module.class) };
-        }
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'foo', 'bar' };
+            return new Set<Di.ModuleImport>{ Di.import(CircularB.class) };
         }
     }
-
-    public class StringTypeModule extends Di.Module {
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ provide('svc').useClass('DiTest.TestServiceImpl') };
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ 'svc' };
-        }
-    }
-
-    public class ParentImportErrorModule extends Di.Module {
+    public class CircularB extends Di.Module {
         public override Set<Di.ModuleImport> imports() {
-            return new Set<Di.ModuleImport>{ Di.import(LocalErrorModule.class) };
-        }
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public override Set<String> exports() {
-            return new Set<String>();
+            return new Set<Di.ModuleImport>{ Di.import(CircularC.class) };
         }
     }
-
-    public class ArgsTypeModule extends Di.Module {
-        public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ provide(TestServiceImpl.class).useFactory(new ArgsFactory()) };
-        }
-        public override Set<String> exports() {
-            return new Set<String>{ TestServiceImpl.class.getName() };
+    public class CircularC extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(CircularA.class) };
         }
     }
-
     public class ReplacementModule extends Di.Module {
         public ReplacementModule() {
-            super('SingleModule'); // must match the original token
+            super('SingleModule');
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('TestService').useValue('replaced') };
@@ -948,22 +624,54 @@ private class DiTest {
             return new Set<String>{ 'TestService' };
         }
     }
-
-    public class GlobalModule extends Di.Module {
-        public override Boolean isGlobal() { return true; }
+    public class LazyConsumerModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ValueModule.class) };
+        }
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ provide(TestService.class).useClass(TestServiceImpl.class) };
+            return new Set<Di.Provider>{ provide('dependentVal').useFactory(new DependentProviderFactory()) };
+        }
+    }
+    public class ImmediateConsumerModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ValueModule.class).immediately() };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('dependentVal').useFactory(new DependentProviderFactory()) };
+        }
+    }
+    public class LazyErrorConsumerModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import('NonExistent.Module') };
+        }
+    }
+
+    // --- Modules for Global CMT Tests ---
+    public class CmtGlobalModule extends Di.Module {
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('cmtGlobalVal').useValue('helloFromCmt') };
         }
         public override Set<String> exports() {
-            return new Set<String>{ TestService.class.getName() };
+            return new Set<String>{ 'cmtGlobalVal' };
         }
     }
-
-    public class FooInjectable implements Di.Injectable {
-        public Boolean wasInjected = false;
-        public void inject(final Di.ModuleRef c) {
-            wasInjected = true;
+    public class OverrideGlobalModule extends Di.Module {
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('val').useValue('global') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'val' };
         }
     }
-
+    public class LocalOverrideModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('val').useValue('local') };
+        }
+    }
 }

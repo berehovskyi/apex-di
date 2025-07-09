@@ -1,48 +1,54 @@
 public virtual inherited sharing class Di {
-    private static final String INVALID_CLASS_MESSAGE = 'Cannot instantiate class "{0}". Please ensure this class ' +
-        'exists and is accessible.';
-    private static final String INVALID_PROVIDER_TYPE_MESSAGE = 'Cannot create provider for "{0}". ' +
-        'The provider type cannot be null.';
-    private static final String INSTANTIATION_FAILED_MESSAGE = 'Cannot instantiate class "{0}". ' +
+    private static final String INVALID_CLASS_MESSAGE = 'Cannot instantiate class "{0}". Please ensure this class exists and is accessible.';
+    private static final String INVALID_PROVIDER_TYPE_MESSAGE = 'Cannot create provider for "{0}". The provider type cannot be null.';
+    private static final String INSTANTIATION_FAILED_MESSAGE =
+        'Cannot instantiate class "{0}". ' +
         'Please ensure this class exists, is accessible, and has a public no-argument constructor.';
-    private static final String UNKNOWN_PROVIDER_MESSAGE = 'Could not find "{0}" provider in the "{1}" module' +
+    private static final String UNKNOWN_PROVIDER_MESSAGE =
+        'Could not find "{0}" provider in the "{1}" module' +
         ' context.' +
         '\nPotential solutions:' +
         '\n- Ensure the provider is listed in the "providers" array of the module' +
         '\n- Ensure the provider is exported from its module and imported into "{1}"' +
         '\n- Check for typos in the provider token';
-    private static final String UNKNOWN_MODULE_MESSAGE = 'Cannot find module "{0}". A module with this name ' +
+    private static final String UNKNOWN_MODULE_MESSAGE =
+        'Cannot find module "{0}". A module with this name ' +
         'has not been registered.' +
         '\nPotential solutions:' +
-        '\n- Ensure the module class exists' +
+        '\n- Ensure the module class exists and is accessible' +
         '\n- Verify the module is imported where needed' +
         '\n- Check for typos in the module name';
-    private static final String NULL_MODULE_MESSAGE = 'Cannot process a null module. ' +
-        'Please provide a valid module instance.';
+    private static final String NULL_MODULE_MESSAGE = 'Cannot process a null module. Please provide a valid module instance.';
     private static final String INVALID_MODULE_MESSAGE = 'Invalid module "{0}". The class must extend Di.Module.';
     private static final String INVALID_MODULE_TOKEN_MESSAGE = 'Invalid module token. The token cannot be null.';
-    private static final String MODULE_ALREADY_REGISTERED_MESSAGE = 'A module with name "{0}" has already been ' +
+    private static final String MODULE_ALREADY_REGISTERED_MESSAGE =
+        'A module with name "{0}" has already been ' +
         'registered. Use replaceModule() to override an existing module.';
-    private static final String INVALID_GLOBAL_MODULE_MESSAGE = 'Cannot register "{0}" as a global module. ' +
+    private static final String INVALID_GLOBAL_MODULE_MESSAGE =
+        'Cannot register "{0}" as a global module. ' +
         'The module must return true from isGlobal() method to be registered globally.' +
         '\nDid you mean to use addModule() instead?';
-    private static final String MODULE_SCOPE_MISMATCH_MESSAGE = 'Cannot replace {0} module "{1}" with {2} module. ' +
+    private static final String MODULE_SCOPE_MISMATCH_MESSAGE =
+        'Cannot replace {0} module "{1}" with {2} module. ' +
         'The replacement module must have the same scope (global/local) as the original.';
-    private static final String UNKNOWN_EXPORT_MESSAGE = 'Cannot export "{0}" from the "{1}" module. This provider ' +
+    private static final String UNKNOWN_EXPORT_MESSAGE =
+        'Cannot export "{0}" from the "{1}" module. This provider ' +
         'has not been registered in the module.' +
         '\nPlease ensure "{0}" is listed in the "providers" array before exporting it.';
     private static final String NULL_PROVIDER_MESSAGE = 'The provider cannot be null.';
     private static final String NULL_PROVIDER_FACTORY_MESSAGE = 'The provider factory cannot be null.';
     private static final String NULL_MODULE_IMPORT_MESSAGE = 'The module import cannot be null.';
     private static final String INVALID_PROVIDER_TOKEN_MESSAGE = 'Invalid provider token. The token cannot be null.';
-    private static final String INVALID_MODULE_REPLACEMENT_MESSAGE = 'Cannot replace module with null. ' +
-        'Please provide a valid module instance.';
-    private static final String PROTOTYPE_SCOPE_ERROR_MESSAGE = 'Cannot retrieve prototype-scoped provider "{0}" ' +
+    private static final String INVALID_MODULE_REPLACEMENT_MESSAGE = 'Cannot replace module with null. Please provide a valid module instance.';
+    private static final String PROTOTYPE_SCOPE_ERROR_MESSAGE =
+        'Cannot retrieve prototype-scoped provider "{0}" ' +
         'using get(). Prototype-scoped providers create a new instance on each request.' +
         '\nUse resolve() method instead to get a new instance.';
-    private static final String MODULE_SHADOWING_WARNING = 'Local module "{0}" is shadowing global module with ' +
+    private static final String MODULE_SHADOWING_WARNING =
+        'Local module "{0}" is shadowing global module with ' +
         'the same name. The global module will be inaccessible in this context.';
-    private static final String INVALID_PROVIDER_CONFIG_MESSAGE = 'Invalid provider configuration for token "{0}". ' +
+    private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
+        'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, or FactoryProvider.';
 
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
@@ -70,7 +76,8 @@ public virtual inherited sharing class Di {
 
     @TestVisible
     @SuppressWarnings('PMD.EmptyStatementBlock')
-    private Di() {}
+    private Di() {
+    }
 
     public static ModuleImport import(final String token) {
         return new ModuleImport(token);
@@ -108,10 +115,7 @@ public virtual inherited sharing class Di {
     }
 
     public static ModuleRef getModuleRef(final String token) {
-        Validate.isTrue(
-            token != null,
-            new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE)
-        );
+        Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
 
         if (MODULE_REGISTRY.containsKey(token)) {
             return MODULE_REGISTRY.get(token);
@@ -145,22 +149,21 @@ public virtual inherited sharing class Di {
     }
 
     public static void replaceModule(final String token, final Module newModule) {
-        Validate.isTrue(
-            newModule != null,
-            new InvalidModuleException(INVALID_MODULE_REPLACEMENT_MESSAGE)
-        );
+        Validate.isTrue(newModule != null, new InvalidModuleException(INVALID_MODULE_REPLACEMENT_MESSAGE));
 
         Module oldModule = getModuleRef(token).getModule();
         Validate.isTrue(
             oldModule.isGlobal() == newModule.isGlobal(),
-            new InvalidModuleException(String.format(
-                MODULE_SCOPE_MISMATCH_MESSAGE,
-                new List<String>{
-                    oldModule.isGlobal() ? 'global' : 'local',
-                    token,
-                    newModule.isGlobal() ? 'global' : 'local'
-                }
-            ))
+            new InvalidModuleException(
+                String.format(
+                    MODULE_SCOPE_MISMATCH_MESSAGE,
+                    new List<String>{
+                        oldModule.isGlobal() ? 'global' : 'local',
+                        token,
+                        newModule.isGlobal() ? 'global' : 'local'
+                    }
+                )
+            )
         );
 
         if (!newModule.isGlobal()) {
@@ -183,9 +186,9 @@ public virtual inherited sharing class Di {
 
     public static void clear() {
         MODULE_REGISTRY.clear();
-        globalRegistry.clear();
+        GLOBAL_MODULE_REGISTRY.clear();
         GLOBAL_PROVIDERS.clear();
-        hasGlobalLoadBeenAttempted = false;
+        mockGlobalModules = null;
     }
 
     @TestVisible
@@ -193,10 +196,9 @@ public virtual inherited sharing class Di {
         mockGlobalModules = mockModules;
     }
 
-    @SuppressWarnings('PMD.ApexDangerousMethods')
     private static void warnIfGlobalModuleShadowed(String token) {
         if (globalRegistry.containsKey(token)) {
-            System.debug(LoggingLevel.WARN, String.format(MODULE_SHADOWING_WARNING, new List<String>{ token }));
+            System.debug(LoggingLevel.WARN, String.format(MODULE_SHADOWING_WARNING, new List<String>{ token })); // NOPMD
         }
     }
 
@@ -243,13 +245,11 @@ public virtual inherited sharing class Di {
 
     private static void addGlobalProviders(Module module) {
         for (String token : module.exports()) {
-            Validate.isTrue(
-                token != null,
-                new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE)
-            );
+            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
-            Provider provider = module.getProviders().get(token);
-            Validate.isTrue(provider != null,
+            Provider provider = module.getProvider(token);
+            Validate.isTrue(
+                provider != null,
                 new UnknownExportException(
                     String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, module.getToken() })
                 )
@@ -265,12 +265,11 @@ public virtual inherited sharing class Di {
         protected final Set<String> exports = new Set<String>();
         protected Boolean isGlobal = false;
 
-        public Module() { token = String.valueOf(this).substringBefore(':'); }
+        public Module() {
+            token = String.valueOf(this).substringBefore(':');
+        }
         protected Module(final String token) {
-            Validate.isTrue(
-                token != null,
-                new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE)
-            );
+            Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
             this.token = token;
         }
 
@@ -278,36 +277,52 @@ public virtual inherited sharing class Di {
             return token;
         }
 
-        public Map<String, Provider> getProviders() {
-            return providers;
-        }
-
-        public Boolean hasProvider(final String token) {
-            return providers.containsKey(token);
-        }
-
         public Provider getProvider(final String token) {
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
-            // First check local definitions. If not found, check global modules
-            Provider provider = hasProvider(token) ? providers.get(token) : GLOBAL_PROVIDERS.get(token);
-            Validate.isTrue(
-                provider != null,
-                new UnknownProviderException(
-                    String.format(UNKNOWN_PROVIDER_MESSAGE, new List<String>{ token, getToken() })
-                )
-            );
+            // First check local definitions
+            if (providers.containsKey(token)) {
+                return providers.get(token);
+            }
 
-            return provider;
+            // Then check imported modules
+            for (ModuleImport moduleImport : imports()) {
+                Module module = moduleImport.resolve();
+                if (!module.exports().contains(token)) {
+                    continue;
+                }
+                Provider provider = module.getProvider(token);
+                if (provider != null) {
+                    providers.put(token, provider);
+                    return provider;
+                }
+            }
+
+            // Finally check global providers
+            if (GLOBAL_PROVIDERS.containsKey(token)) {
+                return GLOBAL_PROVIDERS.get(token);
+            }
+
+            throw new UnknownProviderException(
+                String.format(UNKNOWN_PROVIDER_MESSAGE, new List<String>{ token, getToken() })
+            );
         }
 
-        public virtual Boolean isGlobal() { return isGlobal; }
+        public virtual Boolean isGlobal() {
+            return isGlobal;
+        }
 
-        public virtual Set<ModuleImport> imports() { return new Set<ModuleImport>(); }
+        public virtual Set<ModuleImport> imports() {
+            return new Set<ModuleImport>();
+        }
 
-        public virtual Set<Provider> providers() { return new Set<Provider>(); }
+        public virtual Set<Provider> providers() {
+            return new Set<Provider>();
+        }
 
-        public virtual Set<String> exports() { return new Set<String>(); }
+        public virtual Set<String> exports() {
+            return new Set<String>();
+        }
 
         public virtual ProviderBuilder provide(final Type token) {
             return provide(token.getName());
@@ -323,7 +338,7 @@ public virtual inherited sharing class Di {
 
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
-            if (hasProvider(token)) {
+            if (providers.containsKey(token)) {
                 providers.put(token, newProvider);
             }
             return this;
@@ -337,26 +352,6 @@ public virtual inherited sharing class Di {
 
             providers.clear();
             exports.clear();
-
-            for (ModuleImport moduleImport : imports()) {
-                Module module = moduleImport.resolve();
-                module.register(visited);
-                for (String token : module.exports()) {
-                    Validate.isTrue(
-                        token != null,
-                        new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE)
-                    );
-
-                    Provider provider = module.getProviders().get(token);
-                    Validate.isTrue(provider != null,
-                        new UnknownExportException(
-                            String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, module.getToken() })
-                        )
-                    );
-
-                    providers.put(token, provider);
-                }
-            }
 
             for (Provider provider : providers()) {
                 providers.put(provider.token, provider);
@@ -392,7 +387,9 @@ public virtual inherited sharing class Di {
         private final Map<String, Provider> dynamicProviders = new Map<String, Provider>();
         private final Set<String> dynamicExports = new Set<String>();
 
-        public DynamicModule(final String token) { super(token); }
+        public DynamicModule(final String token) {
+            super(token);
+        }
 
         public override Set<ModuleImport> imports() {
             return dynamicImports;
@@ -461,7 +458,10 @@ public virtual inherited sharing class Di {
 
     public virtual inherited sharing class Provider {
         public final String token { get; private set; }
-        public Scope scopeType { get; private set; } { scopeType = Scope.SINGLETON; }
+        public Scope scopeType { get; private set; }
+        {
+            scopeType = Scope.SINGLETON;
+        }
 
         protected Provider(String token) {
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
@@ -662,7 +662,10 @@ public virtual inherited sharing class Di {
         }
     }
 
-    public enum Scope { SINGLETON, PROTOTYPE }
+    public enum Scope {
+        SINGLETON,
+        PROTOTYPE
+    }
 
     public interface Factory {
         Object newInstance(final ModuleRef ref, final Object args);
@@ -677,12 +680,20 @@ public virtual inherited sharing class Di {
         void inject(final ModuleRef container);
     }
 
-    public virtual class DiException extends Exception {}
-    public virtual class InvalidModuleException extends DiException {}
-    public virtual class UnknownModuleException extends DiException {}
-    public virtual class UnknownProviderException extends DiException {}
-    public virtual class UnknownExportException extends DiException {}
-    public virtual class InvalidProviderException extends DiException {}
-    public virtual class InvalidClassException extends DiException {}
-    public virtual class InvalidScopeException extends DiException {}
+    public virtual class DiException extends Exception {
+    }
+    public virtual class InvalidModuleException extends DiException {
+    }
+    public virtual class UnknownModuleException extends DiException {
+    }
+    public virtual class UnknownProviderException extends DiException {
+    }
+    public virtual class UnknownExportException extends DiException {
+    }
+    public virtual class InvalidProviderException extends DiException {
+    }
+    public virtual class InvalidClassException extends DiException {
+    }
+    public virtual class InvalidScopeException extends DiException {
+    }
 }

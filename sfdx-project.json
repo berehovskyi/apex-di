@@ -13,7 +13,8 @@
                     "versionNumber": "2.0.0.LATEST"
                 }
             ]
-        }],
+        }
+    ],
     "name": "apex-di",
     "namespace": "",
     "pushPackageDirectoriesSequentially": true,
