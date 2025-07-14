@@ -7,12 +7,33 @@
 
     <rule name="MethodNamingConventions"
           language="apex"
-          message="Method names should be in snake_case"
+          message="Test method name should be in snake_case"
           class="net.sourceforge.pmd.lang.apex.rule.codestyle.MethodNamingConventionsRule">
         <description>Enforces snake_case naming convention for test method names</description>
         <priority>3</priority>
         <properties>
-            <property name="testPattern" value="[a-z]+(_[a-z0-9]+)*"/>
+            <property name="testPattern" value="should_[a-z]+(_[a-z0-9]+)*"/>
+        </properties>
+    </rule>
+    <rule name="CognitiveComplexity"
+          language="apex"
+          message="Cognitive complexity is too high"
+          class="net.sourceforge.pmd.lang.apex.rule.design.CognitiveComplexityRule">
+        <description>Enforces a maximum cognitive complexity</description>
+        <priority>3</priority>
+        <properties>
+            <property name="classReportLevel" value="1000"/>
+            <property name="methodReportLevel" value="25"/>
+        </properties>
+    </rule>
+    <rule name="CyclomaticComplexity"
+          language="apex"
+          message="Cyclomatic complexity is too high"
+          class="net.sourceforge.pmd.lang.apex.rule.design.CyclomaticComplexityRule">
+        <description>Enforces a maximum cyclomatic complexity</description>
+        <priority>3</priority>
+        <properties>
+            <property name="classReportLevel" value="100"/>
         </properties>
     </rule>
 </ruleset>

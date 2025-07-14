@@ -2,4 +2,3 @@ engines:
   pmd:
     custom_rulesets:
       - rulesets/ruleset.xml
-

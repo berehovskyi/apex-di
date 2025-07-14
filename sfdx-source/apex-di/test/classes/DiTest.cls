@@ -1,5 +1,5 @@
 @IsTest(IsParallel=true)
-@SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs, PMD.ApexDoc, PMD.CyclomaticComplexity')
+@SuppressWarnings('PMD.ApexDoc')
 private class DiTest {
     // A private constructor to satisfy the static-only class pattern and improve coverage.
     static {
@@ -21,6 +21,7 @@ private class DiTest {
     // Core Provider Tests (get, resolve, scopes)
     //=========================================================================
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_same_instance_for_singleton_scope() {
         // Arrange: A module with a default (singleton) provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
@@ -34,6 +35,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_new_instance_when_using_resolve() {
         // Arrange: A module with a singleton provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
@@ -47,6 +49,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_new_instance_for_prototype_scope() {
         // Arrange: A module with a prototype-scoped provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
@@ -60,6 +63,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_getting_prototype_provider() {
         // Arrange: A module with a prototype-scoped provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
@@ -78,6 +82,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_provider_is_not_found() {
         // Arrange: A module is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
@@ -99,6 +104,7 @@ private class DiTest {
     // Provider Types (Value, Factory, Class)
     //=========================================================================
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_configured_value_for_value_provider() {
         // Arrange: A module with a ValueProvider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
@@ -113,6 +119,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_instance_from_factory_for_factory_provider() {
         // Arrange: A module with a FactoryProvider is registered.
         Di.ModuleRef ref = Di.getModuleRef(FactoryModule.class);
@@ -125,6 +132,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_pass_arguments_to_factory_provider() {
         // Arrange: A module with a FactoryProvider that accepts arguments is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsModule.class);
@@ -137,6 +145,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_get_provider_by_type_with_arguments() {
         // Arrange: A module with a factory provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
@@ -149,6 +158,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_provider_by_type_with_arguments() {
         // Arrange: A module with a factory provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
@@ -163,6 +173,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_provider_by_type_without_arguments() {
         // Arrange: A module with a standard provider is registered using a Type token.
         Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
@@ -177,6 +188,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_replace_existing_class_provider() {
         // Arrange: A module with a standard provider is registered using a Type token.
         Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
@@ -197,6 +209,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_replace_existing_provider() {
         // Arrange: A module is registered with an initial provider.
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
@@ -211,6 +224,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_instantiate_class_by_string_name() {
         // Arrange: A module provides a class using its string name.
         Di.ModuleRef ref = Di.getModuleRef(StringTypeModule.class);
@@ -223,6 +237,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_create_class_provider_from_type() {
         // Arrange: A provider is created using the Type constructor overload.
         Di.ClassProvider provider1 = new Di.ClassProvider('TestService', TestServiceImpl.class);
@@ -249,6 +264,7 @@ private class DiTest {
     // Module System (Imports, Exports, Overrides)
     //=========================================================================
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_provider_for_internal_use_from_imported_module() {
         // Arrange: A module that imports another module is registered.
         Di.ModuleRef ref = Di.getModuleRef(InternalConsumerModule.class);
@@ -261,6 +277,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_allow_local_provider_to_override_imported_provider() {
         // Arrange: A module imports another module but also provides a provider with the same token.
         Di.ModuleRef ref = Di.getModuleRef(OverrideModule.class);
@@ -273,6 +290,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_handle_circular_imports_gracefully() {
         // Arrange: Modules with a circular dependency (A -> B -> C -> A) are defined.
         Exception unexpectedEx;
@@ -292,6 +310,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_prevent_recursion_when_registering_self_importing_module() {
         // Arrange: A module that imports itself is defined.
         Exception unexpectedEx;
@@ -308,6 +327,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_exporting_unknown_provider() {
         // Arrange: A module attempts to export a token that it does not provide.
         // Act: An attempt is made to register the module.
@@ -324,6 +344,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_get_module_ref_by_instance() {
         // Arrange: A module instance is created but not yet registered.
         Di.Module mod = new ValueModule();
@@ -337,6 +358,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_existing_ref_for_registered_module_instance() {
         // Arrange: A local module and a global module are registered.
         Di.Module localMod = new ValueModule();
@@ -354,6 +376,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_evaluate_module_equality_based_on_token() {
         // Arrange: Create two modules with the same token and one with a different token.
         Di.Module moduleA1 = new Di.DynamicModule('ModuleA');
@@ -372,6 +395,7 @@ private class DiTest {
     // Lazy vs. Eager Imports
     //=========================================================================
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_delay_module_resolution_for_lazy_import() {
         // Arrange: A consumer module lazily imports a module that does not exist yet.
         Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
@@ -388,6 +412,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_module_immediately_for_immediate_import() {
         // Arrange: The dependency module is registered first.
         Di.addModule(new ValueModule());
@@ -404,6 +429,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_at_runtime_for_missing_lazy_import() {
         // Arrange: A module lazily imports a non-existent module class.
         Di.ModuleRef ref = Di.getModuleRef(LazyErrorConsumerModule.class);
@@ -422,6 +448,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_on_immediately_call_for_missing_import() {
         // Arrange: An import for a non-existent module is created.
         Di.ModuleImport invalidImport = Di.import('NonExistent.Module');
@@ -440,6 +467,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_immediately_for_module_instance_import() {
         // Arrange: A module instance is created and used in an immediate import.
         Di.Module mod = new ValueModule();
@@ -453,6 +481,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_evaluate_module_import_equality_with_other_types() {
         // Arrange: A module import is created.
         Di.ModuleImport importA = Di.import('ModuleA');
@@ -463,6 +492,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_evaluate_module_import_equality_based_on_token() {
         // Arrange: Create two imports with the same token and one with a different token.
         Di.ModuleImport importA1 = Di.import('ModuleA');
@@ -478,6 +508,7 @@ private class DiTest {
     // Global Modules
     //=========================================================================
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_load_and_resolve_provider_from_cmt_global_module() {
         // Arrange: A mock CMT record is created to define a global module.
         Di.mockGlobalModules(
@@ -495,6 +526,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_prioritize_local_provider_over_global_provider() {
         // Arrange: A global module is defined via mocked CMT, and a local module provides a conflicting token.
         Di.mockGlobalModules(
@@ -512,6 +544,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_adding_duplicate_global_module() {
         // Arrange: A global module is added via mocked CMT, and its providers are resolved to trigger loading.
         Di.mockGlobalModules(
@@ -535,6 +568,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_existing_ref_for_registered_global_module_by_token() {
         // Arrange: A global module is loaded via CMT mock, and its ref is retrieved once to ensure it's in the registry.
         Di.mockGlobalModules(
@@ -555,6 +589,7 @@ private class DiTest {
     // Dynamic Module Tests
     //=========================================================================
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_build_module_with_dynamic_providers_and_exports() {
         // Arrange: A dynamic module is configured with providers and exports.
         Di.DynamicModule dyn = new Di.DynamicModule('MyDynamicModule');
@@ -569,6 +604,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_build_module_with_dynamic_imports() {
         // Arrange: A dynamic module is configured with an import.
         Di.DynamicModule dyn = new Di.DynamicModule('MyDynamicImporter');
@@ -584,6 +620,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_register_dynamic_module_as_global() {
         // Arrange: A dynamic module is configured and marked as global.
         Di.DynamicModule dynGlobal = new Di.DynamicModule('MyDynamicGlobal');
@@ -601,6 +638,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_update_container_when_dynamic_module_is_refreshed() {
         // Arrange: A dynamic module is registered, initially without a specific provider.
         Di.DynamicModule dyn = new Di.DynamicModule('RefreshableModule');
@@ -625,6 +663,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_evaluate_provider_equality_based_on_token() {
         // Arrange: Create two different provider types with the same token, and one with a different token.
         Di.Provider providerA1 = new Di.ValueProvider('tokenA', 'value');
@@ -648,6 +687,7 @@ private class DiTest {
     // Edge Cases and Error Handling
     //=========================================================================
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_instantiating_abstract_class() {
         // Arrange: A module attempts to provide an abstract class.
         Di.ModuleRef ref = Di.getModuleRef(AbstractProviderModule.class);
@@ -666,6 +706,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_for_unsupported_provider_type() {
         // Arrange: A module uses a custom, unsupported provider type.
         Di.ModuleRef ref = Di.getModuleRef(InvalidProviderTypeModule.class);
@@ -683,6 +724,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_call_inject_method_on_injectable_class() {
         // Arrange: A module provides a class that implements the Injectable interface.
         Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
@@ -695,6 +737,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_clear_all_registries_and_caches() {
         // Arrange: A local module is added and a global module is loaded and verified.
         Di.addModule(new ValueModule());
@@ -726,6 +769,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_replace_module_and_update_providers() {
         // Arrange: An initial module is registered.
         Di.addModule(new SingleModule());
@@ -740,6 +784,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_replacing_module_with_scope_mismatch() {
         // Arrange: A local module is registered.
         Di.addModule(new SingleModule());
@@ -759,6 +804,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_replace_global_module_and_update_global_providers() {
         // Arrange: A global module is loaded via CMT mock and its provider is verified.
         Di.mockGlobalModules(
@@ -779,6 +825,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_ignore_inactive_cmt_global_modules() {
         // Arrange: A global module is defined as inactive in a mocked CMT record.
         Di.mockGlobalModules(
@@ -801,6 +848,7 @@ private class DiTest {
     // Integration Scenarios
     //=========================================================================
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_process_order_using_injected_services() {
         // Arrange: Register the main OrderProcessingModule, which internally imports all its dependencies.
         // This simulates a real application where you only bootstrap the top-level module.
@@ -818,6 +866,7 @@ private class DiTest {
     }
 
     @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_dynamically_configure_and_refresh_a_feature_flag_module() {
         // Arrange: A dynamic module for feature flags is registered, initially empty.
         Di.DynamicModule featureFlagsModule = new Di.DynamicModule('FeatureFlags');
@@ -885,19 +934,28 @@ private class DiTest {
     }
 
     // --- Basic Module Definitions ---
-    public class EmptyModule extends Di.Module {
+    public virtual class EmptyModule extends Di.Module {
+        public virtual override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public virtual override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>();
+        }
+        public virtual override Set<String> exports() {
+            return new Set<String>();
+        }
     }
-    public class SingleModule extends Di.Module {
+    public class SingleModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('TestService').useClass(TestServiceImpl.class) };
         }
     }
-    public class PrototypeModule extends Di.Module {
+    public class PrototypeModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('p').useClass(TestServiceImpl.class).scope(Di.Scope.PROTOTYPE) };
         }
     }
-    public class ValueModule extends Di.Module {
+    public class ValueModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('val').useValue('hello') };
         }
@@ -905,27 +963,27 @@ private class DiTest {
             return new Set<String>{ 'val' };
         }
     }
-    public class FactoryModule extends Di.Module {
+    public class FactoryModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('svc').useFactory(new TestFactory()) };
         }
     }
-    public class ArgsModule extends Di.Module {
+    public class ArgsModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('arg').useFactory(new ArgsFactory()) };
         }
     }
-    public class StringTypeModule extends Di.Module {
+    public class StringTypeModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('svc').useClass('DiTest.TestServiceImpl') };
         }
     }
-    public class InjectableModule extends Di.Module {
+    public class InjectableModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(FooInjectable.class).useClass(FooInjectable.class) };
         }
     }
-    public class TypeModule extends Di.Module {
+    public class TypeModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(TestService.class).useClass(TestServiceImpl.class) };
         }
@@ -933,7 +991,7 @@ private class DiTest {
             return new Set<String>{ TestService.class.getName() };
         }
     }
-    public class ArgsTypeModule extends Di.Module {
+    public class ArgsTypeModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(TestServiceImpl.class).useFactory(new ArgsFactory()) };
         }
@@ -943,7 +1001,7 @@ private class DiTest {
     }
 
     // --- Modules for Import/Export Tests ---
-    public class BModule extends Di.Module {
+    public class BModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('foo').useValue('bar') };
         }
@@ -951,7 +1009,7 @@ private class DiTest {
             return new Set<String>{ 'foo' };
         }
     }
-    public class InternalConsumerModule extends Di.Module {
+    public class InternalConsumerModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(BModule.class) };
         }
@@ -959,7 +1017,7 @@ private class DiTest {
             return new Set<Di.Provider>{ provide('internal').useFactory(new InternalConsumerFactory()) };
         }
     }
-    public class OverrideModule extends Di.Module {
+    public class OverrideModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(BModule.class) };
         }
@@ -969,27 +1027,27 @@ private class DiTest {
     }
 
     // --- Modules for Error Condition Tests ---
-    public class LocalErrorModule extends Di.Module {
+    public class LocalErrorModule extends EmptyModule {
         public override Set<String> exports() {
             return new Set<String>{ 'missing' };
         }
     }
-    public class AbstractProviderModule extends Di.Module {
+    public class AbstractProviderModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('abs').useClass(AbstractService.class) };
         }
     }
-    public class CircularA extends Di.Module {
+    public class CircularA extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(CircularB.class) };
         }
     }
-    public class CircularB extends Di.Module {
+    public class CircularB extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(CircularC.class) };
         }
     }
-    public class CircularC extends Di.Module {
+    public class CircularC extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(CircularA.class) };
         }
@@ -998,6 +1056,9 @@ private class DiTest {
         public ReplacementModule() {
             super('SingleModule');
         }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('TestService').useValue('replaced') };
         }
@@ -1005,7 +1066,7 @@ private class DiTest {
             return new Set<String>{ 'TestService' };
         }
     }
-    public class LazyConsumerModule extends Di.Module {
+    public class LazyConsumerModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(ValueModule.class) };
         }
@@ -1013,7 +1074,7 @@ private class DiTest {
             return new Set<Di.Provider>{ provide('dependentVal').useFactory(new DependentProviderFactory()) };
         }
     }
-    public class ImmediateConsumerModule extends Di.Module {
+    public class ImmediateConsumerModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(ValueModule.class).immediately() };
         }
@@ -1021,14 +1082,14 @@ private class DiTest {
             return new Set<Di.Provider>{ provide('dependentVal').useFactory(new DependentProviderFactory()) };
         }
     }
-    public class LazyErrorConsumerModule extends Di.Module {
+    public class LazyErrorConsumerModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import('NonExistent.Module') };
         }
     }
 
     // --- Modules for Global CMT Tests ---
-    public class CmtGlobalModule extends Di.Module {
+    public class CmtGlobalModule extends EmptyModule {
         public override Boolean isGlobal() {
             return true;
         }
@@ -1039,7 +1100,7 @@ private class DiTest {
             return new Set<String>{ 'cmtGlobalVal' };
         }
     }
-    public class OverrideGlobalModule extends Di.Module {
+    public class OverrideGlobalModule extends EmptyModule {
         public override Boolean isGlobal() {
             return true;
         }
@@ -1050,12 +1111,12 @@ private class DiTest {
             return new Set<String>{ 'val' };
         }
     }
-    public class LocalOverrideModule extends Di.Module {
+    public class LocalOverrideModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('val').useValue('local') };
         }
     }
-    public class SelfImportingModule extends Di.Module {
+    public class SelfImportingModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(SelfImportingModule.class) };
         }
@@ -1065,7 +1126,7 @@ private class DiTest {
             super('invalid');
         }
     }
-    public class InvalidProviderTypeModule extends Di.Module {
+    public class InvalidProviderTypeModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ new InvalidProvider() };
         }
@@ -1133,7 +1194,7 @@ private class DiTest {
         }
     }
     // --- Modules for Order Processing Scenario ---
-    public class PaymentModule extends Di.Module {
+    public class PaymentModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(IPaymentService.class).useClass(PaymentService.class) };
         }
@@ -1141,7 +1202,7 @@ private class DiTest {
             return new Set<String>{ IPaymentService.class.getName() };
         }
     }
-    public class ShippingModule extends Di.Module {
+    public class ShippingModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(IShippingService.class).useClass(ShippingService.class) };
         }
@@ -1149,7 +1210,7 @@ private class DiTest {
             return new Set<String>{ IShippingService.class.getName() };
         }
     }
-    public class NotificationModule extends Di.Module {
+    public class NotificationModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(INotificationService.class).useClass(NotificationService.class) };
         }
@@ -1157,7 +1218,7 @@ private class DiTest {
             return new Set<String>{ INotificationService.class.getName() };
         }
     }
-    public class OrderProcessingModule extends Di.Module {
+    public class OrderProcessingModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{
                 Di.import(PaymentModule.class),
@@ -1183,7 +1244,7 @@ private class DiTest {
             return this.newCheckoutFlag;
         }
     }
-    public class AppModule extends Di.Module {
+    public class AppModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import('FeatureFlags') };
         }
