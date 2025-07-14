@@ -106,7 +106,7 @@ public virtual inherited sharing class Di {
         }
         ModuleRef ref = new ModuleRef(module);
         registry.put(token, ref);
-        module.register(new Set<String>());
+        module.register();
 
         if (module.isGlobal()) {
             addGlobalProviders(module);
@@ -127,7 +127,7 @@ public virtual inherited sharing class Di {
         ModuleRef ref = new ModuleRef(module);
         Map<String, ModuleRef> registry = module.isGlobal() ? globalRegistry : MODULE_REGISTRY;
         registry.put(token, ref);
-        module.register(new Set<String>());
+        module.register();
         return ref;
     }
 
@@ -169,13 +169,21 @@ public virtual inherited sharing class Di {
         if (!newModule.isGlobal()) {
             warnIfGlobalModuleShadowed(token);
         }
-        newModule.register(new Set<String>());
+        newModule.register();
         Map<String, ModuleRef> registry = oldModule.isGlobal() ? globalRegistry : MODULE_REGISTRY;
         if (oldModule.isGlobal()) {
             for (String exportToken : oldModule.exports()) {
                 GLOBAL_PROVIDERS.remove(exportToken);
             }
             addGlobalProviders(newModule);
+
+            // Invalidate all module caches to ensure they pick up the global change.
+            for (ModuleRef ref : MODULE_REGISTRY.values()) {
+                ref.clearCache();
+            }
+            for (ModuleRef ref : GLOBAL_MODULE_REGISTRY.values()) {
+                ref.clearCache();
+            }
         }
         registry.put(token, new ModuleRef(newModule));
     }
@@ -325,17 +333,17 @@ public virtual inherited sharing class Di {
         }
 
         public virtual ProviderBuilder provide(final Type token) {
-            return provide(token.getName());
+            return provide(token?.getName());
         }
 
         public virtual ProviderBuilder provide(final String token) {
             return new ProviderBuilder(token);
         }
 
-        public virtual Module replace(final Provider newProvider) {
+        protected virtual Module replace(final Provider newProvider) {
             Validate.isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
-            String token = newProvider.token;
 
+            String token = newProvider.token;
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             if (providers.containsKey(token)) {
@@ -344,12 +352,7 @@ public virtual inherited sharing class Di {
             return this;
         }
 
-        protected virtual void register(Set<String> visited) {
-            if (visited.contains(getToken())) {
-                return;
-            }
-            visited.add(getToken());
-
+        protected virtual void register() {
             providers.clear();
             exports.clear();
 
@@ -440,7 +443,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual ClassProvider useClass(final Type type) {
-            return useClass(type?.getName());
+            return new ClassProvider(token, type);
         }
 
         public virtual ClassProvider useClass(final String type) {
@@ -500,6 +503,12 @@ public virtual inherited sharing class Di {
         public ClassProvider(final String token, final Type type) {
             this(token, type?.getName());
         }
+        public ClassProvider(final Type token, final Type type) {
+            this(token?.getName(), type?.getName());
+        }
+        public ClassProvider(final Type token, final String type) {
+            this(token?.getName(), type);
+        }
     }
 
     public virtual inherited sharing class ValueProvider extends Provider {
@@ -549,7 +558,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object get(final Type token, final Object args) {
-            return get(token.getName(), args);
+            return get(token?.getName(), args);
         }
 
         public virtual Object get(final String token) {
@@ -557,7 +566,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object get(final Type token) {
-            return get(token.getName(), null);
+            return get(token?.getName(), null);
         }
 
         public virtual Object resolve(final String token, final Object args) {
@@ -566,7 +575,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object resolve(final Type token, final Object args) {
-            return resolve(token.getName(), args);
+            return resolve(token?.getName(), args);
         }
 
         public virtual Object resolve(final String token) {
@@ -574,7 +583,26 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object resolve(final Type token) {
-            return resolve(token.getName(), null);
+            return resolve(token?.getName(), null);
+        }
+
+        public virtual void replace(final Provider newProvider) {
+            Validate.isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
+
+            String token = newProvider.token;
+            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+
+            module.replace(newProvider);
+            cache.remove(token);
+        }
+
+        public virtual void refresh() {
+            module.register();
+            clearCache();
+        }
+
+        public void clearCache() {
+            cache.clear();
         }
 
         protected virtual Object newInstance(Provider provider, Object args) {
