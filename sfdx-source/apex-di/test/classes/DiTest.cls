@@ -244,8 +244,8 @@ private class DiTest {
         Di.ClassProvider provider2 = new Di.ClassProvider(TestService.class, 'DiTest.TestServiceImpl');
 
         // Act: The type property of the provider is inspected.
-        String providerType1 = provider1.type;
-        String providerType2 = provider2.type;
+        String providerType1 = provider1.getType();
+        String providerType2 = provider2.getType();
 
         // Assert: The type property correctly stores the string name of the class.
         Assert.areEqual(
@@ -389,6 +389,82 @@ private class DiTest {
         Assert.isFalse(moduleA1.equals(moduleB), 'Modules with different tokens should not be equal.');
         Assert.isFalse(moduleA1.equals('some string'), 'Module should not be equal to an object of a different type.');
         Assert.isFalse(moduleA1.equals(null), 'Module should not be equal to null.');
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_correctly_report_has_provider_import_and_export() {
+        // Arrange: Get modules with different configurations to test each method.
+        Di.Module modWithImport = Di.getModuleRef(InternalConsumerModule.class).getModule();
+        Di.Module modWithProvider = Di.getModuleRef(SingleModule.class).getModule();
+        Di.Module modWithExport = Di.getModuleRef(ValueModule.class).getModule();
+
+        // Act & Assert: Test hasProvider() for locally defined providers.
+        Assert.isTrue(modWithProvider.hasProvider('TestService'), 'Should report having a local provider.');
+        Assert.isFalse(
+            modWithImport.hasProvider('foo'),
+            'hasProvider should only check local providers, not imported ones.'
+        );
+        Assert.isFalse(modWithProvider.hasProvider('non_existent'), 'Should report not having a provider.');
+
+        // Act & Assert: Test hasImport().
+        Assert.isTrue(modWithImport.hasImport(BModule.class.getName()), 'Should report having an import.');
+        Assert.isFalse(modWithProvider.hasImport(BModule.class.getName()), 'Should report not having an import.');
+
+        // Act & Assert: Test hasExport().
+        Assert.isTrue(modWithExport.hasExport('val'), 'Should report having an export.');
+        Assert.isFalse(modWithImport.hasExport('foo'), 'Should report not having an export.');
+    }
+
+    //=========================================================================
+    // Module Re-Exporting Tests
+    //=========================================================================
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_provider_from_reexported_module() {
+        // Arrange: ModuleA imports ModuleB, which imports and re-exports ModuleC.
+        Di.ModuleRef ref = Di.getModuleRef(ReexportConsumerModule.class);
+
+        // Act: A provider from the deepest module (ModuleC) is requested from the top-level module.
+        Object val = ref.get('serviceC');
+
+        // Assert: The provider is resolved successfully because ModuleB re-exported ModuleC.
+        Assert.areEqual('c-service', val, 'Provider should be visible through a re-exporting module.');
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_not_resolve_provider_if_not_reexported() {
+        // Arrange: ModuleA imports ModuleB, which imports but does NOT re-export ModuleC.
+        Di.ModuleRef ref = Di.getModuleRef(NonReexportConsumerModule.class);
+
+        // Act & Assert: An attempt to get a provider from ModuleC should fail.
+        try {
+            ref.get('serviceC');
+            Assert.fail('Expected UnknownProviderException was not thrown.');
+        } catch (Di.UnknownProviderException ex) {
+            // This is expected because ModuleB encapsulates ModuleC's providers.
+            Assert.isTrue(
+                ex.getMessage().contains('Could not find "serviceC" provider'),
+                'Provider should not be visible without being re-exported.'
+            );
+        }
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_reexport_from_dynamic_module() {
+        // Arrange: A dynamic module is configured to import and re-export another module.
+        Di.addModule(new ServiceCModule());
+        Di.DynamicModule dynamicReexporter = new Di.DynamicModule('DynamicReexporter');
+        dynamicReexporter.addImport(Di.import(ServiceCModule.class)).addReexport(Di.import(ServiceCModule.class));
+        Di.ModuleRef ref = Di.addModule(dynamicReexporter);
+
+        // Act: The re-exported provider is requested.
+        Object val = ref.get('serviceC');
+
+        // Assert: The provider is resolved correctly.
+        Assert.areEqual('c-service', val, 'Dynamic modules should support re-exporting.');
     }
 
     //=========================================================================
@@ -1023,6 +1099,66 @@ private class DiTest {
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('foo').useValue('override') };
+        }
+    }
+
+    // --- Modules for Re-Exporting Tests ---
+    public class ServiceCModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('serviceC').useValue('c-service') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'serviceC' };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+    }
+    public class ReexportingModuleB extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ServiceCModule.class) };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(ServiceCModule.class) };
+        }
+    }
+    public class NonReexportingModuleB extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ServiceCModule.class) };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class ReexportConsumerModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ReexportingModuleB.class) };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class NonReexportConsumerModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(NonReexportingModuleB.class) };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
         }
     }
 

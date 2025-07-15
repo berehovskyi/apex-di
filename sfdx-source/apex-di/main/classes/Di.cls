@@ -289,22 +289,43 @@ public virtual inherited sharing class Di {
 
         public abstract Set<String> exports();
 
+        public virtual Set<ModuleImport> reexports() {
+            return new Set<ModuleImport>();
+        }
+
         public String getToken() {
             return token;
+        }
+
+        public Boolean hasImport(final String token) {
+            for (ModuleImport moduleImport : imports() ?? new Set<ModuleImport>()) {
+                if (moduleImport.getToken().equals(token)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public Boolean hasProvider(final String token) {
+            return providers.containsKey(token);
+        }
+
+        public Boolean hasExport(final String token) {
+            return exports.contains(token);
         }
 
         public Provider getProvider(final String token) {
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             // First check local definitions
-            if (providers.containsKey(token)) {
+            if (hasProvider(token)) {
                 return providers.get(token);
             }
 
             // Then check imported modules
             for (ModuleImport moduleImport : imports() ?? new Set<ModuleImport>()) {
                 Module module = moduleImport.resolve();
-                if (!module.exports()?.contains(token) ?? false) {
+                if (!module.hasExport(token)) {
                     continue;
                 }
                 Provider provider = module.getProvider(token);
@@ -339,10 +360,10 @@ public virtual inherited sharing class Di {
         protected virtual Module replace(final Provider newProvider) {
             Validate.isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
 
-            String token = newProvider.token;
+            String token = newProvider.getToken();
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
-            if (providers.containsKey(token)) {
+            if (hasProvider(token)) {
                 providers.put(token, newProvider);
             }
             return this;
@@ -353,19 +374,26 @@ public virtual inherited sharing class Di {
             exports.clear();
 
             for (Provider provider : providers() ?? new Set<Provider>()) {
-                providers.put(provider.token, provider);
+                providers.put(provider.getToken(), provider);
             }
 
             for (String token : exports() ?? new Set<String>()) {
                 Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
                 Validate.isTrue(
-                    providers.containsKey(token),
+                    hasProvider(token),
                     new UnknownExportException(
                         String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, getToken() })
                     )
                 );
 
                 exports.add(token);
+            }
+
+            for (ModuleImport reexport : reexports() ?? new Set<ModuleImport>()) {
+                Module reexportedModule = reexport.resolve();
+                for (String token : reexportedModule.exports() ?? new Set<String>()) {
+                    exports.add(token);
+                }
             }
         }
 
@@ -385,6 +413,7 @@ public virtual inherited sharing class Di {
         private final Set<ModuleImport> dynamicImports = new Set<ModuleImport>();
         private final Map<String, Provider> dynamicProviders = new Map<String, Provider>();
         private final Set<String> dynamicExports = new Set<String>();
+        private final Set<ModuleImport> dynamicReexports = new Set<ModuleImport>();
 
         public DynamicModule(final String token) {
             super(token);
@@ -402,6 +431,10 @@ public virtual inherited sharing class Di {
             return dynamicExports;
         }
 
+        public override Set<ModuleImport> reexports() {
+            return dynamicReexports;
+        }
+
         public DynamicModule setGlobal() {
             isGlobal = true;
             return this;
@@ -417,7 +450,7 @@ public virtual inherited sharing class Di {
         public DynamicModule addProvider(final Provider provider) {
             Validate.isTrue(provider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
 
-            dynamicProviders.put(provider.token, provider);
+            dynamicProviders.put(provider.getToken(), provider);
             return this;
         }
 
@@ -427,10 +460,17 @@ public virtual inherited sharing class Di {
             dynamicExports.add(token);
             return this;
         }
+
+        public DynamicModule addReexport(final ModuleImport moduleImport) {
+            Validate.isTrue(moduleImport != null, new InvalidModuleException(NULL_MODULE_IMPORT_MESSAGE));
+
+            dynamicReexports.add(moduleImport);
+            return this;
+        }
     }
 
     public virtual inherited sharing class ProviderBuilder {
-        public final String token { get; private set; }
+        protected final String token;
 
         protected ProviderBuilder(final String token) {
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
@@ -456,16 +496,21 @@ public virtual inherited sharing class Di {
     }
 
     public virtual inherited sharing class Provider {
-        public final String token { get; private set; }
-        public Scope scopeType { get; private set; }
-        {
-            scopeType = Scope.SINGLETON;
-        }
+        protected final String token;
+        protected Scope scopeType = Scope.SINGLETON;
 
         protected Provider(String token) {
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             this.token = token;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public Scope getScope() {
+            return scopeType;
         }
 
         public virtual Provider scope(final Scope scopeType) {
@@ -475,7 +520,7 @@ public virtual inherited sharing class Di {
 
         public Boolean equals(final Object obj) {
             if (obj instanceof Provider) {
-                return ((Provider) obj).token.equals(token);
+                return ((Provider) obj).getToken().equals(token);
             }
             return false;
         }
@@ -486,7 +531,8 @@ public virtual inherited sharing class Di {
     }
 
     public virtual inherited sharing class ClassProvider extends Provider {
-        public final String type { get; private set; }
+        protected final String type;
+
         public ClassProvider(final String token, final String type) {
             super(token);
             Validate.isTrue(
@@ -496,38 +542,55 @@ public virtual inherited sharing class Di {
 
             this.type = type;
         }
+
         public ClassProvider(final String token, final Type type) {
             this(token, type?.getName());
         }
+
         public ClassProvider(final Type token, final Type type) {
             this(token?.getName(), type?.getName());
         }
+
         public ClassProvider(final Type token, final String type) {
             this(token?.getName(), type);
+        }
+
+        public String getType() {
+            return type;
         }
     }
 
     public virtual inherited sharing class ValueProvider extends Provider {
-        public final Object value { get; private set; }
+        protected final Object value;
+
         public ValueProvider(final String token, final Object value) {
             super(token);
             this.value = value;
         }
+
+        public Object getValue() {
+            return value;
+        }
     }
 
     public virtual inherited sharing class FactoryProvider extends Provider {
-        public final Factory factory { get; private set; }
+        protected final Factory factory;
+
         public FactoryProvider(final String token, final Factory factory) {
             super(token);
             Validate.isTrue(factory != null, new InvalidProviderException(NULL_PROVIDER_FACTORY_MESSAGE));
 
             this.factory = factory;
         }
+
+        public Factory getFactory() {
+            return factory;
+        }
     }
 
     public virtual inherited sharing class ModuleRef {
-        private final Module module;
-        private final Map<String, Object> cache = new Map<String, Object>();
+        protected final Module module;
+        protected final Map<String, Object> cache = new Map<String, Object>();
 
         protected ModuleRef(final Module module) {
             this.module = module;
@@ -540,7 +603,7 @@ public virtual inherited sharing class Di {
         public virtual Object get(final String token, final Object args) {
             Provider provider = module.getProvider(token);
             Validate.isTrue(
-                provider.scopeType != Scope.PROTOTYPE,
+                provider.getScope() != Scope.PROTOTYPE,
                 new InvalidScopeException(String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ token }))
             );
 
@@ -585,7 +648,7 @@ public virtual inherited sharing class Di {
         public virtual void replace(final Provider newProvider) {
             Validate.isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
 
-            String token = newProvider.token;
+            String token = newProvider.getToken();
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             module.replace(newProvider);
@@ -603,7 +666,7 @@ public virtual inherited sharing class Di {
 
         protected Object newInstance(final Provider provider, final Object args) {
             if (provider instanceof ClassProvider) {
-                String typeName = ((ClassProvider) provider).type;
+                String typeName = ((ClassProvider) provider).getType();
                 Type providedType = Type.forName(typeName);
                 Validate.isTrue(
                     providedType != null,
@@ -625,13 +688,13 @@ public virtual inherited sharing class Di {
                 return instance;
             }
             if (provider instanceof ValueProvider) {
-                return ((ValueProvider) provider).value;
+                return ((ValueProvider) provider).getValue();
             }
             if (provider instanceof FactoryProvider) {
-                return ((FactoryProvider) provider).factory.newInstance(this, args);
+                return ((FactoryProvider) provider).getFactory().newInstance(this, args);
             }
             throw new InvalidProviderException(
-                String.format(INVALID_PROVIDER_CONFIG_MESSAGE, new List<String>{ provider.token })
+                String.format(INVALID_PROVIDER_CONFIG_MESSAGE, new List<String>{ provider.getToken() })
             );
         }
     }
@@ -658,6 +721,10 @@ public virtual inherited sharing class Di {
             cachedModule = module;
         }
 
+        public String getToken() {
+            return token;
+        }
+
         public virtual ModuleImport immediately() {
             isEager = true;
             // eagerly registers the module if it isn't already
@@ -676,7 +743,7 @@ public virtual inherited sharing class Di {
 
         public Boolean equals(Object obj) {
             if (obj instanceof ModuleImport) {
-                return ((ModuleImport) obj).token.equals(token);
+                return ((ModuleImport) obj).getToken().equals(token);
             }
             return false;
         }
