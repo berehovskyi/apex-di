@@ -49,7 +49,8 @@ public virtual inherited sharing class Di {
         'the same name. The global module will be inaccessible in this context.';
     private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
         'Invalid provider configuration for token "{0}". ' +
-        'The provider must be one of: ClassProvider, ValueProvider, or FactoryProvider.';
+        'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
+    private static final String CIRCULAR_DEPENDENCY_MESSAGE = 'Circular dependency detected for provider "{0}". Resolution path: {1}';
 
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ModuleRef> GLOBAL_MODULE_REGISTRY = new Map<String, ModuleRef>();
@@ -79,16 +80,21 @@ public virtual inherited sharing class Di {
     private Di() {
     }
 
-    public static ModuleImport import(final String token) {
-        return new ModuleImport(token);
+    public static ModuleRef getModuleRef(final Module module) {
+        Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+
+        String token = module.getToken();
+        return findModuleRef(token) ?? addModule(module);
     }
 
-    public static ModuleImport import(final Type token) {
-        return new ModuleImport(token);
+    public static ModuleRef getModuleRef(final String token) {
+        Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+
+        return findModuleRef(token) ?? getModuleRef(create(token));
     }
 
-    public static ModuleImport import(final Module module) {
-        return new ModuleImport(module);
+    public static ModuleRef getModuleRef(final Type moduleType) {
+        return getModuleRef(moduleType?.getName());
     }
 
     public static ModuleRef addModule(final Module module) {
@@ -107,45 +113,10 @@ public virtual inherited sharing class Di {
         ModuleRef ref = new ModuleRef(module);
         registry.put(token, ref);
         module.register();
-
         if (module.isGlobal()) {
             addGlobalProviders(module);
         }
         return ref;
-    }
-
-    public static ModuleRef getModuleRef(final String token) {
-        Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
-
-        if (MODULE_REGISTRY.containsKey(token)) {
-            return MODULE_REGISTRY.get(token);
-        }
-        if (globalRegistry.containsKey(token)) {
-            return globalRegistry.get(token);
-        }
-        Module module = forName(token);
-        ModuleRef ref = new ModuleRef(module);
-        Map<String, ModuleRef> registry = module.isGlobal() ? globalRegistry : MODULE_REGISTRY;
-        registry.put(token, ref);
-        module.register();
-        return ref;
-    }
-
-    public static ModuleRef getModuleRef(final Type moduleType) {
-        return getModuleRef(moduleType?.getName());
-    }
-
-    public static ModuleRef getModuleRef(final Module module) {
-        Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
-
-        String token = module.getToken();
-        if (MODULE_REGISTRY.containsKey(token)) {
-            return MODULE_REGISTRY.get(token);
-        }
-        if (globalRegistry.containsKey(token)) {
-            return globalRegistry.get(token);
-        }
-        return addModule(module);
     }
 
     public static void replaceModule(final String token, final Module newModule) {
@@ -192,6 +163,18 @@ public virtual inherited sharing class Di {
         replaceModule(token?.getName(), newModule);
     }
 
+    public static ModuleImport import(final Module module) {
+        return new ModuleImport(module);
+    }
+
+    public static ModuleImport import(final String token) {
+        return new ModuleImport(token);
+    }
+
+    public static ModuleImport import(final Type token) {
+        return import(token?.getName());
+    }
+
     public static void clear() {
         MODULE_REGISTRY.clear();
         GLOBAL_MODULE_REGISTRY.clear();
@@ -202,6 +185,16 @@ public virtual inherited sharing class Di {
     @TestVisible
     private static void mockGlobalModules(final Iterable<DI_GlobalModule__mdt> mockModules) {
         mockGlobalModules = mockModules;
+    }
+
+    private static ModuleRef findModuleRef(String token) {
+        if (MODULE_REGISTRY.containsKey(token)) {
+            return MODULE_REGISTRY.get(token);
+        }
+        if (globalRegistry.containsKey(token)) {
+            return globalRegistry.get(token);
+        }
+        return null;
     }
 
     private static void warnIfGlobalModuleShadowed(String token) {
@@ -215,7 +208,7 @@ public virtual inherited sharing class Di {
             if (!moduleDef.IsActive__c) {
                 continue;
             }
-            Module module = forName(moduleDef.ModuleClass__c);
+            Module module = create(moduleDef.ModuleClass__c);
             Validate.isTrue(
                 module.isGlobal(),
                 new InvalidModuleException(
@@ -227,7 +220,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    private static Module forName(final String token) {
+    private static Module create(final String token) {
         Type moduleType = Type.forName(token);
         Validate.isTrue(
             moduleType != null,
@@ -330,7 +323,7 @@ public virtual inherited sharing class Di {
                 }
                 Provider provider = module.getProvider(token);
                 if (provider != null) {
-                    providers.put(token, provider);
+                    //                    providers.put(token, provider);
                     return provider;
                 }
             }
@@ -478,11 +471,11 @@ public virtual inherited sharing class Di {
             this.token = token;
         }
 
-        public virtual ClassProvider useClass(final Type type) {
+        public virtual ClassProvider useClass(final String type) {
             return new ClassProvider(token, type);
         }
 
-        public virtual ClassProvider useClass(final String type) {
+        public virtual ClassProvider useClass(final Type type) {
             return new ClassProvider(token, type);
         }
 
@@ -492,6 +485,14 @@ public virtual inherited sharing class Di {
 
         public virtual FactoryProvider useFactory(final Factory factory) {
             return new FactoryProvider(token, factory);
+        }
+
+        public virtual ExistingProvider useExisting(final String existingToken) {
+            return new ExistingProvider(token, existingToken);
+        }
+
+        public virtual ExistingProvider useExisting(final Type existingToken) {
+            return useExisting(existingToken?.getName());
         }
     }
 
@@ -588,6 +589,21 @@ public virtual inherited sharing class Di {
         }
     }
 
+    public virtual inherited sharing class ExistingProvider extends Provider {
+        protected final String existing;
+
+        public ExistingProvider(final String token, final String existing) {
+            super(token);
+            Validate.isTrue(existing != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+
+            this.existing = existing;
+        }
+
+        public String getExisting() {
+            return existing;
+        }
+    }
+
     public virtual inherited sharing class ModuleRef {
         protected final Module module;
         protected final Map<String, Object> cache = new Map<String, Object>();
@@ -601,19 +617,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object get(final String token, final Object args) {
-            Provider provider = module.getProvider(token);
-            Validate.isTrue(
-                provider.getScope() != Scope.PROTOTYPE,
-                new InvalidScopeException(String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ token }))
-            );
-
-            if (cache.containsKey(token)) {
-                return cache.get(token);
-            }
-
-            Object instance = newInstance(provider, args);
-            cache.put(token, instance);
-            return instance;
+            return get(token, args, new List<String>());
         }
 
         public virtual Object get(final Type token, final Object args) {
@@ -629,8 +633,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object resolve(final String token, final Object args) {
-            Provider provider = module.getProvider(token);
-            return newInstance(provider, args);
+            return resolve(token, args, new List<String>());
         }
 
         public virtual Object resolve(final Type token, final Object args) {
@@ -662,6 +665,27 @@ public virtual inherited sharing class Di {
 
         public void clearCache() {
             cache.clear();
+        }
+
+        protected virtual Object get(final String token, final Object args, final List<String> resolutionPath) {
+            Provider provider = getProvider(token, resolutionPath);
+            Validate.isTrue(
+                provider.getScope() !== Scope.PROTOTYPE,
+                new InvalidScopeException(String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ token }))
+            );
+
+            String key = provider.getToken();
+            if (cache.containsKey(key)) {
+                return cache.get(key);
+            }
+            Object instance = newInstance(provider, args);
+            cache.put(key, instance);
+            return instance;
+        }
+
+        protected virtual Object resolve(final String token, final Object args, final List<String> resolutionPath) {
+            Provider provider = getProvider(token, resolutionPath);
+            return newInstance(provider, args);
         }
 
         protected Object newInstance(final Provider provider, final Object args) {
@@ -697,6 +721,25 @@ public virtual inherited sharing class Di {
                 String.format(INVALID_PROVIDER_CONFIG_MESSAGE, new List<String>{ provider.getToken() })
             );
         }
+
+        private Provider getProvider(final String token, List<String> resolutionPath) {
+            Validate.isTrue(
+                !resolutionPath.contains(token),
+                new CircularDependencyException(
+                    String.format(
+                        CIRCULAR_DEPENDENCY_MESSAGE,
+                        new List<String>{ token, String.join(resolutionPath, ' -> ') + ' -> ' + token }
+                    )
+                )
+            );
+
+            resolutionPath.add(token);
+            Provider provider = module.getProvider(token);
+            if (provider instanceof ExistingProvider) {
+                return getProvider(((ExistingProvider) provider).getExisting(), resolutionPath);
+            }
+            return provider;
+        }
     }
 
     public virtual class ModuleImport {
@@ -708,10 +751,6 @@ public virtual inherited sharing class Di {
             Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
 
             this.token = token;
-        }
-
-        protected ModuleImport(final Type type) {
-            this(type?.getName());
         }
 
         protected ModuleImport(final Module module) {
@@ -786,5 +825,7 @@ public virtual inherited sharing class Di {
     public virtual class InvalidClassException extends DiException {
     }
     public virtual class InvalidScopeException extends DiException {
+    }
+    public virtual class CircularDependencyException extends DiException {
     }
 }

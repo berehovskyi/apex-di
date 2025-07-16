@@ -101,7 +101,7 @@ private class DiTest {
     }
 
     //=========================================================================
-    // Provider Types (Value, Factory, Class)
+    // Provider Types (Value, Factory, Class, Existing)
     //=========================================================================
     @IsTest
     @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
@@ -258,6 +258,39 @@ private class DiTest {
             providerType2,
             'ClassProvider should correctly store the type name.'
         );
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_provider_using_existing_alias() {
+        // Arrange: A module is registered with a provider aliased by another token.
+        Di.ModuleRef ref = Di.getModuleRef(ExistingProviderModule.class);
+
+        // Act: The original provider and the alias are retrieved.
+        Object original = ref.get('MyLongAndComplexServiceName');
+        Object alias = ref.get('MyAlias');
+
+        // Assert: Both tokens resolve to the same singleton instance.
+        Assert.isTrue(original instanceof TestServiceImpl, 'Original should be correct type.');
+        Assert.areEqual(original, alias, 'Alias should resolve to the same instance as the original provider.');
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_throw_exception_for_circular_existing_alias() {
+        // Arrange: A module is registered with a circular alias dependency (A -> B -> A).
+        Di.ModuleRef ref = Di.getModuleRef(CircularExistingProviderModule.class);
+
+        // Act & Assert: An attempt to get either provider should throw a CircularDependencyException.
+        try {
+            ref.get('AliasA');
+            Assert.fail('Expected CircularDependencyException was not thrown.');
+        } catch (Di.CircularDependencyException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Circular dependency detected'),
+                'Exception message should indicate a cycle.'
+            );
+        }
     }
 
     //=========================================================================
@@ -965,6 +998,20 @@ private class DiTest {
         );
     }
 
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_provide_short_alias_for_long_service_name() {
+        // Arrange: The main application module is registered, which uses an alias internally.
+        Di.ModuleRef ref = Di.getModuleRef(AppWithAliasModule.class);
+        EmailService emailService = (EmailService) ref.get(EmailService.class);
+
+        // Act: The high-level service method is called.
+        String result = emailService.sendWelcomeEmail('test@example.com');
+
+        // Assert: The result confirms that the aliased dependency was correctly injected and used.
+        Assert.areEqual('Email sent via Mandrill to test@example.com', result);
+    }
+
     //=========================================================================
     // Test-Specific Inner Classes
     //=========================================================================
@@ -1073,6 +1120,34 @@ private class DiTest {
         }
         public override Set<String> exports() {
             return new Set<String>{ TestServiceImpl.class.getName() };
+        }
+    }
+    public class ExistingProviderModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('MyLongAndComplexServiceName').useClass(TestServiceImpl.class),
+                provide('MyAlias').useExisting('MyLongAndComplexServiceName')
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class CircularExistingProviderModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('AliasA').useExisting('AliasB'),
+                provide('AliasB').useExisting('AliasA')
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
         }
     }
 
@@ -1283,31 +1358,31 @@ private class DiTest {
     public class PaymentService implements IPaymentService {
         public Boolean wasPaid = false;
         public Boolean processPayment(Decimal amount) {
-            this.wasPaid = true;
+            wasPaid = true;
             return true;
         }
         public Boolean wasCalled() {
-            return this.wasPaid;
+            return wasPaid;
         }
     }
     public class ShippingService implements IShippingService {
         public Boolean wasShipped = false;
         public Boolean shipOrder(String orderId) {
-            this.wasShipped = true;
+            wasShipped = true;
             return true;
         }
         public Boolean wasShipped() {
-            return this.wasShipped;
+            return wasShipped;
         }
     }
     public class NotificationService implements INotificationService {
         public Boolean wasSent = false;
         public Boolean sendConfirmation(String orderId) {
-            this.wasSent = true;
+            wasSent = true;
             return true;
         }
         public Boolean wasSent() {
-            return this.wasSent;
+            return wasSent;
         }
     }
     public class OrderService implements Di.Injectable {
@@ -1315,15 +1390,15 @@ private class DiTest {
         public IShippingService shippingService { get; private set; }
         public INotificationService notificationService { get; private set; }
         public void inject(Di.ModuleRef ref) {
-            this.paymentService = (IPaymentService) ref.get(IPaymentService.class);
-            this.shippingService = (IShippingService) ref.get(IShippingService.class);
-            this.notificationService = (INotificationService) ref.get(INotificationService.class);
+            paymentService = (IPaymentService) ref.get(IPaymentService.class);
+            shippingService = (IShippingService) ref.get(IShippingService.class);
+            notificationService = (INotificationService) ref.get(INotificationService.class);
         }
         public Boolean processOrder(String orderId, Decimal amount) {
-            Boolean paymentOk = this.paymentService.processPayment(amount);
+            Boolean paymentOk = paymentService.processPayment(amount);
             if (paymentOk) {
-                this.shippingService.shipOrder(orderId);
-                this.notificationService.sendConfirmation(orderId);
+                shippingService.shipOrder(orderId);
+                notificationService.sendConfirmation(orderId);
                 return true;
             }
             return false;
@@ -1371,13 +1446,13 @@ private class DiTest {
         private Boolean newCheckoutFlag = false;
         public void inject(Di.ModuleRef ref) {
             try {
-                this.newCheckoutFlag = (Boolean) ref.get('EnableNewCheckout');
+                newCheckoutFlag = (Boolean) ref.get('EnableNewCheckout');
             } catch (Di.UnknownProviderException e) {
-                this.newCheckoutFlag = false; // Default to false if provider doesn't exist
+                newCheckoutFlag = false; // Default to false if provider doesn't exist
             }
         }
         public Boolean isNewCheckoutEnabled() {
-            return this.newCheckoutFlag;
+            return newCheckoutFlag;
         }
     }
     public class AppModule extends EmptyModule {
@@ -1386,6 +1461,39 @@ private class DiTest {
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(UserExperienceService.class).useClass(UserExperienceService.class) };
+        }
+    }
+    // --- Services and Modules for Alias Integration Scenario ---
+    public interface ITransactionalEmailSender {
+        String send(String recipient, String body);
+    }
+    public class MandrillEmailService implements ITransactionalEmailSender {
+        public String send(String recipient, String body) {
+            return 'Email sent via Mandrill to ' + recipient;
+        }
+    }
+    public class EmailService implements Di.Injectable {
+        private ITransactionalEmailSender sender;
+        public void inject(Di.ModuleRef ref) {
+            sender = (ITransactionalEmailSender) ref.get('EmailSender');
+        }
+        public String sendWelcomeEmail(String email) {
+            return sender.send(email, 'Welcome!');
+        }
+    }
+    public class AppWithAliasModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(MandrillEmailService.class).useClass(MandrillEmailService.class),
+                provide('EmailSender').useExisting(MandrillEmailService.class), // Alias
+                provide(EmailService.class).useClass(EmailService.class)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
         }
     }
 }
