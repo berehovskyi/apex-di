@@ -101,6 +101,114 @@ private class DiTest {
     }
 
     //=========================================================================
+    // Core SCOPED Lifetime Tests
+    //=========================================================================
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_return_same_instance_within_one_scope() {
+        // Arrange: Register a module with a SCOPED provider.
+        Di.ModuleRef rootContainer = Di.getModuleRef(ScopedModule.class);
+        Di.ScopeRef scope = rootContainer.createScope();
+
+        // Act: Get the provider twice from the SAME scope.
+        Object instance1 = scope.get(ScopedService.class);
+        Object instance2 = scope.get(ScopedService.class);
+
+        // Assert: Both instances are the same because they came from the same scope.
+        Assert.areEqual(instance1, instance2, 'Should return the same instance for a provider within the same scope.');
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_return_different_instances_for_different_scopes() {
+        // Arrange: Register a module with a SCOPED provider.
+        Di.ModuleRef rootContainer = Di.getModuleRef(ScopedModule.class);
+        Di.ScopeRef scope1 = rootContainer.createScope();
+        Di.ScopeRef scope2 = rootContainer.createScope();
+
+        // Act: Get the provider from each of the two different scopes.
+        Object instance1 = scope1.get(ScopedService.class);
+        Object instance2 = scope2.get(ScopedService.class);
+
+        // Assert: The instances are different because they came from different scopes.
+        Assert.areNotEqual(
+            instance1,
+            instance2,
+            'Should return different instances for a provider from different scopes.'
+        );
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_singleton_dependency_from_a_scope() {
+        // Arrange: Register a module with a SCOPED provider that depends on a SINGLETON provider.
+        Di.ModuleRef rootContainer = Di.getModuleRef(ScopedWithSingletonDepModule.class);
+        Di.ScopeRef scope1 = rootContainer.createScope();
+        Di.ScopeRef scope2 = rootContainer.createScope();
+
+        // Act: Resolve the scoped service from two different scopes.
+        ScopedWithSingletonDepService service1 = (ScopedWithSingletonDepService) scope1.get(
+            ScopedWithSingletonDepService.class
+        );
+        ScopedWithSingletonDepService service2 = (ScopedWithSingletonDepService) scope2.get(
+            ScopedWithSingletonDepService.class
+        );
+
+        // Assert: The scoped services themselves are different instances.
+        Assert.areNotEqual(service1, service2, 'The parent scoped services should be different instances.');
+
+        // Assert: The injected SINGLETON dependency is the exact same instance in both.
+        Assert.isNotNull(service1.singletonDep, 'Singleton dependency should be injected.');
+        Assert.areEqual(
+            service1.singletonDep,
+            service2.singletonDep,
+            'The singleton dependency should be the same instance across different scopes.'
+        );
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_prototype_dependency_from_a_scope() {
+        // Arrange: Register a module with a SCOPED provider that depends on a PROTOTYPE provider.
+        Di.ModuleRef rootContainer = Di.getModuleRef(ScopedWithPrototypeDepModule.class);
+        Di.ScopeRef scope = rootContainer.createScope();
+
+        // Act: Resolve the scoped service.
+        ScopedWithPrototypeDepService service = (ScopedWithPrototypeDepService) scope.get(
+            ScopedWithPrototypeDepService.class
+        );
+        Object prototypeDep1 = service.prototypeDep;
+
+        // Act: Resolve the prototype dependency again directly from the same scope.
+        Object prototypeDep2 = scope.resolve(PrototypeService.class);
+
+        // Assert: The two prototype instances are different, even though resolved from the same scope.
+        Assert.isNotNull(prototypeDep1, 'Prototype dependency should be injected.');
+        Assert.areNotEqual(prototypeDep1, prototypeDep2, 'Prototype dependencies should always be new instances.');
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_clear_cache_for_a_specific_scope() {
+        // Arrange: Register a module and create a scope.
+        Di.ModuleRef rootContainer = Di.getModuleRef(ScopedModule.class);
+        Di.ScopeRef scope = rootContainer.createScope();
+
+        // Act: Get a scoped provider to populate the scope's cache.
+        Object instance1 = scope.get(ScopedService.class);
+
+        // Act: Clear the cache only for that specific scope.
+        scope.clearCache();
+
+        // Act: Get the provider again from the same scope.
+        Object instance2 = scope.get(ScopedService.class);
+
+        // Assert: A new instance is created, proving the scope's cache was cleared.
+        Assert.isNotNull(instance1, 'First instance should not be null.');
+        Assert.areNotEqual(instance1, instance2, 'A new instance should be created after clearing the scope cache.');
+    }
+
+    //=========================================================================
     // Provider Types (Value, Factory, Class, Existing)
     //=========================================================================
     @IsTest
@@ -1012,6 +1120,37 @@ private class DiTest {
         Assert.areEqual('Email sent via Mandrill to test@example.com', result);
     }
 
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_isolate_state_in_trigger_handler_simulation() {
+        // Arrange: Register the module for our simulation.
+        Di.ModuleRef rootContainer = Di.getModuleRef(RecordProcessorModule.class);
+
+        // Act & Assert for Record 1
+        // --- Start Unit of Work 1 ---
+        Di.ScopeRef scope1 = rootContainer.createScope();
+        RecordProcessor processor1 = (RecordProcessor) scope1.resolve(RecordProcessor.class);
+        processor1.process('Record-001');
+        // The logger is retrieved from the same scope to check its state.
+        StatefulLogger logger1 = (StatefulLogger) scope1.get(StatefulLogger.class);
+        Assert.areEqual(1, logger1.getMessages().size(), 'Logger 1 should have 1 message.');
+        Assert.isTrue(logger1.getMessages()[0].contains('Record-001'), 'Logger 1 message should be for Record-001.');
+        // --- End Unit of Work 1 ---
+
+        // Act & Assert for Record 2
+        // --- Start Unit of Work 2 ---
+        Di.ScopeRef scope2 = rootContainer.createScope();
+        RecordProcessor processor2 = (RecordProcessor) scope2.resolve(RecordProcessor.class);
+        processor2.process('Record-002');
+        StatefulLogger logger2 = (StatefulLogger) scope2.get(StatefulLogger.class);
+        Assert.areEqual(1, logger2.getMessages().size(), 'Logger 2 should have 1 message.');
+        Assert.isTrue(logger2.getMessages()[0].contains('Record-002'), 'Logger 2 message should be for Record-002.');
+        // --- End Unit of Work 2 ---
+
+        // Final Assert: Ensure the loggers were different instances.
+        Assert.areNotEqual(logger1, logger2, 'Loggers from different scopes should be different instances.');
+    }
+
     //=========================================================================
     // Test-Specific Inner Classes
     //=========================================================================
@@ -1024,25 +1163,43 @@ private class DiTest {
     }
     public abstract class AbstractService {
     }
+    public class ScopedService {
+    }
+    public class SingletonService {
+    }
+    public class PrototypeService {
+    }
+    public class ScopedWithSingletonDepService implements Di.Injectable {
+        public SingletonService singletonDep { get; private set; }
+        public void inject(Di.Container container) {
+            singletonDep = (SingletonService) container.get(SingletonService.class);
+        }
+    }
+    public class ScopedWithPrototypeDepService implements Di.Injectable {
+        public PrototypeService prototypeDep { get; private set; }
+        public void inject(Di.Container container) {
+            prototypeDep = (PrototypeService) container.resolve(PrototypeService.class);
+        }
+    }
 
     // --- Factory Implementations ---
     public class TestFactory implements Di.Factory {
-        public Object newInstance(Di.ModuleRef ref, Object args) {
+        public Object newInstance(Di.Container ref, Object args) {
             return new TestServiceImpl();
         }
     }
     public class ArgsFactory implements Di.Factory {
-        public Object newInstance(Di.ModuleRef ref, Object args) {
+        public Object newInstance(Di.Container ref, Object args) {
             return 'arg:' + (args != null ? ((List<Object>) args)[0] : '');
         }
     }
     public class InternalConsumerFactory implements Di.Factory {
-        public Object newInstance(Di.ModuleRef ref, Object args) {
+        public Object newInstance(Di.Container ref, Object args) {
             return ref.get('foo');
         }
     }
     public class DependentProviderFactory implements Di.Factory {
-        public Object newInstance(Di.ModuleRef ref, Object args) {
+        public Object newInstance(Di.Container ref, Object args) {
             String importedValue = (String) ref.get('val');
             return 'depends on ' + importedValue;
         }
@@ -1051,7 +1208,7 @@ private class DiTest {
     // --- Injectable Implementation ---
     public class FooInjectable implements Di.Injectable {
         public Boolean wasInjected = false;
-        public void inject(final Di.ModuleRef c) {
+        public void inject(final Di.Container c) {
             wasInjected = true;
         }
     }
@@ -1141,6 +1298,51 @@ private class DiTest {
             return new Set<Di.Provider>{
                 provide('AliasA').useExisting('AliasB'),
                 provide('AliasB').useExisting('AliasA')
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class ScopedModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(ScopedService.class).useClass(ScopedService.class).scope(Di.Scope.SCOPED)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class ScopedWithSingletonDepModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(SingletonService.class).useClass(SingletonService.class).scope(Di.Scope.SINGLETON),
+                provide(ScopedWithSingletonDepService.class)
+                    .useClass(ScopedWithSingletonDepService.class)
+                    .scope(Di.Scope.SCOPED)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class ScopedWithPrototypeDepModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(PrototypeService.class).useClass(PrototypeService.class).scope(Di.Scope.PROTOTYPE),
+                provide(ScopedWithPrototypeDepService.class)
+                    .useClass(ScopedWithPrototypeDepService.class)
+                    .scope(Di.Scope.SCOPED)
             };
         }
         public override Set<Di.ModuleImport> imports() {
@@ -1389,7 +1591,7 @@ private class DiTest {
         public IPaymentService paymentService { get; private set; }
         public IShippingService shippingService { get; private set; }
         public INotificationService notificationService { get; private set; }
-        public void inject(Di.ModuleRef ref) {
+        public void inject(Di.Container ref) {
             paymentService = (IPaymentService) ref.get(IPaymentService.class);
             shippingService = (IShippingService) ref.get(IShippingService.class);
             notificationService = (INotificationService) ref.get(INotificationService.class);
@@ -1444,7 +1646,7 @@ private class DiTest {
     // --- Services and Modules for Feature Flag Scenario ---
     public class UserExperienceService implements Di.Injectable {
         private Boolean newCheckoutFlag = false;
-        public void inject(Di.ModuleRef ref) {
+        public void inject(Di.Container ref) {
             try {
                 newCheckoutFlag = (Boolean) ref.get('EnableNewCheckout');
             } catch (Di.UnknownProviderException e) {
@@ -1474,7 +1676,7 @@ private class DiTest {
     }
     public class EmailService implements Di.Injectable {
         private ITransactionalEmailSender sender;
-        public void inject(Di.ModuleRef ref) {
+        public void inject(Di.Container ref) {
             sender = (ITransactionalEmailSender) ref.get('EmailSender');
         }
         public String sendWelcomeEmail(String email) {
@@ -1487,6 +1689,38 @@ private class DiTest {
                 provide(MandrillEmailService.class).useClass(MandrillEmailService.class),
                 provide('EmailSender').useExisting(MandrillEmailService.class), // Alias
                 provide(EmailService.class).useClass(EmailService.class)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class StatefulLogger {
+        private final List<String> messages = new List<String>();
+        public void log(String message) {
+            messages.add(message);
+        }
+        public List<String> getMessages() {
+            return messages;
+        }
+    }
+    public class RecordProcessor implements Di.Injectable {
+        private StatefulLogger logger;
+        public void inject(Di.Container container) {
+            logger = (StatefulLogger) container.get(StatefulLogger.class);
+        }
+        public void process(String recordId) {
+            logger.log('Processing ' + recordId);
+        }
+    }
+    public class RecordProcessorModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(StatefulLogger.class).useClass(StatefulLogger.class).scope(Di.Scope.SCOPED),
+                provide(RecordProcessor.class).useClass(RecordProcessor.class).scope(Di.Scope.PROTOTYPE)
             };
         }
         public override Set<Di.ModuleImport> imports() {

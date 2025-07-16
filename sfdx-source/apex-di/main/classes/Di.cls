@@ -604,13 +604,19 @@ public virtual inherited sharing class Di {
         }
     }
 
-    public virtual inherited sharing class ModuleRef {
+    public abstract inherited sharing class Container {
+        protected final Container parent;
         protected final Module module;
         protected final Map<String, Object> cache = new Map<String, Object>();
 
-        protected ModuleRef(final Module module) {
+        protected Container(final Container parent, final Module module) {
+            Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+
+            this.parent = parent;
             this.module = module;
         }
+
+        protected abstract Object getInstance(final Provider provider, final Object args);
 
         public Module getModule() {
             return module;
@@ -648,39 +654,13 @@ public virtual inherited sharing class Di {
             return resolve(token?.getName(), null);
         }
 
-        public virtual void replace(final Provider newProvider) {
-            Validate.isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
-
-            String token = newProvider.getToken();
-            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
-
-            module.replace(newProvider);
-            cache.remove(token);
-        }
-
-        public virtual void refresh() {
-            module.register();
-            clearCache();
-        }
-
-        public void clearCache() {
+        public virtual void clearCache() {
             cache.clear();
         }
 
         protected virtual Object get(final String token, final Object args, final List<String> resolutionPath) {
             Provider provider = getProvider(token, resolutionPath);
-            Validate.isTrue(
-                provider.getScope() !== Scope.PROTOTYPE,
-                new InvalidScopeException(String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ token }))
-            );
-
-            String key = provider.getToken();
-            if (cache.containsKey(key)) {
-                return cache.get(key);
-            }
-            Object instance = newInstance(provider, args);
-            cache.put(key, instance);
-            return instance;
+            return getInstance(provider, args);
         }
 
         protected virtual Object resolve(final String token, final Object args, final List<String> resolutionPath) {
@@ -742,6 +722,75 @@ public virtual inherited sharing class Di {
         }
     }
 
+    public virtual class ModuleRef extends Container {
+        public ModuleRef(final Module module) {
+            super(null, module);
+        }
+
+        public virtual ScopeRef createScope() {
+            return new ScopeRef(this, module);
+        }
+
+        public virtual void replace(final Provider newProvider) {
+            Validate.isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
+
+            String token = newProvider.getToken();
+            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+
+            module.replace(newProvider);
+            cache.remove(token);
+        }
+
+        public virtual void refresh() {
+            module.register();
+            clearCache();
+        }
+
+        protected virtual override Object getInstance(final Provider provider, final Object args) {
+            Validate.isTrue(
+                provider.getScope() !== Scope.PROTOTYPE,
+                new InvalidScopeException(
+                    String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ provider.getToken() })
+                )
+            );
+
+            String key = provider.getToken();
+            if (cache.containsKey(key)) {
+                return cache.get(key);
+            }
+            Object instance = newInstance(provider, args);
+            cache.put(key, instance);
+            return instance;
+        }
+    }
+
+    public virtual class ScopeRef extends Container {
+        protected final Map<String, Object> scopedCache = new Map<String, Object>();
+
+        protected ScopeRef(final ModuleRef parent, final Module module) {
+            super(parent, module);
+        }
+
+        protected virtual override Object getInstance(final Provider provider, final Object args) {
+            if (provider.getScope() === Scope.SCOPED) {
+                String token = provider.getToken();
+                if (scopedCache.containsKey(token)) {
+                    return scopedCache.get(token);
+                }
+                Object instance = newInstance(provider, args);
+                scopedCache.put(token, instance);
+                return instance;
+            }
+
+            // For SINGLETON providers, delegate to the parent's (root's) logic.
+            return parent.getInstance(provider, args);
+        }
+
+        public virtual override void clearCache() {
+            scopedCache.clear();
+        }
+    }
+
     public virtual class ModuleImport {
         protected final String token;
         protected Boolean isEager = false;
@@ -794,11 +843,12 @@ public virtual inherited sharing class Di {
 
     public enum Scope {
         SINGLETON,
-        PROTOTYPE
+        PROTOTYPE,
+        SCOPED
     }
 
     public interface Factory {
-        Object newInstance(final ModuleRef ref, final Object args);
+        Object newInstance(final Container ref, final Object args);
     }
 
     public interface Injectable {
@@ -807,7 +857,7 @@ public virtual inherited sharing class Di {
          *
          * @param container The module reference to resolve dependencies from
          */
-        void inject(final ModuleRef container);
+        void inject(final Container container);
     }
 
     public virtual class DiException extends Exception {
