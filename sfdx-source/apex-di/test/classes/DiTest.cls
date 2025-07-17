@@ -401,6 +401,72 @@ private class DiTest {
         }
     }
 
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_correctly_detect_alias_based_circular_dependency() {
+        // Arrange: Get the container for the alias-based cycle.
+        Di.ModuleRef container = Di.getModuleRef(AliasCircularAModule.class);
+
+        // Act & Assert: The framework should correctly detect this cycle.
+        try {
+            container.get('AliasA');
+            Assert.fail('Expected a Di.CircularDependencyException but no exception was thrown.');
+        } catch (Di.CircularDependencyException e) {
+            // Assert: This is the correct behavior. The framework is robust for this case.
+            Assert.isTrue(
+                e.getMessage().contains('Resolution path: AliasA -> ProviderB -> AliasA'),
+                'The exception message should show the full resolution path.'
+            );
+        } catch (Exception e) {
+            Assert.fail(
+                'Expected a Di.CircularDependencyException, but a different exception was thrown: ' + e.getTypeName()
+            );
+        }
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_detect_factory_based_circular_dependency() {
+        // Arrange: Get the container for the factory-based cycle.
+        Di.ModuleRef container = Di.getModuleRef(FactoryCircularAModule.class);
+
+        // Act & Assert: Attempt to resolve the circular dependency.
+        try {
+            container.get(ServiceA.class);
+            Assert.fail('Expected a Di.CircularDependencyException but no exception was thrown.');
+        } catch (Di.CircularDependencyException e) {
+            Assert.isTrue(
+                e.getMessage().contains('Circular dependency detected for provider "DiTest.ServiceA"'),
+                'The exception message should correctly identify the circular dependency.'
+            );
+            Assert.isTrue(
+                e.getMessage().contains('Resolution path: DiTest.ServiceA -> DiTest.ServiceB -> DiTest.ServiceA'),
+                'The exception message should show the full resolution path.'
+            );
+        } catch (Exception e) {
+            Assert.fail(
+                'Expected a Di.CircularDependencyException, but a different exception was thrown: ' + e.getTypeName()
+            );
+        }
+    }
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_prototype_provider_using_existing_alias() {
+        // Arrange: A module is registered with a PROTOTYPE provider aliased by another token.
+        Di.ModuleRef ref = Di.getModuleRef(ExistingPrototypeProviderModule.class);
+
+        // Act: The alias is resolved twice. This covers the resolveInternal path for ExistingProvider.
+        Object instance1 = ref.resolve('AliasService');
+        Object instance2 = ref.resolve('AliasService');
+
+        // Assert: Both instances are of the correct underlying type.
+        Assert.isTrue(instance1 instanceof TestServiceImpl, 'First instance should be the correct type.');
+        Assert.isTrue(instance2 instanceof TestServiceImpl, 'Second instance should be the correct type.');
+
+        // Assert: The two instances are different, proving that the PROTOTYPE scope was respected.
+        Assert.areNotEqual(instance1, instance2, 'Prototype alias should resolve to a new instance each time.');
+    }
+
     //=========================================================================
     // Module System (Imports, Exports, Overrides)
     //=========================================================================
@@ -1169,17 +1235,9 @@ private class DiTest {
     }
     public class PrototypeService {
     }
-    public class ScopedWithSingletonDepService implements Di.Injectable {
-        public SingletonService singletonDep { get; private set; }
-        public void inject(Di.Container container) {
-            singletonDep = (SingletonService) container.get(SingletonService.class);
-        }
+    public class ServiceA {
     }
-    public class ScopedWithPrototypeDepService implements Di.Injectable {
-        public PrototypeService prototypeDep { get; private set; }
-        public void inject(Di.Container container) {
-            prototypeDep = (PrototypeService) container.resolve(PrototypeService.class);
-        }
+    public class ServiceB {
     }
 
     // --- Factory Implementations ---
@@ -1202,6 +1260,30 @@ private class DiTest {
         public Object newInstance(Di.Container ref, Object args) {
             String importedValue = (String) ref.get('val');
             return 'depends on ' + importedValue;
+        }
+    }
+    public class FactoryA implements Di.Factory {
+        public Object newInstance(Di.Container container, Object args) {
+            container.get(ServiceB.class);
+            return new ServiceA();
+        }
+    }
+    public class FactoryB implements Di.Factory {
+        public Object newInstance(Di.Container container, Object args) {
+            container.get(ServiceA.class);
+            return new ServiceB();
+        }
+    }
+    public class ScopedWithSingletonDepService implements Di.Injectable {
+        public SingletonService singletonDep { get; private set; }
+        public void inject(Di.Container container) {
+            singletonDep = (SingletonService) container.get(SingletonService.class);
+        }
+    }
+    public class ScopedWithPrototypeDepService implements Di.Injectable {
+        public PrototypeService prototypeDep { get; private set; }
+        public void inject(Di.Container container) {
+            prototypeDep = (PrototypeService) container.resolve(PrototypeService.class);
         }
     }
 
@@ -1343,6 +1425,64 @@ private class DiTest {
                 provide(ScopedWithPrototypeDepService.class)
                     .useClass(ScopedWithPrototypeDepService.class)
                     .scope(Di.Scope.SCOPED)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class AliasCircularBModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(AliasCircularAModule.class) };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('ProviderB').useExisting('AliasA') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'ProviderB' };
+        }
+    }
+    public class AliasCircularAModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(AliasCircularBModule.class) };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('AliasA').useExisting('ProviderB') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'AliasA' };
+        }
+    }
+    public class FactoryCircularAModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(FactoryCircularBModule.class) };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide(ServiceA.class).useFactory(new FactoryA()) };
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class FactoryCircularBModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide(ServiceB.class).useFactory(new FactoryB()) };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ ServiceB.class.getName() };
+        }
+    }
+    public class ExistingPrototypeProviderModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('TestService').useClass(TestServiceImpl.class),
+                provide('AliasService').useExisting('TestService').scope(Di.Scope.PROTOTYPE)
             };
         }
         public override Set<Di.ModuleImport> imports() {

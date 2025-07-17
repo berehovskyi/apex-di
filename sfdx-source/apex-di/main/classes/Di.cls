@@ -307,7 +307,11 @@ public virtual inherited sharing class Di {
             return exports.contains(token);
         }
 
-        public Provider getProvider(final String token) {
+        public virtual Provider getProvider(final String token) {
+            return getProvider(token, new List<String>());
+        }
+
+        protected virtual Provider getProvider(final String token, final List<String> resolutionPath) {
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             // First check local definitions
@@ -321,9 +325,8 @@ public virtual inherited sharing class Di {
                 if (!module.hasExport(token)) {
                     continue;
                 }
-                Provider provider = module.getProvider(token);
+                Provider provider = module.getProvider(token, resolutionPath);
                 if (provider != null) {
-                    //                    providers.put(token, provider);
                     return provider;
                 }
             }
@@ -607,7 +610,7 @@ public virtual inherited sharing class Di {
     public abstract inherited sharing class Container {
         protected final Container parent;
         protected final Module module;
-        protected final Map<String, Object> cache = new Map<String, Object>();
+        protected final List<String> resolutionPath = new List<String>();
 
         protected Container(final Container parent, final Module module) {
             Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
@@ -623,7 +626,8 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object get(final String token, final Object args) {
-            return get(token, args, new List<String>());
+            resolutionPath.clear();
+            return getInternal(token, args);
         }
 
         public virtual Object get(final Type token, final Object args) {
@@ -631,15 +635,16 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object get(final String token) {
-            return get(token, null);
+            return getInternal(token, null);
         }
 
         public virtual Object get(final Type token) {
-            return get(token?.getName(), null);
+            return get(token?.getName());
         }
 
         public virtual Object resolve(final String token, final Object args) {
-            return resolve(token, args, new List<String>());
+            resolutionPath.clear();
+            return resolveInternal(token, args);
         }
 
         public virtual Object resolve(final Type token, final Object args) {
@@ -647,25 +652,37 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object resolve(final String token) {
-            return resolve(token, null);
+            return resolveInternal(token, null);
         }
 
         public virtual Object resolve(final Type token) {
-            return resolve(token?.getName(), null);
+            return resolve(token?.getName());
         }
 
-        public virtual void clearCache() {
-            cache.clear();
+        protected virtual Object getInternal(final String token, final Object args) {
+            validateAndAddPath(token);
+            try {
+                Provider provider = module.getProvider(token);
+                if (provider instanceof ExistingProvider) {
+                    return getInternal(((ExistingProvider) provider).getExisting(), args);
+                }
+                return getInstance(provider, args);
+            } finally {
+                resolutionPath.remove(resolutionPath.size() - 1);
+            }
         }
 
-        protected virtual Object get(final String token, final Object args, final List<String> resolutionPath) {
-            Provider provider = getProvider(token, resolutionPath);
-            return getInstance(provider, args);
-        }
-
-        protected virtual Object resolve(final String token, final Object args, final List<String> resolutionPath) {
-            Provider provider = getProvider(token, resolutionPath);
-            return newInstance(provider, args);
+        protected virtual Object resolveInternal(final String token, final Object args) {
+            validateAndAddPath(token);
+            try {
+                Provider provider = module.getProvider(token);
+                if (provider instanceof ExistingProvider) {
+                    return resolveInternal(((ExistingProvider) provider).getExisting(), args);
+                }
+                return newInstance(provider, args);
+            } finally {
+                resolutionPath.remove(resolutionPath.size() - 1);
+            }
         }
 
         protected Object newInstance(final Provider provider, final Object args) {
@@ -702,7 +719,7 @@ public virtual inherited sharing class Di {
             );
         }
 
-        private Provider getProvider(final String token, List<String> resolutionPath) {
+        private void validateAndAddPath(final String token) {
             Validate.isTrue(
                 !resolutionPath.contains(token),
                 new CircularDependencyException(
@@ -714,15 +731,12 @@ public virtual inherited sharing class Di {
             );
 
             resolutionPath.add(token);
-            Provider provider = module.getProvider(token);
-            if (provider instanceof ExistingProvider) {
-                return getProvider(((ExistingProvider) provider).getExisting(), resolutionPath);
-            }
-            return provider;
         }
     }
 
     public virtual class ModuleRef extends Container {
+        protected final Map<String, Object> cache = new Map<String, Object>();
+
         public ModuleRef(final Module module) {
             super(null, module);
         }
@@ -744,6 +758,10 @@ public virtual inherited sharing class Di {
         public virtual void refresh() {
             module.register();
             clearCache();
+        }
+
+        public virtual void clearCache() {
+            cache.clear();
         }
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
@@ -786,7 +804,7 @@ public virtual inherited sharing class Di {
             return parent.getInstance(provider, args);
         }
 
-        public virtual override void clearCache() {
+        public virtual void clearCache() {
             scopedCache.clear();
         }
     }
