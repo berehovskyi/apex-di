@@ -449,6 +449,7 @@ private class DiTest {
             );
         }
     }
+
     @IsTest
     @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_prototype_provider_using_existing_alias() {
@@ -465,6 +466,60 @@ private class DiTest {
 
         // Assert: The two instances are different, proving that the PROTOTYPE scope was respected.
         Assert.areNotEqual(instance1, instance2, 'Prototype alias should resolve to a new instance each time.');
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_throw_exception_when_getting_prototype_alias_to_singleton() {
+        // Arrange: A module with a SINGLETON provider ('TestService') is aliased by a
+        // PROTOTYPE provider ('AliasService').
+        Di.ModuleRef ref = Di.getModuleRef(ExistingPrototypeProviderModule.class);
+
+        // Act & Assert: An attempt to get() the prototype-scoped alias should fail,
+        // because get() is not allowed on prototype scopes.
+        try {
+            ref.get('AliasService');
+            Assert.fail('Expected InvalidScopeException was not thrown. This confirms the bug.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Use resolve() method instead'),
+                'Exception message should guide the user to use resolve().'
+            );
+        } catch (Exception e) {
+            Assert.fail('An unexpected exception was thrown: ' + e.getMessage());
+        }
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_circular_dependency_without_forward_ref() {
+        // Arrange: Get the container for the module containing the circular dependency.
+        Di.ModuleRef container = Di.getModuleRef(ForwardRefModule.class);
+        Exception caughtException;
+
+        // Act: Attempt to resolve the circular dependency.
+        // With the two-pass instantiation logic, this should now succeed.
+        ForwardRefServiceA instanceA = null;
+        try {
+            instanceA = (ForwardRefServiceA) container.get(ForwardRefServiceA.class);
+        } catch (Exception e) {
+            caughtException = e;
+        }
+
+        // Assert: No exception was thrown during resolution.
+        Assert.isNull(caughtException, 'The framework should have resolved the circular dependency automatically.');
+
+        // Assert: The instances were created and their dependencies were injected correctly.
+        Assert.isNotNull(instanceA, 'Instance of ServiceA should not be null.');
+        Assert.isNotNull(instanceA.serviceB, 'Injected ServiceB should not be null.');
+        Assert.isNotNull(instanceA.serviceB.serviceA, 'Injected ServiceA on ServiceB should not be null.');
+
+        // Assert: The framework correctly injected the same instance back into the cycle.
+        Assert.areEqual(
+            instanceA,
+            instanceA.serviceB.serviceA,
+            'The circular dependency should resolve to the same root instance.'
+        );
     }
 
     //=========================================================================
@@ -1274,6 +1329,14 @@ private class DiTest {
             return new ServiceB();
         }
     }
+
+    // --- Injectable Implementation ---
+    public class FooInjectable implements Di.Injectable {
+        public Boolean wasInjected = false;
+        public void inject(final Di.Container c) {
+            wasInjected = true;
+        }
+    }
     public class ScopedWithSingletonDepService implements Di.Injectable {
         public SingletonService singletonDep { get; private set; }
         public void inject(Di.Container container) {
@@ -1286,12 +1349,18 @@ private class DiTest {
             prototypeDep = (PrototypeService) container.resolve(PrototypeService.class);
         }
     }
-
-    // --- Injectable Implementation ---
-    public class FooInjectable implements Di.Injectable {
-        public Boolean wasInjected = false;
-        public void inject(final Di.Container c) {
-            wasInjected = true;
+    public class ForwardRefServiceA implements Di.Injectable {
+        public ForwardRefServiceB serviceB { get; private set; }
+        public void inject(Di.Container container) {
+            // This injection creates the cycle.
+            this.serviceB = (ForwardRefServiceB) container.get(ForwardRefServiceB.class);
+        }
+    }
+    public class ForwardRefServiceB implements Di.Injectable {
+        public ForwardRefServiceA serviceA { get; private set; }
+        public void inject(Di.Container container) {
+            // This injection completes the cycle.
+            this.serviceA = (ForwardRefServiceA) container.get(ForwardRefServiceA.class);
         }
     }
 
@@ -1487,6 +1556,20 @@ private class DiTest {
         }
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    public class ForwardRefModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(ForwardRefServiceA.class).useClass(ForwardRefServiceA.class),
+                provide(ForwardRefServiceB.class).useClass(ForwardRefServiceB.class)
+            };
         }
         public override Set<String> exports() {
             return new Set<String>();

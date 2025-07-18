@@ -611,6 +611,7 @@ public virtual inherited sharing class Di {
         protected final Container parent;
         protected final Module module;
         protected final List<String> resolutionPath = new List<String>();
+        protected Boolean inCall = false;
 
         protected Container(final Container parent, final Module module) {
             Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
@@ -621,12 +622,21 @@ public virtual inherited sharing class Di {
 
         protected abstract Object getInstance(final Provider provider, final Object args);
 
+        protected abstract Boolean hasInCache(final String token);
+
         public Module getModule() {
             return module;
         }
 
         public virtual Object get(final String token, final Object args) {
-            resolutionPath.clear();
+            if (!inCall) {
+                startResolution();
+                try {
+                    return getInternal(token, args);
+                } finally {
+                    endResolution();
+                }
+            }
             return getInternal(token, args);
         }
 
@@ -635,15 +645,22 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object get(final String token) {
-            return getInternal(token, null);
+            return get(token, null);
         }
 
         public virtual Object get(final Type token) {
-            return get(token?.getName());
+            return get(token?.getName(), null);
         }
 
         public virtual Object resolve(final String token, final Object args) {
-            resolutionPath.clear();
+            if (!inCall) {
+                startResolution();
+                try {
+                    return resolveInternal(token, args);
+                } finally {
+                    endResolution();
+                }
+            }
             return resolveInternal(token, args);
         }
 
@@ -652,23 +669,30 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object resolve(final String token) {
-            return resolveInternal(token, null);
+            return resolve(token, null);
         }
 
         public virtual Object resolve(final Type token) {
-            return resolve(token?.getName());
+            return resolve(token?.getName(), null);
         }
 
         protected virtual Object getInternal(final String token, final Object args) {
             validateAndAddPath(token);
             try {
                 Provider provider = module.getProvider(token);
+                Validate.isTrue(
+                    provider.getScope() !== Scope.PROTOTYPE,
+                    new InvalidScopeException(
+                        String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ provider.getToken() })
+                    )
+                );
+
                 if (provider instanceof ExistingProvider) {
                     return getInternal(((ExistingProvider) provider).getExisting(), args);
                 }
                 return getInstance(provider, args);
             } finally {
-                resolutionPath.remove(resolutionPath.size() - 1);
+                popIfMatches(token);
             }
         }
 
@@ -681,7 +705,7 @@ public virtual inherited sharing class Di {
                 }
                 return newInstance(provider, args);
             } finally {
-                resolutionPath.remove(resolutionPath.size() - 1);
+                popIfMatches(token);
             }
         }
 
@@ -694,19 +718,14 @@ public virtual inherited sharing class Di {
                     new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ typeName }))
                 );
 
-                Object instance;
                 try {
-                    instance = providedType.newInstance();
+                    return providedType.newInstance();
                 } catch (TypeException exc) {
                     throw new InvalidClassException(
                         String.format(INSTANTIATION_FAILED_MESSAGE, new List<String>{ typeName }),
                         exc
                     );
                 }
-                if (instance instanceof Injectable) {
-                    ((Injectable) instance).inject(this);
-                }
-                return instance;
             }
             if (provider instanceof ValueProvider) {
                 return ((ValueProvider) provider).getValue();
@@ -719,7 +738,14 @@ public virtual inherited sharing class Di {
             );
         }
 
-        private void validateAndAddPath(final String token) {
+        protected virtual Object inject(final Object instance) {
+            if (instance instanceof Injectable) {
+                ((Injectable) instance).inject(this);
+            }
+            return instance;
+        }
+
+        protected virtual void validateAndAddPath(final String token) {
             Validate.isTrue(
                 !resolutionPath.contains(token),
                 new CircularDependencyException(
@@ -731,6 +757,23 @@ public virtual inherited sharing class Di {
             );
 
             resolutionPath.add(token);
+        }
+
+        private void startResolution() {
+            inCall = true;
+            resolutionPath.clear();
+        }
+
+        private void endResolution() {
+            inCall = false;
+            resolutionPath.clear();
+        }
+
+        private void popIfMatches(String token) {
+            Integer lastIndex = resolutionPath.size() - 1;
+            if (!resolutionPath.isEmpty() && resolutionPath[lastIndex].equals(token)) {
+                resolutionPath.remove(lastIndex);
+            }
         }
     }
 
@@ -765,20 +808,29 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
-            Validate.isTrue(
-                provider.getScope() !== Scope.PROTOTYPE,
-                new InvalidScopeException(
-                    String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ provider.getToken() })
-                )
-            );
-
             String key = provider.getToken();
             if (cache.containsKey(key)) {
                 return cache.get(key);
             }
             Object instance = newInstance(provider, args);
             cache.put(key, instance);
-            return instance;
+            return inject(instance);
+        }
+
+        public virtual override Object resolve(final String token, final Object args) {
+            Object instance = super.resolve(token, args);
+            return inject(instance);
+        }
+
+        protected override Boolean hasInCache(final String token) {
+            return cache.containsKey(token);
+        }
+
+        protected override void validateAndAddPath(String token) {
+            if (hasInCache(token)) {
+                return;
+            }
+            super.validateAndAddPath(token);
         }
     }
 
@@ -791,21 +843,35 @@ public virtual inherited sharing class Di {
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
             if (provider.getScope() === Scope.SCOPED) {
-                String token = provider.getToken();
-                if (scopedCache.containsKey(token)) {
-                    return scopedCache.get(token);
+                String key = provider.getToken();
+                if (scopedCache.containsKey(key)) {
+                    return scopedCache.get(key);
                 }
                 Object instance = newInstance(provider, args);
-                scopedCache.put(token, instance);
-                return instance;
+                scopedCache.put(key, instance);
+                return inject(instance);
             }
-
-            // For SINGLETON providers, delegate to the parent's (root's) logic.
             return parent.getInstance(provider, args);
+        }
+
+        public virtual override Object resolve(final String token, final Object args) {
+            Object instance = super.resolve(token, args);
+            return inject(instance);
         }
 
         public virtual void clearCache() {
             scopedCache.clear();
+        }
+
+        protected override Boolean hasInCache(final String token) {
+            return scopedCache.containsKey(token);
+        }
+
+        protected override void validateAndAddPath(String token) {
+            if (hasInCache(token) || parent.hasInCache(token)) {
+                return;
+            }
+            super.validateAndAddPath(token);
         }
     }
 
