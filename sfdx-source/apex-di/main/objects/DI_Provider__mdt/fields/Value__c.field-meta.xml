@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Value__c</fullName>
+    <description>The value for the provider. Its meaning depends on the Type__c:
+- Class: The full Apex class name of the implementation (e.g., LiveEmailService).
+- Value: The literal string value.
+- Factory: The full Apex class name of the factory.
+- Existing: The token of another provider to alias.</description>
+    <fieldManageability>DeveloperControlled</fieldManageability>
+    <label>Value</label>
+    <length>32768</length>
+    <type>LongTextArea</type>
+    <visibleLines>3</visibleLines>
+</CustomField>

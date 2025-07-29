@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Defines a dependency injection provider binding. Records of this type allow for configuring service implementations, values, or factories without changing Apex code.</description>
+    <label>DI Provider</label>
+    <pluralLabel>DI Providers</pluralLabel>
+    <visibility>Public</visibility>
+</CustomObject>

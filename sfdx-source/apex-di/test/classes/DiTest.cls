@@ -1,20 +1,15 @@
 @IsTest(IsParallel=true)
 @SuppressWarnings('PMD.ApexDoc')
 private class DiTest {
-    // A private constructor to satisfy the static-only class pattern and improve coverage.
     static {
+        // A private constructor to satisfy the static-only class pattern and improve coverage.
         new Di();
-    }
-
-    //=========================================================================
-    // Setup Method
-    //=========================================================================
-    @TestSetup
-    static void setup() {
         // Arrange: Clear all DI registries before each test run to ensure isolation.
         Di.clear();
         // Arrange: Mock global modules to prevent unintended loading from metadata in tests.
         Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        // Arrange: Mock providers to prevent unintended loading from metadata in tests.
+        Di.mockProviders(new Map<String, DI_Provider__mdt>());
     }
 
     //=========================================================================
@@ -209,7 +204,7 @@ private class DiTest {
     }
 
     //=========================================================================
-    // Provider Types (Value, Factory, Class, Existing)
+    // Provider Types (Value, Factory, Class, Existing, Metadata)
     //=========================================================================
     @IsTest
     @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
@@ -520,6 +515,128 @@ private class DiTest {
             instanceA.serviceB.serviceA,
             'The circular dependency should resolve to the same root instance.'
         );
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_class_provider_from_mocked_metadata() {
+        // Arrange: Define a module that uses the new .useMetadata() method.
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Arrange: Create a mock DI_Provider__mdt record that defines a Class provider.
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Class',
+            Value__c = 'DiTest.MockMetadataServiceImpl',
+            IsActive__c = true,
+            Scope__c = 'SINGLETON'
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
+
+        // Act: Resolve the provider. The framework should use the mocked metadata.
+        Object service = ref.get(IMetadataService.class);
+
+        // Assert: The instance is from the class specified in the mocked metadata.
+        Assert.isTrue(
+            service instanceof MockMetadataServiceImpl,
+            'The provider should be resolved from the mocked metadata definition.'
+        );
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_value_provider_from_metadata() {
+        // Arrange
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'StringValueProvider',
+            Type__c = 'Value',
+            Value__c = 'hello from metadata',
+            IsActive__c = true
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'StringValueProvider' => mockMdt });
+
+        // Act
+        Object result = ref.get('StringValue');
+
+        // Assert
+        Assert.areEqual(
+            'hello from metadata',
+            result,
+            'Should resolve the literal value from the metadata definition.'
+        );
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_factory_provider_from_metadata_with_args() {
+        // Arrange
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'FactoryProviderWithArgs',
+            Type__c = 'Factory',
+            Value__c = 'DiTest.StringArgsFactory',
+            Args__c = 'meta-arg',
+            IsActive__c = true
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'FactoryProviderWithArgs' => mockMdt });
+
+        // Act
+        Object result = ref.get('FactoryValue');
+
+        // Assert
+        Assert.areEqual(
+            'arg:meta-arg',
+            result,
+            'Factory should be created from metadata and receive args from metadata.'
+        );
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_resolve_existing_provider_from_metadata() {
+        // Arrange
+        Di.ModuleRef ref = Di.getModuleRef(MetadataExistingModule.class);
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'AliasProvider',
+            Type__c = 'Existing',
+            Value__c = 'TargetService', // This token must exist in the module
+            IsActive__c = true
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProvider' => mockMdt });
+
+        // Act
+        Object target = ref.get('TargetService');
+        Object alias = ref.get('AliasService');
+
+        // Assert
+        Assert.isTrue(target instanceof TestServiceImpl, 'Target service should be of the correct type.');
+        Assert.areEqual(target, alias, 'Alias resolved from metadata should point to the same instance as the target.');
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_throw_exception_for_invalid_provider_type_in_metadata() {
+        // Arrange
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'InvalidProvider',
+            Type__c = 'InvalidType', // This is not a valid provider type
+            Value__c = 'any',
+            IsActive__c = true
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'InvalidProvider' => mockMdt });
+
+        // Act & Assert
+        try {
+            ref.get('InvalidValue');
+            Assert.fail('Expected InvalidProviderException was not thrown for invalid metadata type.');
+        } catch (Di.InvalidProviderException e) {
+            Assert.isTrue(
+                e.getMessage().contains('Invalid provider configuration'),
+                'Exception message should indicate an invalid configuration.'
+            );
+        }
     }
 
     //=========================================================================
@@ -1045,24 +1162,6 @@ private class DiTest {
 
     @IsTest
     @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
-    static void should_throw_exception_for_unsupported_provider_type() {
-        // Arrange: A module uses a custom, unsupported provider type.
-        Di.ModuleRef ref = Di.getModuleRef(InvalidProviderTypeModule.class);
-
-        // Act & Assert: An attempt to get the provider throws the correct configuration error.
-        try {
-            ref.get('invalid');
-            Assert.fail('Expected InvalidProviderException for unsupported provider type.');
-        } catch (Di.InvalidProviderException ex) {
-            Assert.isTrue(
-                ex.getMessage().contains('Invalid provider configuration'),
-                'Error should indicate an invalid provider config.'
-            );
-        }
-    }
-
-    @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_call_inject_method_on_injectable_class() {
         // Arrange: A module provides a class that implements the Injectable interface.
         Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
@@ -1092,6 +1191,7 @@ private class DiTest {
 
         // Act: The clear() method is called.
         Di.clear();
+        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
 
         // Assert: After clearing, getting the global provider fails.
         Di.ModuleRef ref = Di.getModuleRef(EmptyModule.class);
@@ -1179,6 +1279,44 @@ private class DiTest {
             Assert.fail('Expected provider from inactive global module to be unavailable.');
         } catch (Di.UnknownProviderException ex) {
             Assert.isTrue(ex.getMessage().contains('Could not find "cmtGlobalVal" provider'));
+        }
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_throw_exception_when_creating_abstract_module() {
+        // Arrange: An abstract module class that cannot be instantiated.
+        // Act & Assert: Attempting to get a ref to this module should fail.
+        try {
+            Di.getModuleRef(AbstractTestModule.class);
+            Assert.fail('Expected InvalidModuleException was not thrown.');
+        } catch (Di.InvalidModuleException e) {
+            // This confirms the new try-catch block in Di.create() is working.
+            Assert.isTrue(
+                e.getMessage().contains('has a public no-argument constructor'),
+                'Exception message should indicate an instantiation failure.'
+            );
+        }
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_throw_exception_when_resolving_existing_provider_directly() {
+        // Arrange: Get a module that contains an ExistingProvider.
+        Di.ModuleRef ref = Di.getModuleRef(ExistingProviderModule.class);
+        Di.Module module = ref.getModule();
+        Di.Provider provider = module.getProvider('MyAlias');
+
+        // Act & Assert: Directly calling resolve() on an ExistingProvider should be disallowed.
+        try {
+            provider.resolve(ref, null);
+            Assert.fail('Expected InvalidProviderException was not thrown.');
+        } catch (Di.InvalidProviderException e) {
+            // This confirms the defensive exception in ExistingProvider.resolve() is working.
+            Assert.isTrue(
+                e.getMessage().contains('This operation is not supported'),
+                'Exception message should indicate the operation is invalid for this provider type.'
+            );
         }
     }
 
@@ -1294,6 +1432,10 @@ private class DiTest {
     }
     public class ServiceB {
     }
+    public interface IMetadataService {
+    }
+    public class MockMetadataServiceImpl implements IMetadataService {
+    }
 
     // --- Factory Implementations ---
     public class TestFactory implements Di.Factory {
@@ -1304,6 +1446,11 @@ private class DiTest {
     public class ArgsFactory implements Di.Factory {
         public Object newInstance(Di.Container ref, Object args) {
             return 'arg:' + (args != null ? ((List<Object>) args)[0] : '');
+        }
+    }
+    public class StringArgsFactory implements Di.Factory {
+        public Object newInstance(Di.Container ref, Object args) {
+            return 'arg:' + (!String.isBlank((String) args) ? (String) args : '');
         }
     }
     public class InternalConsumerFactory implements Di.Factory {
@@ -1757,14 +1904,37 @@ private class DiTest {
             return new Set<Di.ModuleImport>{ Di.import(SelfImportingModule.class) };
         }
     }
-    public class InvalidProvider extends Di.Provider {
-        public InvalidProvider() {
-            super('invalid');
+    // --- Modules for Metadata Tests ---
+    public class MetadataModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(IMetadataService.class).useMetadata('ConfigurableService'),
+                provide('StringValue').useMetadata('StringValueProvider'),
+                provide('FactoryValue').useMetadata('FactoryProviderWithArgs'),
+                provide('InvalidValue').useMetadata('InvalidProvider')
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
         }
     }
-    public class InvalidProviderTypeModule extends EmptyModule {
+    public class MetadataExistingModule extends Di.Module {
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{ new InvalidProvider() };
+            return new Set<Di.Provider>{
+                // The target provider that the metadata will point to
+                provide('TargetService').useClass(TestServiceImpl.class),
+                // The alias provider that will be configured by metadata
+                provide('AliasService').useMetadata('AliasProvider')
+            };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
         }
     }
     // --- Services for Order Processing Scenario ---
@@ -1945,6 +2115,18 @@ private class DiTest {
                 provide(StatefulLogger.class).useClass(StatefulLogger.class).scope(Di.Scope.SCOPED),
                 provide(RecordProcessor.class).useClass(RecordProcessor.class).scope(Di.Scope.PROTOTYPE)
             };
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
+    }
+    // --- Module for Error Condition Tests ---
+    public abstract class AbstractTestModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>();
         }
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>();

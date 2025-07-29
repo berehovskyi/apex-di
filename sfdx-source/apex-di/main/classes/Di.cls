@@ -51,12 +51,18 @@ public virtual inherited sharing class Di {
         'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
     private static final String CIRCULAR_DEPENDENCY_MESSAGE = 'Circular dependency detected for provider "{0}". Resolution path: {1}';
+    private static final String INVALID_OPERATION_MESSAGE = 'This operation is not supported for this provider type.';
+    private static final String INVALID_DEVELOPER_NAME_MESSAGE = 'The developer name for a metadata provider cannot be blank.';
+    private static final String MISSING_METADATA_PROVIDER_MESSAGE = 'Provider for token "{0}" is configured to use Custom Metadata record "{1}", but a record with that DeveloperName was not found.';
+    private static final String INACTIVE_METADATA_PROVIDER_MESSAGE = 'Provider for token "{0}" is defined by Custom Metadata record "{1}", but the record is inactive.';
+    private static final String INVALID_FACTORY_CLASS_MESSAGE = 'Class "{0}" provided by factory provider "{1}" does not implement the Di.Factory interface.';
 
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ModuleRef> GLOBAL_MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, Provider> GLOBAL_PROVIDERS = new Map<String, Provider>();
 
     private static Boolean hasGlobalLoadBeenAttempted = false;
+    private static Map<String, DI_Provider__mdt> mockProviders;
 
     private static final Map<String, ModuleRef> globalRegistry {
         get {
@@ -73,6 +79,15 @@ public virtual inherited sharing class Di {
             mockGlobalModules = value;
             hasGlobalLoadBeenAttempted = false;
         }
+    }
+    private final static Map<String, DI_Provider__mdt> providerDefinitionByDeveloperName {
+        get {
+            if (providerDefinitionByDeveloperName == null) {
+                providerDefinitionByDeveloperName = getProviders();
+            }
+            return providerDefinitionByDeveloperName;
+        }
+        set;
     }
 
     @TestVisible
@@ -180,11 +195,17 @@ public virtual inherited sharing class Di {
         GLOBAL_MODULE_REGISTRY.clear();
         GLOBAL_PROVIDERS.clear();
         mockGlobalModules = null;
+        mockProviders = null;
     }
 
     @TestVisible
     private static void mockGlobalModules(final Iterable<DI_GlobalModule__mdt> mockModules) {
         mockGlobalModules = mockModules;
+    }
+
+    @TestVisible
+    private static void mockProviders(final Map<String, DI_Provider__mdt> providerByDeveloperName) {
+        mockProviders = providerByDeveloperName;
     }
 
     private static ModuleRef findModuleRef(String token) {
@@ -227,7 +248,15 @@ public virtual inherited sharing class Di {
             new UnknownModuleException(String.format(UNKNOWN_MODULE_MESSAGE, new List<String>{ token }))
         );
 
-        Object raw = moduleType.newInstance();
+        Object raw;
+        try {
+            raw = moduleType.newInstance();
+        } catch (TypeException exc) {
+            throw new InvalidModuleException(
+                String.format(INSTANTIATION_FAILED_MESSAGE, new List<String>{ token }),
+                exc
+            );
+        }
         Validate.isTrue(
             raw instanceof Module,
             new InvalidModuleException(String.format(INVALID_MODULE_MESSAGE, new List<String>{ token }))
@@ -237,11 +266,33 @@ public virtual inherited sharing class Di {
         return module;
     }
 
-    private static Iterable<DI_GlobalModule__mdt> getGlobalModuleDefinitions() {
-        if (Test.isRunningTest() && mockGlobalModules != null) {
-            return mockGlobalModules;
+    private static Object instantiate(final String typeName) {
+        Type providedType = Type.forName(typeName);
+        Validate.isTrue(
+            providedType != null,
+            new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ typeName }))
+        );
+
+        try {
+            return providedType.newInstance();
+        } catch (TypeException exc) {
+            throw new InvalidClassException(
+                String.format(INSTANTIATION_FAILED_MESSAGE, new List<String>{ typeName }),
+                exc
+            );
         }
-        return DI_GlobalModule__mdt.getAll().values();
+    }
+
+    private static Boolean shouldUseMock(final Object mock) {
+        return Test.isRunningTest() && mock != null;
+    }
+
+    private static Iterable<DI_GlobalModule__mdt> getGlobalModuleDefinitions() {
+        return shouldUseMock(mockGlobalModules) ? mockGlobalModules : DI_GlobalModule__mdt.getAll().values();
+    }
+
+    private static Map<String, DI_Provider__mdt> getProviders() {
+        return shouldUseMock(mockProviders) ? mockProviders : DI_Provider__mdt.getAll();
     }
 
     private static void addGlobalProviders(Module module) {
@@ -497,9 +548,13 @@ public virtual inherited sharing class Di {
         public virtual ExistingProvider useExisting(final Type existingToken) {
             return useExisting(existingToken?.getName());
         }
+
+        public virtual CustomMetadataTypesProvider useMetadata(final String developerName) {
+            return new CustomMetadataTypesProvider(token, developerName);
+        }
     }
 
-    public virtual inherited sharing class Provider {
+    public abstract inherited sharing class Provider {
         protected final String token;
         protected Scope scopeType = Scope.SINGLETON;
 
@@ -508,6 +563,8 @@ public virtual inherited sharing class Di {
 
             this.token = token;
         }
+
+        public abstract Object resolve(final Container container, final Object args);
 
         public String getToken() {
             return token;
@@ -535,7 +592,7 @@ public virtual inherited sharing class Di {
     }
 
     public virtual inherited sharing class ClassProvider extends Provider {
-        protected final String type;
+        protected final String typeName;
 
         public ClassProvider(final String token, final String type) {
             super(token);
@@ -544,7 +601,7 @@ public virtual inherited sharing class Di {
                 new InvalidProviderException(String.format(INVALID_PROVIDER_TYPE_MESSAGE, new List<String>{ token }))
             );
 
-            this.type = type;
+            typeName = type;
         }
 
         public ClassProvider(final String token, final Type type) {
@@ -559,8 +616,12 @@ public virtual inherited sharing class Di {
             this(token?.getName(), type);
         }
 
+        public override Object resolve(final Container container, final Object args) {
+            return instantiate(typeName);
+        }
+
         public String getType() {
-            return type;
+            return typeName;
         }
     }
 
@@ -572,7 +633,7 @@ public virtual inherited sharing class Di {
             this.value = value;
         }
 
-        public Object getValue() {
+        public override Object resolve(final Container container, final Object args) {
             return value;
         }
     }
@@ -587,8 +648,8 @@ public virtual inherited sharing class Di {
             this.factory = factory;
         }
 
-        public Factory getFactory() {
-            return factory;
+        public override Object resolve(final Container container, final Object args) {
+            return factory.newInstance(container, args);
         }
     }
 
@@ -604,6 +665,77 @@ public virtual inherited sharing class Di {
 
         public String getExisting() {
             return existing;
+        }
+
+        public override Object resolve(final Container container, final Object args) {
+            throw new InvalidProviderException(INVALID_OPERATION_MESSAGE);
+        }
+    }
+
+    public virtual inherited sharing class CustomMetadataTypesProvider extends Provider {
+        protected final String developerName;
+
+        public CustomMetadataTypesProvider(final String token, final String developerName) {
+            super(token);
+            Validate.isTrue(
+                !String.isBlank(developerName),
+                new InvalidProviderException(INVALID_DEVELOPER_NAME_MESSAGE)
+            );
+
+            this.developerName = developerName;
+        }
+
+        public override Object resolve(final Container container, final Object args) {
+            DI_Provider__mdt definition = providerDefinitionByDeveloperName.get(developerName);
+            Validate.isTrue(
+                definition != null,
+                new InvalidProviderException(
+                    String.format(MISSING_METADATA_PROVIDER_MESSAGE, new List<String>{ token, developerName })
+                )
+            );
+            Validate.isTrue(
+                definition.IsActive__c,
+                new InvalidProviderException(
+                    String.format(INACTIVE_METADATA_PROVIDER_MESSAGE, new List<String>{ token, developerName })
+                )
+            );
+
+            Scope scopeType = !String.isBlank(definition.Scope__c)
+                ? Scope.valueOf(definition.Scope__c)
+                : this.scopeType;
+            // Runtime args have the highest priority
+            Object factoryArgs = args ?? definition.Args__c;
+            String typeName = definition.Type__c;
+            Provider provider;
+            switch on typeName {
+                when 'Class' {
+                    provider = new ClassProvider(token, definition.Value__c);
+                }
+                when 'Value' {
+                    provider = new ValueProvider(token, definition.Value__c);
+                }
+                when 'Factory' {
+                    Object raw = instantiate(definition.Value__c);
+                    Validate.isTrue(
+                        raw instanceof Factory,
+                        new InvalidClassException(
+                            String.format(INVALID_FACTORY_CLASS_MESSAGE, new List<String>{ definition.Value__c, token })
+                        )
+                    );
+
+                    provider = new FactoryProvider(token, (Factory) raw);
+                }
+                when 'Existing' {
+                    return container.get(definition.Value__c, factoryArgs);
+                }
+                when else {
+                    throw new InvalidProviderException(
+                        String.format(INVALID_PROVIDER_CONFIG_MESSAGE, new List<String>{ token })
+                    );
+                }
+            }
+
+            return provider.scope(scopeType).resolve(container, factoryArgs);
         }
     }
 
@@ -710,32 +842,7 @@ public virtual inherited sharing class Di {
         }
 
         protected Object newInstance(final Provider provider, final Object args) {
-            if (provider instanceof ClassProvider) {
-                String typeName = ((ClassProvider) provider).getType();
-                Type providedType = Type.forName(typeName);
-                Validate.isTrue(
-                    providedType != null,
-                    new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ typeName }))
-                );
-
-                try {
-                    return providedType.newInstance();
-                } catch (TypeException exc) {
-                    throw new InvalidClassException(
-                        String.format(INSTANTIATION_FAILED_MESSAGE, new List<String>{ typeName }),
-                        exc
-                    );
-                }
-            }
-            if (provider instanceof ValueProvider) {
-                return ((ValueProvider) provider).getValue();
-            }
-            if (provider instanceof FactoryProvider) {
-                return ((FactoryProvider) provider).getFactory().newInstance(this, args);
-            }
-            throw new InvalidProviderException(
-                String.format(INVALID_PROVIDER_CONFIG_MESSAGE, new List<String>{ provider.getToken() })
-            );
+            return provider.resolve(this, args);
         }
 
         protected virtual Object inject(final Object instance) {
