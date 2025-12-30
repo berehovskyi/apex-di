@@ -639,6 +639,44 @@ private class DiTest {
         }
     }
 
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_reset_metadata_cache_on_clear() {
+        // Arrange: Prepare two different mock metadata configurations for the same token.
+        DI_Provider__mdt mockMdt1 = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Value',
+            Value__c = 'FirstValue',
+            IsActive__c = true
+        );
+        DI_Provider__mdt mockMdt2 = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Value',
+            Value__c = 'SecondValue',
+            IsActive__c = true
+        );
+
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act 1: Load the first mock and resolve it. This should populate the static cache in Di.cls.
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt1 });
+        Object result1 = ref.resolve(IMetadataService.class);
+
+        // Act 2: Clear the framework state. This SHOULD clear the static cache.
+        Di.clear();
+
+        // Act 3: Load the second mock and resolve it.
+        // If the cache was not cleared, this will return 'FirstValue' again.
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt2 });
+        // We must re-get the module ref because clear() wiped the module registry
+        ref = Di.getModuleRef(MetadataModule.class);
+        Object result2 = ref.resolve(IMetadataService.class);
+
+        // Assert
+        Assert.areEqual('FirstValue', result1, 'Pre-condition: First mock should resolve correctly.');
+        Assert.areEqual('SecondValue', result2, 'Post-clear: Second mock should be used, proving the validation cache was reset.');
+    }
+
     //=========================================================================
     // Module System (Imports, Exports, Overrides)
     //=========================================================================

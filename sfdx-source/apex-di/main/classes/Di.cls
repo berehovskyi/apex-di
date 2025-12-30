@@ -80,7 +80,7 @@ public virtual inherited sharing class Di {
             hasGlobalLoadBeenAttempted = false;
         }
     }
-    private final static Map<String, DI_Provider__mdt> providerDefinitionByDeveloperName {
+    private static Map<String, DI_Provider__mdt> providerDefinitionByDeveloperName {
         get {
             if (providerDefinitionByDeveloperName == null) {
                 providerDefinitionByDeveloperName = getProviders();
@@ -196,6 +196,7 @@ public virtual inherited sharing class Di {
         GLOBAL_PROVIDERS.clear();
         mockGlobalModules = null;
         mockProviders = null;
+        providerDefinitionByDeveloperName = null;
     }
 
     @TestVisible
@@ -205,6 +206,7 @@ public virtual inherited sharing class Di {
 
     @TestVisible
     private static void mockProviders(final Map<String, DI_Provider__mdt> providerByDeveloperName) {
+        providerDefinitionByDeveloperName = null;
         mockProviders = providerByDeveloperName;
     }
 
@@ -451,7 +453,7 @@ public virtual inherited sharing class Di {
             return false;
         }
 
-        public override Integer hashCode() {
+        public Integer hashCode() {
             return System.hashCode(token);
         }
     }
