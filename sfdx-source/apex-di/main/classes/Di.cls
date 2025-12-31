@@ -56,6 +56,7 @@ public virtual inherited sharing class Di {
     private static final String MISSING_METADATA_PROVIDER_MESSAGE = 'Provider for token "{0}" is configured to use Custom Metadata record "{1}", but a record with that DeveloperName was not found.';
     private static final String INACTIVE_METADATA_PROVIDER_MESSAGE = 'Provider for token "{0}" is defined by Custom Metadata record "{1}", but the record is inactive.';
     private static final String INVALID_FACTORY_CLASS_MESSAGE = 'Class "{0}" provided by factory provider "{1}" does not implement the Di.Factory interface.';
+    private static final String ARGS_NOT_SUPPORTED_MESSAGE = 'Arguments are only supported for FactoryProvider.';
 
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ModuleRef> GLOBAL_MODULE_REGISTRY = new Map<String, ModuleRef>();
@@ -619,6 +620,7 @@ public virtual inherited sharing class Di {
         }
 
         public override Object resolve(final Container container, final Object args) {
+            Validate.isTrue(args == null, new InvalidProviderException(ARGS_NOT_SUPPORTED_MESSAGE));
             return instantiate(typeName);
         }
 
@@ -636,6 +638,7 @@ public virtual inherited sharing class Di {
         }
 
         public override Object resolve(final Container container, final Object args) {
+            Validate.isTrue(args == null, new InvalidProviderException(ARGS_NOT_SUPPORTED_MESSAGE));
             return value;
         }
     }
@@ -928,11 +931,13 @@ public virtual inherited sharing class Di {
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
             String key = provider.getToken();
-            if (cache.containsKey(key)) {
+            if (args == null && provider.getScope() == Scope.SINGLETON && cache.containsKey(key)) {
                 return cache.get(key);
             }
             Object instance = newInstance(provider, args);
-            cache.put(key, instance);
+            if (args == null && provider.getScope() == Scope.SINGLETON) {
+                cache.put(key, instance);
+            }
             return inject(instance);
         }
 
@@ -963,11 +968,13 @@ public virtual inherited sharing class Di {
         protected virtual override Object getInstance(final Provider provider, final Object args) {
             if (provider.getScope() === Scope.SCOPED) {
                 String key = provider.getToken();
-                if (scopedCache.containsKey(key)) {
+                if (args == null && scopedCache.containsKey(key)) {
                     return scopedCache.get(key);
                 }
                 Object instance = newInstance(provider, args);
-                scopedCache.put(key, instance);
+                if (args == null) {
+                    scopedCache.put(key, instance);
+                }
                 return inject(instance);
             }
             return parent.getInstance(provider, args);
