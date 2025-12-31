@@ -1019,15 +1019,17 @@ public virtual inherited sharing class Di {
         public virtual ModuleImport immediately() {
             isEager = true;
             // eagerly registers the module if it isn't already
-            cachedModule = cachedModule != null
-                ? Di.getModuleRef(cachedModule).getModule()
-                : Di.getModuleRef(token).getModule();
+            if (cachedModule != null) {
+                Di.getModuleRef(cachedModule);
+            } else {
+                Di.getModuleRef(token).getModule();
+            }
             return this;
         }
 
         public virtual Module resolve() {
             if (cachedModule != null) {
-                return isEager ? cachedModule : Di.getModuleRef(cachedModule).getModule();
+                return cachedModule;
             }
             return Di.getModuleRef(token).getModule();
         }

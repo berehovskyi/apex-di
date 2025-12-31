@@ -1960,6 +1960,26 @@ private class DiTest {
             return new Set<Di.Provider>{ provide('dependentVal').useFactory(new DependentProviderFactory()) };
         }
     }
+    public class ReplacementValueModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('val').useValue('replaced') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'val' };
+        }
+    }
+    public class CachedImportModule extends EmptyModule {
+        private Set<Di.ModuleImport> imports;
+        public override Set<Di.ModuleImport> imports() {
+            if (imports == null) {
+                imports = new Set<Di.ModuleImport>{ Di.import(ValueModule.class).immediately() };
+            }
+            return imports;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('dependentVal').useFactory(new DependentProviderFactory()) };
+        }
+    }
     public class LazyErrorConsumerModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import('NonExistent.Module') };
