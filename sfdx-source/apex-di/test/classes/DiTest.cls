@@ -677,6 +677,63 @@ private class DiTest {
         Assert.areEqual('SecondValue', result2, 'Post-clear: Second mock should be used, proving the validation cache was reset.');
     }
 
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_respect_scope_defined_in_metadata() {
+        // Arrange: Mock a metadata provider with SCOPED scope.
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Class',
+            Value__c = 'DiTest.TestServiceImpl',
+            IsActive__c = true,
+            Scope__c = 'SCOPED'
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act: Create two scopes and resolve the provider from each.
+        Di.ScopeRef scope1 = ref.createScope();
+        Di.ScopeRef scope2 = ref.createScope();
+
+        // We use the string token because that's how the metadata provider is registered in MetadataModule
+        Object instance1 = scope1.get(IMetadataService.class);
+        Object instance2 = scope2.get(IMetadataService.class);
+
+        // Assert: They should be different instances (SCOPED).
+        Assert.areNotEqual(
+            instance1,
+            instance2,
+            'Metadata-defined SCOPED provider should return different instances for different scopes.'
+        );
+    }
+
+    @IsTest
+    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_respect_prototype_scope_in_metadata() {
+        // Arrange: Mock a metadata provider with PROTOTYPE scope.
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Class',
+            Value__c = 'DiTest.TestServiceImpl',
+            IsActive__c = true,
+            Scope__c = 'PROTOTYPE'
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act: Resolve twice from the same container.
+        // Note: We use resolve() because get() throws for PROTOTYPE.
+        Object instance1 = ref.resolve(IMetadataService.class);
+        Object instance2 = ref.resolve(IMetadataService.class);
+
+        // Assert: They should be different instances (PROTOTYPE).
+        Assert.areNotEqual(
+            instance1,
+            instance2,
+            'Metadata-defined PROTOTYPE provider should return new instance on every resolve.'
+        );
+    }
+
     //=========================================================================
     // Module System (Imports, Exports, Overrides)
     //=========================================================================

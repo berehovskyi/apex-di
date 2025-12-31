@@ -572,7 +572,7 @@ public virtual inherited sharing class Di {
             return token;
         }
 
-        public Scope getScope() {
+        public virtual Scope getScope() {
             return scopeType;
         }
 
@@ -685,6 +685,16 @@ public virtual inherited sharing class Di {
             );
 
             this.developerName = developerName;
+        }
+
+        public override Scope getScope() {
+            if (providerDefinitionByDeveloperName.containsKey(developerName)) {
+                DI_Provider__mdt definition = providerDefinitionByDeveloperName.get(developerName);
+                if (!String.isBlank(definition?.Scope__c)) {
+                    return Scope.valueOf(definition.Scope__c);
+                }
+            }
+            return super.getScope();
         }
 
         public override Object resolve(final Container container, final Object args) {
