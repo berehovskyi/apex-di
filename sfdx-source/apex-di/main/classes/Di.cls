@@ -362,10 +362,6 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Provider getProvider(final String token) {
-            return getProvider(token, new List<String>());
-        }
-
-        protected virtual Provider getProvider(final String token, final List<String> resolutionPath) {
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             // First check local definitions
@@ -379,7 +375,7 @@ public virtual inherited sharing class Di {
                 if (!module.hasExport(token)) {
                     continue;
                 }
-                Provider provider = module.getProvider(token, resolutionPath);
+                Provider provider = module.getProvider(token);
                 if (provider != null) {
                     return provider;
                 }
@@ -741,7 +737,11 @@ public virtual inherited sharing class Di {
                     provider = new FactoryProvider(token, (Factory) raw);
                 }
                 when 'Existing' {
-                    return container.get(definition.Value__c, factoryArgs);
+                    try {
+                        return container.get(definition.Value__c, factoryArgs);
+                    } catch (InvalidScopeException e) {
+                        return container.resolve(definition.Value__c, factoryArgs);
+                    }
                 }
                 when else {
                     throw new InvalidProviderException(
@@ -1054,9 +1054,6 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Module resolve() {
-            if (cachedModule != null) {
-                return cachedModule;
-            }
             return Di.getModuleRef(token).getModule();
         }
 

@@ -637,6 +637,26 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_respect_prototype_scope_in_existing_provider() {
+        // Arrange
+        Di.ModuleRef ref = Di.getModuleRef(MetadataProtoAliasModule.class);
+
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'AliasProtoProvider',
+            Type__c = 'Existing',
+            Value__c = 'PrototypeService',
+            IsActive__c = true
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProtoProvider' => mockMdt });
+
+        // Act & Assert
+        Object inst1 = ref.resolve('AliasService');
+        Object inst2 = ref.resolve('AliasService');
+
+        Assert.areNotEqual(inst1, inst2, 'Existing provider pointing to Prototype should return new instances.');
+    }
+
+    @IsTest
     @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_for_invalid_provider_type_in_metadata() {
         // Arrange
@@ -2432,5 +2452,16 @@ private class DiTest {
         private final String val;
         public StringFactory(String val) { this.val = val; }
         public Object newInstance(Di.Container c, Object args) { return val; }
+    }
+
+    public class MetadataProtoAliasModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('PrototypeService').useClass(TestServiceImpl.class).scope(Di.Scope.PROTOTYPE),
+                provide('AliasService').useMetadata('AliasProtoProvider')
+            };
+        }
+        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public override Set<String> exports() { return new Set<String>(); }
     }
 }

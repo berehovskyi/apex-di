@@ -12,7 +12,7 @@ This is an advanced, NestJS-inspired Dependency Injection (DI) framework for Ape
     * **`useClass`:** Binds a token to a class constructor.
     * **`useValue`:** Binds a token to a literal value.
     * **`useFactory`:** Binds a token to the output of a factory class.
-    * **`useExisting`:** Creates a true singleton alias for an existing provider token.
+    * **`useExisting`:** Creates an alias for an existing provider token. It **respects the target provider's scope**: if the target is `PROTOTYPE`, the alias behaves as a prototype; if `SINGLETON`, it forces a singleton resolution.
 * **Lazy Resolution:** By default, module imports are resolved lazily when a provider is first requested. The `.immediately()` method on a `ModuleImport` can be used to force eager resolution.
 * **Scopes:** The framework supports three provider lifetimes:
     * **`SINGLETON` (Default):** A single instance is created and shared for the entire transaction (i.e., for the life of the root `ModuleRef`).
@@ -29,3 +29,4 @@ This is an advanced, NestJS-inspired Dependency Injection (DI) framework for Ape
     * `ModuleRef.replace(newProvider)` is the safe way to replace a provider at runtime on the root container.
     * `ModuleRef.refresh()` allows a `DynamicModule` to be re-initialized within the root container.
 * **Automatic Circular Dependency Resolution:** The framework can automatically resolve instantiation-time circular dependencies between `Injectable` classes by using a two-pass instantiation process (create blank instance -> cache -> inject dependencies). It will still detect and throw an exception for unresolvable alias-based (`useExisting`) cycles.
+* **Scope Integrity & Lazy Refresh:** To ensure consistency when modules are swapped at runtime (e.g., during tests), `ScopeRef` instances employ a **lazy refresh mechanism**. On every resolution, they check if their parent `ModuleRef` in the `Di` registry has changed. If a replacement is detected, `ScopeRef` automatically updates its parent reference and flushes its local "Unit of Work" cache to prevent serving stale dependencies.
