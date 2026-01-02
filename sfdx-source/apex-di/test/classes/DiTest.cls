@@ -16,7 +16,6 @@ private class DiTest {
     // Core Provider Tests (get, resolve, scopes)
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_same_instance_for_singleton_scope() {
         // Arrange: A module with a default (singleton) provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
@@ -30,7 +29,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_new_instance_when_using_resolve() {
         // Arrange: A module with a singleton provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
@@ -71,7 +69,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_new_instance_for_prototype_scope() {
         // Arrange: A module with a prototype-scoped provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
@@ -85,7 +82,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_getting_prototype_provider() {
         // Arrange: A module with a prototype-scoped provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
@@ -104,7 +100,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_provider_is_not_found() {
         // Arrange: A module is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
@@ -126,7 +121,6 @@ private class DiTest {
     // Core SCOPED Lifetime Tests
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_same_instance_within_one_scope() {
         // Arrange: Register a module with a SCOPED provider.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedModule.class);
@@ -161,7 +155,60 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
+    static void should_not_cache_scoped_provider() {
+        // Arrange
+        Di.clear();
+        Di.ModuleRef consumerCtn = Di.getModuleRef(ScopedModule.class);
+
+        // Act
+        // 1. Resolve in a scope
+        Di.ScopeRef scope1 = consumerCtn.createScope();
+        Object instance1 = scope1.get(ScopedService.class);
+
+        // 2. Resolve in a DIFFERENT scope
+        Di.ScopeRef scope2 = consumerCtn.createScope();
+        Object instance2 = scope2.get(ScopedService.class);
+
+        // Assert
+        Assert.areNotEqual(instance1, instance2, 'Different scopes should return different instances for SCOPED provider');
+
+        Object instanceRoot = consumerCtn.get(ScopedService.class);
+        Object instanceRoot2 = consumerCtn.get(ScopedService.class);
+
+        Assert.areNotEqual(instance1, instanceRoot, 'Scoped instance should not define Root instance');
+        Assert.areNotEqual(instanceRoot, instanceRoot2, 'Scoped provider resolved from Root should return new instances if not strictly singleton?');
+    }
+
+    @IsTest
+    static void should_evict_scoped_provider_from_cache_on_injection_failure() {
+        // Arrange
+        ScopedInjectionFailureModule mod = new ScopedInjectionFailureModule();
+        Di.ModuleRef ref = Di.addModule(mod);
+        Di.ScopeRef scope = ref.createScope();
+
+        // Act 1: First attempt fails
+        try {
+            scope.get('BrokenService');
+            Assert.fail('Should have thrown DiException');
+        } catch (Di.DiException e) {
+             Assert.areEqual('Injection Failed Intentional', e.getMessage(), 'Should bubble up the injection exception');
+        }
+
+        // Act 2: Second attempt should have evicted the broken instance and try again
+        try {
+            scope.get('BrokenService');
+            Assert.fail('Should have thrown DiException on retry');
+        } catch (Di.DiException e) {
+             // Success if we get here.
+             // We verify that it TRIED to instantiate/inject again.
+             // Instantiation count should be 2 because the first one failed during injection (after instantiation) and was evicted.
+             // So the second attempt creates a NEW instance.
+             Assert.areEqual(2, mod.factory.instantiationCount, 'Should have re-instantiated the service');
+             Assert.areEqual(2, mod.factory.injectionAttempts, 'Should have re-attempted injection');
+        }
+    }
+
+    @IsTest
     static void should_resolve_singleton_dependency_from_a_scope() {
         // Arrange: Register a module with a SCOPED provider that depends on a SINGLETON provider.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedWithSingletonDepModule.class);
@@ -189,7 +236,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_prototype_dependency_from_a_scope() {
         // Arrange: Register a module with a SCOPED provider that depends on a PROTOTYPE provider.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedWithPrototypeDepModule.class);
@@ -210,7 +256,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_clear_cache_for_a_specific_scope() {
         // Arrange: Register a module and create a scope.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedModule.class);
@@ -256,7 +301,6 @@ private class DiTest {
     // Provider Types (Value, Factory, Class, Existing, Metadata)
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_configured_value_for_value_provider() {
         // Arrange: A module with a ValueProvider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
@@ -271,7 +315,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_instance_from_factory_for_factory_provider() {
         // Arrange: A module with a FactoryProvider is registered.
         Di.ModuleRef ref = Di.getModuleRef(FactoryModule.class);
@@ -284,7 +327,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_pass_arguments_to_factory_provider() {
         // Arrange: A module with a FactoryProvider that accepts arguments is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsModule.class);
@@ -297,7 +339,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_get_provider_by_type_with_arguments() {
         // Arrange: A module with a factory provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
@@ -310,7 +351,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_provider_by_type_with_arguments() {
         // Arrange: A module with a factory provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
@@ -325,7 +365,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_provider_by_type_without_arguments() {
         // Arrange: A module with a standard provider is registered using a Type token.
         Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
@@ -340,7 +379,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_replace_existing_class_provider() {
         // Arrange: A module with a standard provider is registered using a Type token.
         Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
@@ -361,7 +399,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_replace_existing_provider() {
         // Arrange: A module is registered with an initial provider.
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
@@ -376,7 +413,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_instantiate_class_by_string_name() {
         // Arrange: A module provides a class using its string name.
         Di.ModuleRef ref = Di.getModuleRef(StringTypeModule.class);
@@ -389,7 +425,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_create_class_provider_from_type() {
         // Arrange: A provider is created using the Type constructor overload.
         Di.ClassProvider provider1 = new Di.ClassProvider('TestService', TestServiceImpl.class);
@@ -413,7 +448,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_provider_using_existing_alias() {
         // Arrange: A module is registered with a provider aliased by another token.
         Di.ModuleRef ref = Di.getModuleRef(ExistingProviderModule.class);
@@ -427,8 +461,10 @@ private class DiTest {
         Assert.areEqual(original, alias, 'Alias should resolve to the same instance as the original provider.');
     }
 
+    //=========================================================================
+    // Circular Dependencies
+    //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_for_circular_existing_alias() {
         // Arrange: A module is registered with a circular alias dependency (A -> B -> A).
         Di.ModuleRef ref = Di.getModuleRef(CircularExistingProviderModule.class);
@@ -446,7 +482,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_correctly_detect_alias_based_circular_dependency() {
         // Arrange: Get the container for the alias-based cycle.
         Di.ModuleRef container = Di.getModuleRef(AliasCircularAModule.class);
@@ -469,7 +504,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_detect_factory_based_circular_dependency() {
         // Arrange: Get the container for the factory-based cycle.
         Di.ModuleRef container = Di.getModuleRef(FactoryCircularAModule.class);
@@ -495,7 +529,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_prototype_provider_using_existing_alias() {
         // Arrange: A module is registered with a PROTOTYPE provider aliased by another token.
         Di.ModuleRef ref = Di.getModuleRef(ExistingPrototypeProviderModule.class);
@@ -513,7 +546,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_getting_prototype_alias_to_singleton() {
         // Arrange: A module with a SINGLETON provider ('TestService') is aliased by a
         // PROTOTYPE provider ('AliasService').
@@ -535,7 +567,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_circular_dependency_without_forward_ref() {
         // Arrange: Get the container for the module containing the circular dependency.
         Di.ModuleRef container = Di.getModuleRef(ForwardRefModule.class);
@@ -566,8 +597,10 @@ private class DiTest {
         );
     }
 
+    //=========================================================================
+    // Metadata Provider Tests
+    //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_class_provider_from_mocked_metadata() {
         // Arrange: Define a module that uses the new .useMetadata() method.
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
@@ -593,7 +626,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_value_provider_from_metadata() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
@@ -617,7 +649,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_factory_provider_from_metadata_with_args() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
@@ -642,7 +673,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_existing_provider_from_metadata() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataExistingModule.class);
@@ -684,7 +714,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_for_invalid_provider_type_in_metadata() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
@@ -709,41 +738,100 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_not_cache_scoped_provider() {
-        // Arrange
+    static void should_reset_metadata_cache_on_clear() {
+        // Arrange: Prepare two different mock metadata configurations for the same token.
+        DI_Provider__mdt mockMdt1 = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Value',
+            Value__c = 'FirstValue',
+            IsActive__c = true
+        );
+        DI_Provider__mdt mockMdt2 = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Value',
+            Value__c = 'SecondValue',
+            IsActive__c = true
+        );
+
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act 1: Load the first mock and resolve it. This should populate the static cache in Di.cls.
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt1 });
+        Object result1 = ref.resolve(IMetadataService.class);
+
+        // Act 2: Clear the framework state. This SHOULD clear the static cache.
         Di.clear();
-        Di.ModuleRef consumerCtn = Di.getModuleRef(ScopedModule.class);
 
-        // Act
-        // 1. Resolve in a scope
-        Di.ScopeRef scope1 = consumerCtn.createScope();
-        Object instance1 = scope1.get(ScopedService.class);
-
-        // 2. Resolve in a DIFFERENT scope
-        Di.ScopeRef scope2 = consumerCtn.createScope();
-        Object instance2 = scope2.get(ScopedService.class);
+        // Act 3: Load the second mock and resolve it.
+        // If the cache was not cleared, this will return 'FirstValue' again.
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt2 });
+        // We must re-get the module ref because clear() wiped the module registry
+        ref = Di.getModuleRef(MetadataModule.class);
+        Object result2 = ref.resolve(IMetadataService.class);
 
         // Assert
-        Assert.areNotEqual(instance1, instance2, 'Different scopes should return different instances for SCOPED provider');
-
-        // Also verify that accessing from main container (ModuleRef) does NOT return the scoped instance?
-        // If the bug exists (Leak into Singleton Cache), then:
-        // 1. Scope1 resolves -> Caches in ModuleRef (Bug)
-        // 2. Scope2 resolves -> Gets from ModuleRef (Bug) -> Same instance
-        // 3. ModuleRef.get() -> Gets from ModuleRef (Bug) -> Same instance
-
-        Object instanceRoot = consumerCtn.get(ScopedService.class);
-        Object instanceRoot2 = consumerCtn.get(ScopedService.class);
-
-        Assert.areNotEqual(instance1, instanceRoot, 'Scoped instance should not define Root instance');
-
-        // This assertion might fail if Root resolves NEW instance every time for SCOPED provider (correct behavior for Root vs Scope?)
-        // OR it might fail if Bug causes Singleton behavior.
-        // If Bug: instanceRoot == instance1 (if leak happened) OR instanceRoot is singleton.
-
-        Assert.areNotEqual(instanceRoot, instanceRoot2, 'Scoped provider resolved from Root should return new instances if not strictly singleton?');
+        Assert.areEqual('FirstValue', result1, 'Pre-condition: First mock should resolve correctly.');
+        Assert.areEqual('SecondValue', result2, 'Post-clear: Second mock should be used, proving the validation cache was reset.');
     }
 
+    @IsTest
+    static void should_respect_scope_defined_in_metadata() {
+        // Arrange: Mock a metadata provider with SCOPED scope.
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Class',
+            Value__c = 'DiTest.TestServiceImpl',
+            IsActive__c = true,
+            Scope__c = 'SCOPED'
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act: Create two scopes and resolve the provider from each.
+        Di.ScopeRef scope1 = ref.createScope();
+        Di.ScopeRef scope2 = ref.createScope();
+
+        // We use the string token because that's how the metadata provider is registered in MetadataModule
+        Object instance1 = scope1.get(IMetadataService.class);
+        Object instance2 = scope2.get(IMetadataService.class);
+
+        // Assert: They should be different instances (SCOPED).
+        Assert.areNotEqual(
+            instance1,
+            instance2,
+            'Metadata-defined SCOPED provider should return different instances for different scopes.'
+        );
+    }
+
+    @IsTest
+    static void should_respect_prototype_scope_in_metadata() {
+        // Arrange: Mock a metadata provider with PROTOTYPE scope.
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Class',
+            Value__c = 'DiTest.TestServiceImpl',
+            IsActive__c = true,
+            Scope__c = 'PROTOTYPE'
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act: Resolve twice from the same container.
+        // Note: We use resolve() because get() throws for PROTOTYPE.
+        Object instance1 = ref.resolve(IMetadataService.class);
+        Object instance2 = ref.resolve(IMetadataService.class);
+
+        // Assert: They should be different instances (PROTOTYPE).
+        Assert.areNotEqual(
+            instance1,
+            instance2,
+            'Metadata-defined PROTOTYPE provider should return new instance on every resolve.'
+        );
+    }
+
+    //=========================================================================
+    // Arguments & Caching
+    //=========================================================================
     @IsTest
     static void should_bypass_cache_with_args() {
         // Arrange
@@ -810,106 +898,13 @@ private class DiTest {
             // Assert.fail('Should throw exception when passing args to ExistingProvider');
         } catch (Exception e) {
         }
-    } @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
-    static void should_reset_metadata_cache_on_clear() {
-        // Arrange: Prepare two different mock metadata configurations for the same token.
-        DI_Provider__mdt mockMdt1 = new DI_Provider__mdt(
-            DeveloperName = 'ConfigurableService',
-            Type__c = 'Value',
-            Value__c = 'FirstValue',
-            IsActive__c = true
-        );
-        DI_Provider__mdt mockMdt2 = new DI_Provider__mdt(
-            DeveloperName = 'ConfigurableService',
-            Type__c = 'Value',
-            Value__c = 'SecondValue',
-            IsActive__c = true
-        );
-
-        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
-
-        // Act 1: Load the first mock and resolve it. This should populate the static cache in Di.cls.
-        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt1 });
-        Object result1 = ref.resolve(IMetadataService.class);
-
-        // Act 2: Clear the framework state. This SHOULD clear the static cache.
-        Di.clear();
-
-        // Act 3: Load the second mock and resolve it.
-        // If the cache was not cleared, this will return 'FirstValue' again.
-        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt2 });
-        // We must re-get the module ref because clear() wiped the module registry
-        ref = Di.getModuleRef(MetadataModule.class);
-        Object result2 = ref.resolve(IMetadataService.class);
-
-        // Assert
-        Assert.areEqual('FirstValue', result1, 'Pre-condition: First mock should resolve correctly.');
-        Assert.areEqual('SecondValue', result2, 'Post-clear: Second mock should be used, proving the validation cache was reset.');
     }
 
-    @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
-    static void should_respect_scope_defined_in_metadata() {
-        // Arrange: Mock a metadata provider with SCOPED scope.
-        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
-            DeveloperName = 'ConfigurableService',
-            Type__c = 'Class',
-            Value__c = 'DiTest.TestServiceImpl',
-            IsActive__c = true,
-            Scope__c = 'SCOPED'
-        );
-        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
-        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
-
-        // Act: Create two scopes and resolve the provider from each.
-        Di.ScopeRef scope1 = ref.createScope();
-        Di.ScopeRef scope2 = ref.createScope();
-
-        // We use the string token because that's how the metadata provider is registered in MetadataModule
-        Object instance1 = scope1.get(IMetadataService.class);
-        Object instance2 = scope2.get(IMetadataService.class);
-
-        // Assert: They should be different instances (SCOPED).
-        Assert.areNotEqual(
-            instance1,
-            instance2,
-            'Metadata-defined SCOPED provider should return different instances for different scopes.'
-        );
-    }
-
-    @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
-    static void should_respect_prototype_scope_in_metadata() {
-        // Arrange: Mock a metadata provider with PROTOTYPE scope.
-        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
-            DeveloperName = 'ConfigurableService',
-            Type__c = 'Class',
-            Value__c = 'DiTest.TestServiceImpl',
-            IsActive__c = true,
-            Scope__c = 'PROTOTYPE'
-        );
-        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
-        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
-
-        // Act: Resolve twice from the same container.
-        // Note: We use resolve() because get() throws for PROTOTYPE.
-        Object instance1 = ref.resolve(IMetadataService.class);
-        Object instance2 = ref.resolve(IMetadataService.class);
-
-        // Assert: They should be different instances (PROTOTYPE).
-        Assert.areNotEqual(
-            instance1,
-            instance2,
-            'Metadata-defined PROTOTYPE provider should return new instance on every resolve.'
-        );
-    }
 
     //=========================================================================
     // Module System (Imports, Exports, Overrides)
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_provider_for_internal_use_from_imported_module() {
         // Arrange: A module that imports another module is registered.
         Di.ModuleRef ref = Di.getModuleRef(InternalConsumerModule.class);
@@ -922,7 +917,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_allow_local_provider_to_override_imported_provider() {
         // Arrange: A module imports another module but also provides a provider with the same token.
         Di.ModuleRef ref = Di.getModuleRef(OverrideModule.class);
@@ -937,7 +931,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_handle_circular_imports_gracefully() {
         // Arrange: Modules with a circular dependency (A -> B -> C -> A) are defined.
         Exception unexpectedEx;
@@ -957,7 +950,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_prevent_recursion_when_registering_self_importing_module() {
         // Arrange: A module that imports itself is defined.
         Exception unexpectedEx;
@@ -974,7 +966,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_exporting_unknown_provider() {
         // Arrange: A module attempts to export a token that it does not provide.
         // Act: An attempt is made to register the module.
@@ -991,7 +982,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_get_module_ref_by_instance() {
         // Arrange: A module instance is created but not yet registered.
         Di.Module mod = new ValueModule();
@@ -1005,7 +995,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_existing_ref_for_registered_module_instance() {
         // Arrange: A local module and a global module are registered.
         Di.Module localMod = new ValueModule();
@@ -1023,7 +1012,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_evaluate_module_equality_based_on_token() {
         // Arrange: Create two modules with the same token and one with a different token.
         Di.Module moduleA1 = new Di.DynamicModule('ModuleA');
@@ -1039,7 +1027,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_correctly_report_has_provider_import_and_export() {
         // Arrange: Get modules with different configurations to test each method.
         Di.Module modWithImport = Di.getModuleRef(InternalConsumerModule.class).getModule();
@@ -1067,7 +1054,6 @@ private class DiTest {
     // Module Re-Exporting Tests
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_provider_from_reexported_module() {
         // Arrange: ModuleA imports ModuleB, which imports and re-exports ModuleC.
         Di.ModuleRef ref = Di.getModuleRef(ReexportConsumerModule.class);
@@ -1080,7 +1066,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_not_resolve_provider_if_not_reexported() {
         // Arrange: ModuleA imports ModuleB, which imports but does NOT re-export ModuleC.
         Di.ModuleRef ref = Di.getModuleRef(NonReexportConsumerModule.class);
@@ -1099,7 +1084,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_reexport_from_dynamic_module() {
         // Arrange: A dynamic module is configured to import and re-export another module.
         Di.addModule(new ServiceCModule());
@@ -1118,7 +1102,6 @@ private class DiTest {
     // Lazy vs. Eager Imports
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_delay_module_resolution_for_lazy_import() {
         // Arrange: A consumer module lazily imports a module that does not exist yet.
         Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
@@ -1135,7 +1118,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_module_immediately_for_immediate_import() {
         // Arrange: The dependency module is registered first.
         Di.addModule(new ValueModule());
@@ -1152,7 +1134,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_at_runtime_for_missing_lazy_import() {
         // Arrange: A module lazily imports a non-existent module class.
         Di.ModuleRef ref = Di.getModuleRef(LazyErrorConsumerModule.class);
@@ -1171,7 +1152,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_on_immediately_call_for_missing_import() {
         // Arrange: An import for a non-existent module is created.
         Di.ModuleImport invalidImport = Di.import('NonExistent.Module');
@@ -1190,7 +1170,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_resolve_immediately_for_module_instance_import() {
         // Arrange: A module instance is created and used in an immediate import.
         Di.Module mod = new ValueModule();
@@ -1204,7 +1183,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_evaluate_module_import_equality_with_other_types() {
         // Arrange: A module import is created.
         Di.ModuleImport importA = Di.import('ModuleA');
@@ -1215,7 +1193,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_evaluate_module_import_equality_based_on_token() {
         // Arrange: Create two imports with the same token and one with a different token.
         Di.ModuleImport importA1 = Di.import('ModuleA');
@@ -1231,7 +1208,6 @@ private class DiTest {
     // Global Modules
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_load_and_resolve_provider_from_cmt_global_module() {
         // Arrange: A mock CMT record is created to define a global module.
         Di.mockGlobalModules(
@@ -1249,7 +1225,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_prioritize_local_provider_over_global_provider() {
         // Arrange: A global module is defined via mocked CMT, and a local module provides a conflicting token.
         Di.mockGlobalModules(
@@ -1267,7 +1242,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_adding_duplicate_global_module() {
         // Arrange: A global module is added via mocked CMT, and its providers are resolved to trigger loading.
         Di.mockGlobalModules(
@@ -1291,7 +1265,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_existing_ref_for_registered_global_module_by_token() {
         // Arrange: A global module is loaded via CMT mock, and its ref is retrieved once to ensure it's in the registry.
         Di.mockGlobalModules(
@@ -1383,7 +1356,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_build_module_with_dynamic_imports() {
         // Arrange: A dynamic module is configured with an import.
         Di.DynamicModule dyn = new Di.DynamicModule('MyDynamicImporter');
@@ -1398,35 +1370,6 @@ private class DiTest {
         Assert.areEqual('hello', val, 'Provider from dynamically imported module should be resolved.');
     }
 
-    @IsTest
-    static void should_evict_scoped_provider_from_cache_on_injection_failure() {
-        // Arrange
-        ScopedInjectionFailureModule mod = new ScopedInjectionFailureModule();
-        Di.ModuleRef ref = Di.addModule(mod);
-        Di.ScopeRef scope = ref.createScope();
-
-        // Act & Assert
-        try {
-            scope.get('BrokenService');
-            Assert.fail('Should have thrown DiException');
-        } catch (Di.DiException e) {
-            Assert.areEqual('Injection Failed Intentional', e.getMessage(), 'Should bubble up the injection exception');
-        }
-
-        // Verify eviction: The next call should TRY again (incrementing attempts) or fail similarly.
-        // It should NOT return a partially constructed/uninjected instance.
-        try {
-            scope.get('BrokenService');
-            Assert.fail('Should have thrown DiException on retry');
-        } catch (Di.DiException e) {
-             // Success if we get here.
-             // We verify that it TRIED to instantiate/inject again.
-             // Instantiation count should be 2 because the first one failed during injection (after instantiation) and was evicted.
-             // So the second attempt creates a NEW instance.
-             Assert.areEqual(2, mod.factory.instantiationCount, 'Should have re-instantiated the service');
-             Assert.areEqual(2, mod.factory.injectionAttempts, 'Should have re-attempted injection');
-        }
-    }
 
     @IsTest
     static void should_use_cached_module_instance_for_import() {
@@ -1452,7 +1395,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_register_dynamic_module_as_global() {
         // Arrange: A dynamic module is configured and marked as global.
         Di.DynamicModule dynGlobal = new Di.DynamicModule('MyDynamicGlobal');
@@ -1470,7 +1412,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_update_container_when_dynamic_module_is_refreshed() {
         // Arrange: A dynamic module is registered, initially without a specific provider.
         Di.DynamicModule dyn = new Di.DynamicModule('RefreshableModule');
@@ -1495,7 +1436,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_evaluate_provider_equality_based_on_token() {
         // Arrange: Create two different provider types with the same token, and one with a different token.
         Di.Provider providerA1 = new Di.ValueProvider('tokenA', 'value');
@@ -1519,7 +1459,6 @@ private class DiTest {
     // Edge Cases and Error Handling
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_instantiating_abstract_class() {
         // Arrange: A module attempts to provide an abstract class.
         Di.ModuleRef ref = Di.getModuleRef(AbstractProviderModule.class);
@@ -1538,7 +1477,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_call_inject_method_on_injectable_class() {
         // Arrange: A module provides a class that implements the Injectable interface.
         Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
@@ -1551,7 +1489,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_clear_all_registries_and_caches() {
         // Arrange: A local module is added and a global module is loaded and verified.
         Di.addModule(new ValueModule());
@@ -1584,7 +1521,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_replace_module_and_update_providers() {
         // Arrange: An initial module is registered.
         Di.addModule(new SingleModule());
@@ -1599,7 +1535,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_replacing_module_with_scope_mismatch() {
         // Arrange: A local module is registered.
         Di.addModule(new SingleModule());
@@ -1619,7 +1554,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_replace_global_module_and_update_global_providers() {
         // Arrange: A global module is loaded via CMT mock and its provider is verified.
         Di.mockGlobalModules(
@@ -1640,7 +1574,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_ignore_inactive_cmt_global_modules() {
         // Arrange: A global module is defined as inactive in a mocked CMT record.
         Di.mockGlobalModules(
@@ -1660,7 +1593,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_creating_abstract_module() {
         // Arrange: An abstract module class that cannot be instantiated.
         // Act & Assert: Attempting to get a ref to this module should fail.
@@ -1677,7 +1609,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_throw_exception_when_resolving_existing_provider_directly() {
         // Arrange: Get a module that contains an ExistingProvider.
         Di.ModuleRef ref = Di.getModuleRef(ExistingProviderModule.class);
@@ -1701,7 +1632,6 @@ private class DiTest {
     // Integration Scenarios
     //=========================================================================
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_process_order_using_injected_services() {
         // Arrange: Register the main OrderProcessingModule, which internally imports all its dependencies.
         // This simulates a real application where you only bootstrap the top-level module.
@@ -1719,7 +1649,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_dynamically_configure_and_refresh_a_feature_flag_module() {
         // Arrange: A dynamic module for feature flags is registered, initially empty.
         Di.DynamicModule featureFlagsModule = new Di.DynamicModule('FeatureFlags');
@@ -1743,7 +1672,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_provide_short_alias_for_long_service_name() {
         // Arrange: The main application module is registered, which uses an alias internally.
         Di.ModuleRef ref = Di.getModuleRef(AppWithAliasModule.class);
@@ -1757,7 +1685,6 @@ private class DiTest {
     }
 
     @IsTest
-    @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_isolate_state_in_trigger_handler_simulation() {
         // Arrange: Register the module for our simulation.
         Di.ModuleRef rootContainer = Di.getModuleRef(RecordProcessorModule.class);
