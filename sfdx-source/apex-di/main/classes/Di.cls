@@ -1068,6 +1068,10 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Module resolve() {
+            if (cachedModule != null) {
+                cachedModule.register();
+                return cachedModule;
+            }
             return Di.getModuleRef(token).getModule();
         }
 

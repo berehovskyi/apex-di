@@ -930,7 +930,9 @@ private class DiTest {
         // Act: The provider with the conflicting token is requested.
         Object val = ref.get('foo');
 
-        // Assert: The locally defined provider takes precedence.
+        // Assert: The value matches the one set in the constructor.
+        // If the regression exists, it will likely resolve a NEW instance of ConfigurableModule (via default constructor or similar),
+        // which might resolve to 'defaultValue' or null depending on implementation.
         Assert.areEqual('override', val, 'Local provider should always override an imported one.');
     }
 
@@ -1338,6 +1340,29 @@ private class DiTest {
 
         // Assert: The provider is resolved correctly through the dynamic import.
         Assert.areEqual('hello', val, 'Provider from dynamically imported module should be resolved.');
+    }
+
+    @IsTest
+    static void should_use_cached_module_instance_for_import() {
+        // Arrange: Create a module instance and configure it with a specific value.
+        ConfigurableModule configModule = new ConfigurableModule('configuredValue');
+        
+        // Arrange: valid that we are wrapping it in a ModuleImport with the cached instance
+        Di.ModuleImport modImport = Di.import(configModule);
+        
+        // Act: Create a dynamic module that imports this SPECIFIC instance
+        Di.DynamicModule consumer = new Di.DynamicModule('ConsumerModule');
+        consumer.addImport(modImport);
+        
+        Di.ModuleRef consumerRef = Di.addModule(consumer);
+        
+        // Act: Resolve the provider. It should use the value from the 'configModule' instance we passed.
+        Object val = consumerRef.get('configVal');
+        
+        // Assert: The value matches the one set in the constructor.
+        // If the regression exists, it will likely resolve a NEW instance of ConfigurableModule (via default constructor or similar),
+        // which might resolve to 'defaultValue' or null depending on implementation.
+        Assert.areEqual('configuredValue', val, 'Should use the pre-configured module instance provided to Di.import()');
     }
 
     @IsTest
@@ -2522,5 +2547,19 @@ private class DiTest {
             factory.injectionAttempts++;
             throw new Di.DiException('Injection Failed Intentional');
         }
+    }
+
+    public class ConfigurableModule extends Di.Module {
+        private final String value;
+        public ConfigurableModule() { this.value = 'defaultValue'; }
+        public ConfigurableModule(String value) { this.value = value; }
+        
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('configVal').useValue(value)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public override Set<String> exports() { return new Set<String>{'configVal'}; }
     }
 }
