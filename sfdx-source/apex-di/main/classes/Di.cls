@@ -44,9 +44,6 @@ public virtual inherited sharing class Di {
         'Cannot retrieve prototype-scoped provider "{0}" ' +
         'using get(). Prototype-scoped providers create a new instance on each request.' +
         '\nUse resolve() method instead to get a new instance.';
-    private static final String MODULE_SHADOWING_WARNING =
-        'Local module "{0}" is shadowing global module with ' +
-        'the same name. The global module will be inaccessible in this context.';
     private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
         'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
@@ -124,9 +121,6 @@ public virtual inherited sharing class Di {
             new InvalidModuleException(String.format(MODULE_ALREADY_REGISTERED_MESSAGE, new List<String>{ token }))
         );
 
-        if (!module.isGlobal()) {
-            warnIfGlobalModuleShadowed(token);
-        }
         ModuleRef ref = new ModuleRef(module);
         registry.put(token, ref);
         module.register();
@@ -154,9 +148,6 @@ public virtual inherited sharing class Di {
             )
         );
 
-        if (!newModule.isGlobal()) {
-            warnIfGlobalModuleShadowed(token);
-        }
         newModule.register();
         Map<String, ModuleRef> registry = oldModule.isGlobal() ? globalRegistry : MODULE_REGISTRY;
         if (oldModule.isGlobal()) {
@@ -221,12 +212,6 @@ public virtual inherited sharing class Di {
             return globalRegistry.get(token);
         }
         return null;
-    }
-
-    private static void warnIfGlobalModuleShadowed(String token) {
-        if (globalRegistry.containsKey(token)) {
-            System.debug(LoggingLevel.WARN, String.format(MODULE_SHADOWING_WARNING, new List<String>{ token })); // NOPMD
-        }
     }
 
     private static void loadGlobalModules() {
