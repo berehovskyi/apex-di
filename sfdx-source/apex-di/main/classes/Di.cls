@@ -299,7 +299,7 @@ public virtual inherited sharing class Di {
     }
 
     private static void addGlobalProviders(Module module) {
-        for (String token : module.exports() ?? new Set<String>()) {
+        for (String token : module.exports ?? new Set<String>()) {
             Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             Provider provider = module.getProvider(token);
@@ -369,8 +369,16 @@ public virtual inherited sharing class Di {
                 return providers.get(token);
             }
 
-            // Then check imported modules
-            for (ModuleImport moduleImport : imports() ?? new Set<ModuleImport>()) {
+            // Then check imported and re-exported modules
+            Set<ModuleImport> searchScope = new Set<ModuleImport>();
+            if (imports() != null) {
+                searchScope.addAll(imports());
+            }
+            if (reexports() != null) {
+                searchScope.addAll(reexports());
+            }
+
+            for (ModuleImport moduleImport : searchScope) {
                 Module module = moduleImport.resolve();
                 if (!module.hasExport(token)) {
                     continue;

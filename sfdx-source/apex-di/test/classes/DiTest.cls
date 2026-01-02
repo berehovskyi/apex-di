@@ -1308,6 +1308,20 @@ private class DiTest {
         Assert.areEqual(ref1, ref2, 'Should return the existing ModuleRef from the global registry.');
     }
 
+    @IsTest
+    static void should_expose_reexported_providers_globally() {
+        // Arrange: A global module re-exports the ValueModule's 'val' provider.
+        // It does NOT explicitly list it in exports(), relying on re-export logic.
+        Di.addModule(new GlobalReexportModule());
+        
+        // Act: A consumer requests the re-exported global provider.
+        Di.ModuleRef consumer = Di.getModuleRef(EmptyModule.class);
+        Object val = consumer.get('val');
+        
+        // Assert: The provider should be resolvable globally.
+        Assert.areEqual('hello', val, 'Global modules should expose re-exported providers to the global scope.');
+    }
+
     //=========================================================================
     // Dynamic Module Tests
     //=========================================================================
@@ -2561,5 +2575,15 @@ private class DiTest {
         }
         public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
         public override Set<String> exports() { return new Set<String>{'configVal'}; }
+    }
+
+    public class GlobalReexportModule extends Di.Module {
+        public GlobalReexportModule() { isGlobal = true; }
+        public override Set<Di.Provider> providers() { return new Set<Di.Provider>(); }
+        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(ValueModule.class) };
+        }
+        public override Set<String> exports() { return new Set<String>(); } // Empty, relying on re-export
     }
 }
