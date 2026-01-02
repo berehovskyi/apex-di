@@ -1343,18 +1343,18 @@ private class DiTest {
     static void should_remove_reexported_providers_on_module_replacement() {
         // Arrange: Start with a global module that re-exports 'val'
         Di.addModule(new GlobalReexportModule());
-        
+
         Di.ModuleRef consumer = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('hello', consumer.get('val'), 'Should resolve re-exported global provider initially');
-        
+
         // Act: Replace with a module that exports NOTHING
-        // Logic: 
+        // Logic:
         // 1. replaceModule calls oldModule.exports() -> returns EMPTY (for GlobalReexportModule)
         // 2. It FAILS to remove 'val' from GLOBAL_PROVIDERS
         // 3. It adds new module exports (empty)
         // 4. 'val' remains global
         Di.replaceModule(GlobalReexportModule.class, new GlobalReexportModule2());
-        
+
         // Assert: The 'val' provider should be GONE from global scope.
         try {
             consumer.get('val');
@@ -1396,6 +1396,36 @@ private class DiTest {
 
         // Assert: The provider is resolved correctly through the dynamic import.
         Assert.areEqual('hello', val, 'Provider from dynamically imported module should be resolved.');
+    }
+
+    @IsTest
+    static void should_evict_scoped_provider_from_cache_on_injection_failure() {
+        // Arrange
+        ScopedInjectionFailureModule mod = new ScopedInjectionFailureModule();
+        Di.ModuleRef ref = Di.addModule(mod);
+        Di.ScopeRef scope = ref.createScope();
+
+        // Act & Assert
+        try {
+            scope.get('BrokenService');
+            Assert.fail('Should have thrown DiException');
+        } catch (Di.DiException e) {
+            Assert.areEqual('Injection Failed Intentional', e.getMessage(), 'Should bubble up the injection exception');
+        }
+
+        // Verify eviction: The next call should TRY again (incrementing attempts) or fail similarly.
+        // It should NOT return a partially constructed/uninjected instance.
+        try {
+            scope.get('BrokenService');
+            Assert.fail('Should have thrown DiException on retry');
+        } catch (Di.DiException e) {
+             // Success if we get here.
+             // We verify that it TRIED to instantiate/inject again.
+             // Instantiation count should be 2 because the first one failed during injection (after instantiation) and was evicted.
+             // So the second attempt creates a NEW instance.
+             Assert.areEqual(2, mod.factory.instantiationCount, 'Should have re-instantiated the service');
+             Assert.areEqual(2, mod.factory.injectionAttempts, 'Should have re-attempted injection');
+        }
     }
 
     @IsTest
@@ -2636,6 +2666,17 @@ private class DiTest {
         public override Set<Di.ModuleImport> reexports() {
             return new Set<Di.ModuleImport>();
         }
+        public override Set<String> exports() { return new Set<String>(); }
+    }
+
+    public class ScopedInjectionFailureModule extends Di.Module {
+        public BrokenServiceFactory factory = new BrokenServiceFactory();
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('BrokenService').useFactory(factory).scope(Di.Scope.SCOPED)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
         public override Set<String> exports() { return new Set<String>(); }
     }
 }
