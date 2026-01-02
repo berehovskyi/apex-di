@@ -755,8 +755,8 @@ public virtual inherited sharing class Di {
     }
 
     public abstract inherited sharing class Container {
-        protected final Container parent;
-        protected final Module module;
+        protected Container parent;
+        protected Module module;
         protected final List<String> resolutionPath = new List<String>();
         protected Boolean inCall = false;
 
@@ -980,9 +980,28 @@ public virtual inherited sharing class Di {
             return parent.getInstance(provider, args);
         }
 
-        public virtual override Object resolve(final String token, final Object args) {
+        public override Object resolve(final String token, final Object args) {
             Object instance = super.resolve(token, args);
             return inject(instance);
+        }
+
+        protected override Object getInternal(final String token, final Object args) {
+            refreshIfModuleChanged();
+            return super.getInternal(token, args);
+        }
+
+        protected override Object resolveInternal(final String token, final Object args) {
+            refreshIfModuleChanged();
+            return super.resolveInternal(token, args);
+        }
+
+        private void refreshIfModuleChanged() {
+            ModuleRef currentRef = Di.getModuleRef(module.getToken());
+            if (currentRef !== parent) {
+                parent = currentRef;
+                module = currentRef.getModule();
+                clearCache();
+            }
         }
 
         public virtual void clearCache() {

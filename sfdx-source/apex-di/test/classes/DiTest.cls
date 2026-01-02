@@ -203,6 +203,28 @@ private class DiTest {
         Assert.areNotEqual(instance1, instance2, 'A new instance should be created after clearing the scope cache.');
     }
 
+    @IsTest
+    static void should_update_scope_when_module_is_replaced() {
+        // Arrange
+        Di.clear();
+        Di.ModuleRef moduleRef = Di.getModuleRef(ScopeRefIntegrityModule.class);
+        Di.ScopeRef scope = moduleRef.createScope();
+
+        // Act & Assert 1: Initial resolution
+        String val1 = (String) scope.resolve('ScopedService');
+        Assert.areEqual('A', val1, 'Should return value from initial module');
+
+        // Act 2: Replace Module
+        Di.replaceModule(ScopeRefIntegrityModule.class, new ScopeRefIntegrityReplacementModule());
+
+        // Act & Assert 3: Resolve again from SAME scope
+        // This is the CRUX: The scope should now see the NEW module definition because we fixed ScopeRef
+        String val2 = (String) scope.resolve('ScopedService');
+
+        Assert.areEqual('B', val2, 'Should return value from replacement module');
+        Assert.areNotEqual(val1, val2, 'Should not return cached value from old module');
+    }
+
     //=========================================================================
     // Provider Types (Value, Factory, Class, Existing, Metadata)
     //=========================================================================
@@ -694,14 +716,14 @@ private class DiTest {
         Assert.areNotEqual(instanceA, instanceB, 'Instances with different args should be different');
 
         // 4. Resolve with NO Args (should use/create Singleton Cache)
-        Object instanceNull = consumerCtn.get('SingletonArgsFactory'); 
+        Object instanceNull = consumerCtn.get('SingletonArgsFactory');
         // ArgsFactory returns 'args', so it returns null.
         Assert.isNull(instanceNull, 'Should return null when no args passed');
 
         // 5. Resolve with NO Args again (should be same cached instance)
         Object instanceNull2 = consumerCtn.get('SingletonArgsFactory');
         Assert.areEqual(instanceNull, instanceNull2, 'Should return cached instance when no args passed');
-        
+
         // 6. Resolve with Args "C" (should still bypass cache even if cache is populated)
         Object instanceC = consumerCtn.get('SingletonArgsFactory', 'C');
         Assert.areEqual('C', instanceC, 'Should bypass cache even if cache is populated');
@@ -727,14 +749,14 @@ private class DiTest {
         try {
             consumerCtn.get('ValueProvider', 'someArgs');
             // Check if failure occurred
-            // Assert.fail('Should throw exception when passing args to ValueProvider'); 
-            // NOTE: ValueProvider might ignore args currently or fail. We expect it to FAIL after fix. 
+            // Assert.fail('Should throw exception when passing args to ValueProvider');
+            // NOTE: ValueProvider might ignore args currently or fail. We expect it to FAIL after fix.
             // If it succeeds now (ignoring args), this test fails (good).
         } catch (Exception e) {
-             // If we reach here, validation is working (or random error). 
+             // If we reach here, validation is working (or random error).
              // We assert specific type if expecting fix.
         }
-        
+
         // 3. ExistingProvider
         try {
             consumerCtn.get('ExistingProvider', 'someArgs');
@@ -2377,5 +2399,38 @@ private class DiTest {
         public override Set<String> exports() {
             return new Set<String>();
         }
+    }
+
+    // --- Helpers for Scope Integrity Scenario ---
+    public class ScopeRefIntegrityModule extends Di.Module {
+        public ScopeRefIntegrityModule() {
+            super(ScopeRefIntegrityModule.class.getName());
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('ScopedService').useFactory(new StringFactory('A')).scope(Di.Scope.SCOPED)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public override Set<String> exports() { return new Set<String>(); }
+    }
+
+    public class ScopeRefIntegrityReplacementModule extends Di.Module {
+        public ScopeRefIntegrityReplacementModule() {
+            super(ScopeRefIntegrityReplacementModule.class.getName());
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('ScopedService').useFactory(new StringFactory('B')).scope(Di.Scope.SCOPED)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public override Set<String> exports() { return new Set<String>(); }
+    }
+
+    public class StringFactory implements Di.Factory {
+        private final String val;
+        public StringFactory(String val) { this.val = val; }
+        public Object newInstance(Di.Container c, Object args) { return val; }
     }
 }
