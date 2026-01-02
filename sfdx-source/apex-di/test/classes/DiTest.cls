@@ -44,6 +44,33 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_evict_from_cache_on_injection_failure() {
+        // Arrange
+        InjectionFailureModule module = new InjectionFailureModule();
+        Di.addModule(module);
+        Di.ModuleRef ref = Di.getModuleRef(InjectionFailureModule.class);
+
+        // Act 1: First attempt fails
+        try {
+            ref.get('BrokenService');
+            Assert.fail('Should have thrown exception');
+        } catch (Di.DiException e) {
+            Assert.areEqual('Injection Failed Intentional', e.getMessage());
+        }
+
+        // Act 2: Second attempt should TRY AGAIN usually creating a new instance
+        try {
+            ref.get('BrokenService');
+            Assert.fail('Should have thrown exception on second attempt too');
+        } catch (Di.DiException e) {
+            Assert.areEqual('Injection Failed Intentional', e.getMessage());
+        }
+
+        Assert.areEqual(2, module.factory.injectionAttempts, 'Should attempt injection twice');
+        Assert.areEqual(2, module.factory.instantiationCount, 'Should instantiate twice, proving the first instance was evicted from cache');
+    }
+
+    @IsTest
     @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
     static void should_return_new_instance_for_prototype_scope() {
         // Arrange: A module with a prototype-scoped provider is registered.
@@ -2463,5 +2490,37 @@ private class DiTest {
         }
         public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
         public override Set<String> exports() { return new Set<String>(); }
+    }
+    // --- Helpers for Injection Failure Scenario ---
+    public class InjectionFailureModule extends Di.Module {
+        public BrokenServiceFactory factory = new BrokenServiceFactory();
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('BrokenService').useFactory(factory)
+            };
+        }
+        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public override Set<String> exports() { return new Set<String>(); }
+    }
+
+    public class BrokenServiceFactory implements Di.Factory {
+        public Integer instantiationCount = 0;
+        public Integer injectionAttempts = 0;
+        public Object newInstance(Di.Container c, Object args) {
+            instantiationCount++;
+            return new BrokenService(this);
+        }
+    }
+
+    public class BrokenService implements Di.Injectable {
+        private final BrokenServiceFactory factory;
+        public BrokenService(BrokenServiceFactory factory) {
+            this.factory = factory;
+        }
+
+        public void inject(Di.Container container) {
+            factory.injectionAttempts++;
+            throw new Di.DiException('Injection Failed Intentional');
+        }
     }
 }

@@ -938,7 +938,14 @@ public virtual inherited sharing class Di {
             if (args == null && provider.getScope() == Scope.SINGLETON) {
                 cache.put(key, instance);
             }
-            return inject(instance);
+            try {
+                return inject(instance);
+            } catch (Exception e) {
+                if (args == null && provider.getScope() == Scope.SINGLETON) {
+                    cache.remove(key);
+                }
+                throw e;
+            }
         }
 
         public virtual override Object resolve(final String token, final Object args) {
@@ -975,7 +982,14 @@ public virtual inherited sharing class Di {
                 if (args == null) {
                     scopedCache.put(key, instance);
                 }
-                return inject(instance);
+                try {
+                    return inject(instance);
+                } catch (Exception e) {
+                    if (args == null) {
+                        scopedCache.remove(key);
+                    }
+                    throw e;
+                }
             }
             return parent.getInstance(provider, args);
         }
