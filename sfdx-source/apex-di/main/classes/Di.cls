@@ -160,7 +160,7 @@ public virtual inherited sharing class Di {
         newModule.register();
         Map<String, ModuleRef> registry = oldModule.isGlobal() ? globalRegistry : MODULE_REGISTRY;
         if (oldModule.isGlobal()) {
-            for (String exportToken : oldModule.exports() ?? new Set<String>()) {
+            for (String exportToken : oldModule.exports ?? new Set<String>()) {
                 GLOBAL_PROVIDERS.remove(exportToken);
             }
             addGlobalProviders(newModule);

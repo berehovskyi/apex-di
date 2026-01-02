@@ -1339,6 +1339,31 @@ private class DiTest {
         Assert.isFalse(Di.hasGlobalLoadBeenAttempted, 'Should be reset to false after clear()');
     }
 
+    @IsTest
+    static void should_remove_reexported_providers_on_module_replacement() {
+        // Arrange: Start with a global module that re-exports 'val'
+        Di.addModule(new GlobalReexportModule());
+        
+        Di.ModuleRef consumer = Di.getModuleRef(EmptyModule.class);
+        Assert.areEqual('hello', consumer.get('val'), 'Should resolve re-exported global provider initially');
+        
+        // Act: Replace with a module that exports NOTHING
+        // Logic: 
+        // 1. replaceModule calls oldModule.exports() -> returns EMPTY (for GlobalReexportModule)
+        // 2. It FAILS to remove 'val' from GLOBAL_PROVIDERS
+        // 3. It adds new module exports (empty)
+        // 4. 'val' remains global
+        Di.replaceModule(GlobalReexportModule.class, new GlobalReexportModule2());
+        
+        // Assert: The 'val' provider should be GONE from global scope.
+        try {
+            consumer.get('val');
+            Assert.fail('Should have thrown UnknownProviderException because val should be removed from global scope');
+        } catch (Di.UnknownProviderException e) {
+            // Expected
+        }
+    }
+
     //=========================================================================
     // Dynamic Module Tests
     //=========================================================================
@@ -2601,6 +2626,16 @@ private class DiTest {
         public override Set<Di.ModuleImport> reexports() {
             return new Set<Di.ModuleImport>{ Di.import(ValueModule.class) };
         }
-        public override Set<String> exports() { return new Set<String>(); } // Empty, relying on re-export
+        public override Set<String> exports() { return new Set<String>(); }
+    }
+
+    public class GlobalReexportModule2 extends Di.Module {
+        public GlobalReexportModule2() { isGlobal = true; }
+        public override Set<Di.Provider> providers() { return new Set<Di.Provider>(); }
+        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>();
+        }
+        public override Set<String> exports() { return new Set<String>(); }
     }
 }

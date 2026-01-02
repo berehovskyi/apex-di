@@ -22,7 +22,7 @@ This is an advanced, NestJS-inspired Dependency Injection (DI) framework for Ape
 #### Key Architectural Decisions:
 
 * **Encapsulation & Safety:** The framework is architected with a `Container` base class to provide compile-time safety, ensuring that administrative methods like `replace()` and `refresh()` are only available on the root `ModuleRef`.
-* **Exports:** A module can only export providers that are defined in its own `providers()` list. It cannot re-export providers from imported modules.
+* **Exports:** A module can export providers defined in its own `providers()` list, or re-export providers from imported modules using `reexports()`.
 * **Global Modules:** The framework supports global modules loaded from Custom Metadata. These act as a fallback and their providers are available to all other modules.
 * **Dynamic Modules:** `DynamicModule` allows for programmatic configuration but must be fully configured before being registered.
 * **Runtime Modification:**
