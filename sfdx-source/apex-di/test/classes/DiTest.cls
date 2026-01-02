@@ -1313,13 +1313,30 @@ private class DiTest {
         // Arrange: A global module re-exports the ValueModule's 'val' provider.
         // It does NOT explicitly list it in exports(), relying on re-export logic.
         Di.addModule(new GlobalReexportModule());
-        
+
         // Act: A consumer requests the re-exported global provider.
         Di.ModuleRef consumer = Di.getModuleRef(EmptyModule.class);
         Object val = consumer.get('val');
-        
+
         // Assert: The provider should be resolvable globally.
         Assert.areEqual('hello', val, 'Global modules should expose re-exported providers to the global scope.');
+    }
+
+    @IsTest
+    static void should_reset_loading_flag_on_clear() {
+        // Arrange: Mock and Load
+        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>{
+            new DI_GlobalModule__mdt(DeveloperName='M', ModuleClass__c='DiTest.EmptyModule')
+        });
+        Di.getModuleRef(EmptyModule.class);
+
+        Assert.isTrue(Di.hasGlobalLoadBeenAttempted, 'Should be true after load');
+
+        // Act
+        Di.clear();
+
+        // Assert: The flag MUST be reset to false to allow subsequent loads (e.g., from real metadata)
+        Assert.isFalse(Di.hasGlobalLoadBeenAttempted, 'Should be reset to false after clear()');
     }
 
     //=========================================================================
@@ -1360,19 +1377,19 @@ private class DiTest {
     static void should_use_cached_module_instance_for_import() {
         // Arrange: Create a module instance and configure it with a specific value.
         ConfigurableModule configModule = new ConfigurableModule('configuredValue');
-        
+
         // Arrange: valid that we are wrapping it in a ModuleImport with the cached instance
         Di.ModuleImport modImport = Di.import(configModule);
-        
+
         // Act: Create a dynamic module that imports this SPECIFIC instance
         Di.DynamicModule consumer = new Di.DynamicModule('ConsumerModule');
         consumer.addImport(modImport);
-        
+
         Di.ModuleRef consumerRef = Di.addModule(consumer);
-        
+
         // Act: Resolve the provider. It should use the value from the 'configModule' instance we passed.
         Object val = consumerRef.get('configVal');
-        
+
         // Assert: The value matches the one set in the constructor.
         // If the regression exists, it will likely resolve a NEW instance of ConfigurableModule (via default constructor or similar),
         // which might resolve to 'defaultValue' or null depending on implementation.
@@ -2567,7 +2584,7 @@ private class DiTest {
         private final String value;
         public ConfigurableModule() { this.value = 'defaultValue'; }
         public ConfigurableModule(String value) { this.value = value; }
-        
+
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{
                 provide('configVal').useValue(value)

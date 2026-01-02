@@ -62,6 +62,7 @@ public virtual inherited sharing class Di {
     private static final Map<String, ModuleRef> GLOBAL_MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, Provider> GLOBAL_PROVIDERS = new Map<String, Provider>();
 
+    @TestVisible
     private static Boolean hasGlobalLoadBeenAttempted = false;
     private static Map<String, DI_Provider__mdt> mockProviders;
 
@@ -196,6 +197,7 @@ public virtual inherited sharing class Di {
         GLOBAL_MODULE_REGISTRY.clear();
         GLOBAL_PROVIDERS.clear();
         mockGlobalModules = null;
+        hasGlobalLoadBeenAttempted = false;
         mockProviders = null;
         providerDefinitionByDeveloperName = null;
     }
