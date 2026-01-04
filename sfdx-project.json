@@ -10,15 +10,14 @@
             "dependencies": [
                 {
                     "package": "apex-validate",
-                    "versionNumber": "2.0.0.LATEST"
+                    "versionNumber": "2.0.2.LATEST"
                 }
             ]
         }
     ],
     "name": "apex-di",
     "namespace": "",
-    "pushPackageDirectoriesSequentially": true,
     "packageAliases": {
-        "apex-validate@latest": "04t1t000003f3UVAAY"
+        "apex-validate@latest": "04tJ5000000D7clIAC"
     }
 }
