@@ -257,20 +257,41 @@ public virtual inherited sharing class Di {
     }
 
     private static Object instantiate(final String typeName) {
+        Validate.isTrue(
+            typeName != null,
+            new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ 'null' }))
+        );
+
         Type providedType = Type.forName(typeName);
         Validate.isTrue(
             providedType != null,
             new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ typeName }))
         );
 
+        return instantiate(providedType);
+    }
+
+    private static Object instantiate(final Type type) {
+        Validate.isTrue(type != null, new InvalidClassException(NULL_PROVIDER_FACTORY_MESSAGE));
         try {
-            return providedType.newInstance();
-        } catch (TypeException exc) {
+            return type.newInstance();
+        } catch (Exception exc) {
             throw new InvalidClassException(
-                String.format(INSTANTIATION_FAILED_MESSAGE, new List<String>{ typeName }),
+                String.format(INSTANTIATION_FAILED_MESSAGE, new List<String>{ type.getName() }),
                 exc
             );
         }
+    }
+
+    private static Factory validateFactory(final Object raw, final String typeName, final String token) {
+        Validate.isTrue(
+            raw instanceof Factory,
+            new InvalidClassException(
+                String.format(INVALID_FACTORY_CLASS_MESSAGE, new List<String>{ typeName, token })
+            )
+        );
+
+        return (Factory) raw;
     }
 
     private static Boolean shouldUseMock(final Object mock) {
@@ -317,11 +338,17 @@ public virtual inherited sharing class Di {
             this.token = token;
         }
 
-        public abstract Set<ModuleImport> imports();
+        public virtual Set<ModuleImport> imports() {
+            return new Set<ModuleImport>();
+        }
 
-        public abstract Set<Provider> providers();
+        public virtual Set<Provider> providers() {
+            return new Set<Provider>();
+        }
 
-        public abstract Set<String> exports();
+        public virtual Set<String> exports() {
+            return new Set<String>();
+        }
 
         public virtual Set<ModuleImport> reexports() {
             return new Set<ModuleImport>();
@@ -535,6 +562,14 @@ public virtual inherited sharing class Di {
             return new FactoryProvider(token, factory);
         }
 
+        public virtual FactoryProvider useFactory(final String factoryType) {
+            return new FactoryProvider(token, validateFactory(instantiate(factoryType), factoryType, token));
+        }
+
+        public virtual FactoryProvider useFactory(final Type factoryType) {
+            return new FactoryProvider(token, validateFactory(instantiate(factoryType), factoryType.getName(), token));
+        }
+
         public virtual ExistingProvider useExisting(final String existingToken) {
             return new ExistingProvider(token, existingToken);
         }
@@ -712,30 +747,23 @@ public virtual inherited sharing class Di {
             // Runtime args have the highest priority
             Object factoryArgs = args ?? definition.Args__c;
             String typeName = definition.Type__c;
+            String value = definition.Value__c;
             Provider provider;
             switch on typeName {
                 when 'Class' {
-                    provider = new ClassProvider(token, definition.Value__c);
+                    provider = new ClassProvider(token, value);
                 }
                 when 'Value' {
-                    provider = new ValueProvider(token, definition.Value__c);
+                    provider = new ValueProvider(token, value);
                 }
                 when 'Factory' {
-                    Object raw = instantiate(definition.Value__c);
-                    Validate.isTrue(
-                        raw instanceof Factory,
-                        new InvalidClassException(
-                            String.format(INVALID_FACTORY_CLASS_MESSAGE, new List<String>{ definition.Value__c, token })
-                        )
-                    );
-
-                    provider = new FactoryProvider(token, (Factory) raw);
+                    provider = new FactoryProvider(token, validateFactory(instantiate(value), value, token));
                 }
                 when 'Existing' {
                     try {
-                        return container.get(definition.Value__c, factoryArgs);
+                        return container.get(value, factoryArgs);
                     } catch (InvalidScopeException e) {
-                        return container.resolve(definition.Value__c, factoryArgs);
+                        return container.resolve(value, factoryArgs);
                     }
                 }
                 when else {

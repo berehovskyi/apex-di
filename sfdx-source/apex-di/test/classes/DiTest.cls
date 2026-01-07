@@ -327,6 +327,126 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_create_factory_provider_from_type() {
+        // Arrange
+        Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
+
+        // Act
+        Di.FactoryProvider provider = builder.useFactory(StringArgsFactory.class);
+
+        // Assert
+        Assert.isNotNull(provider, 'Should return a valid provider instance.');
+        // We can verify it resolves correctly
+        // We need a dummy container since resolve calls factory.newInstance(container, args)
+        // Re-using ArgsModule which registers StringArgsFactory but via instance
+        // Let's just manually invoke resolve with null container and args - StringArgsFactory doesn't use container
+        // Actually StringArgsFactory expects args, let's pass them
+        Object result = provider.resolve(null, 'Type');
+        Assert.areEqual('arg:Type', result, 'Factory created from type should work correctly.');
+    }
+
+    @IsTest
+    static void should_create_factory_provider_from_string() {
+        // Arrange
+        Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
+
+        // Act
+        Di.FactoryProvider provider = builder.useFactory(StringArgsFactory.class.getName());
+
+        // Assert
+        Assert.isNotNull(provider, 'Should return a valid provider instance.');
+        Object result = provider.resolve(null, 'String');
+        Assert.areEqual('arg:String', result, 'Factory created from string should work correctly.');
+    }
+
+    @IsTest
+    static void should_throw_exception_for_null_factory_string() {
+        // Arrange
+        Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
+
+        // Act & Assert
+        try {
+            builder.useFactory((String) null);
+            Assert.fail('Expected InvalidProviderException was not thrown.');
+        } catch (Di.InvalidClassException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Cannot instantiate class "null"'),
+                'Exception message should indicate null class name.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_throw_exception_for_invalid_factory_string() {
+        // Arrange
+        Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
+
+        // Act & Assert
+        try {
+            builder.useFactory('Invalid.Class.Name');
+            Assert.fail('Expected InvalidClassException was not thrown.');
+        } catch (Di.InvalidClassException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Cannot instantiate class "Invalid.Class.Name"'),
+                'Exception message should indicate missing class.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_throw_exception_for_null_factory_type() {
+        // Arrange
+        Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
+
+        // Act & Assert
+        try {
+            builder.useFactory((Type) null);
+            Assert.fail('Expected InvalidProviderException was not thrown.');
+        } catch (Di.InvalidClassException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('The provider factory cannot be null'),
+                'Exception message should indicate null factory.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_throw_exception_for_invalid_factory_type() {
+        // Arrange
+        Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
+
+        // Act & Assert
+        try {
+            // Using a class that exists but doesn't implement Di.Factory (e.g. TestServiceImpl or String)
+            builder.useFactory(String.class);
+            Assert.fail('Expected InvalidClassException was not thrown.');
+        } catch (Di.InvalidClassException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('does not implement the Di.Factory interface'),
+                'Exception message should indicate invalid interface.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_throw_exception_for_non_instantiable_factory_type() {
+        // Arrange
+        Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
+
+        // Act & Assert
+        try {
+            // Di.Module is abstract, so it cannot be instantiated
+            builder.useFactory(Di.Module.class);
+            Assert.fail('Expected InvalidClassException was not thrown.');
+        } catch (Di.InvalidClassException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Cannot instantiate class'),
+                'Exception message should indicate instantiation failure.'
+            );
+        }
+    }
+
+    @IsTest
     static void should_pass_arguments_to_factory_provider() {
         // Arrange: A module with a FactoryProvider that accepts arguments is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsModule.class);
