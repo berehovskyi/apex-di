@@ -563,11 +563,11 @@ public virtual inherited sharing class Di {
         }
 
         public virtual FactoryProvider useFactory(final String factoryType) {
-            return new FactoryProvider(token, validateFactory(instantiate(factoryType), factoryType, token));
+            return new FactoryProvider(token, factoryType);
         }
 
         public virtual FactoryProvider useFactory(final Type factoryType) {
-            return new FactoryProvider(token, validateFactory(instantiate(factoryType), factoryType.getName(), token));
+            return new FactoryProvider(token, factoryType);
         }
 
         public virtual ExistingProvider useExisting(final String existingToken) {
@@ -679,6 +679,14 @@ public virtual inherited sharing class Di {
             this.factory = factory;
         }
 
+        public FactoryProvider(final String token, final String factoryType) {
+            this(token, validateFactory(instantiate(factoryType), factoryType, token));
+        }
+
+        public FactoryProvider(String token, Type factoryType) {
+            this(token, factoryType?.getName());
+        }
+
         public override Object resolve(final Container container, final Object args) {
             return factory.newInstance(container, args);
         }
@@ -757,7 +765,7 @@ public virtual inherited sharing class Di {
                     provider = new ValueProvider(token, value);
                 }
                 when 'Factory' {
-                    provider = new FactoryProvider(token, validateFactory(instantiate(value), value, token));
+                    provider = new FactoryProvider(token, value);
                 }
                 when 'Existing' {
                     try {

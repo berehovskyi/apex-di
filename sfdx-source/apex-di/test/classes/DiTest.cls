@@ -401,11 +401,11 @@ private class DiTest {
         // Act & Assert
         try {
             builder.useFactory((Type) null);
-            Assert.fail('Expected InvalidProviderException was not thrown.');
+            Assert.fail('Expected InvalidClassException was not thrown.');
         } catch (Di.InvalidClassException ex) {
             Assert.isTrue(
-                ex.getMessage().contains('The provider factory cannot be null'),
-                'Exception message should indicate null factory.'
+                ex.getMessage().contains('Cannot instantiate class'),
+                'Exception message should indicate invalid interface.'
             );
         }
     }
@@ -418,7 +418,7 @@ private class DiTest {
         // Act & Assert
         try {
             // Using a class that exists but doesn't implement Di.Factory (e.g. TestServiceImpl or String)
-            builder.useFactory(String.class);
+            builder.useFactory(NotFactory.class);
             Assert.fail('Expected InvalidClassException was not thrown.');
         } catch (Di.InvalidClassException ex) {
             Assert.isTrue(
@@ -1900,6 +1900,11 @@ private class DiTest {
             return new ServiceB();
         }
     }
+    public class NotFactory {
+        public Object newInstance(Di.Container ref, Object args) {
+            return new TestServiceImpl();
+        }
+    }
 
     // --- Injectable Implementation ---
     public class FooInjectable implements Di.Injectable {
@@ -1937,15 +1942,6 @@ private class DiTest {
 
     // --- Basic Module Definitions ---
     public virtual class EmptyModule extends Di.Module {
-        public virtual override Set<Di.ModuleImport> imports() {
-            return new Set<Di.ModuleImport>();
-        }
-        public virtual override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>();
-        }
-        public virtual override Set<String> exports() {
-            return new Set<String>();
-        }
     }
     public class SingleModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
