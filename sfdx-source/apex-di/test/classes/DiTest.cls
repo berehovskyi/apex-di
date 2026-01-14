@@ -65,7 +65,11 @@ private class DiTest {
         }
 
         Assert.areEqual(2, module.factory.injectionAttempts, 'Should attempt injection twice');
-        Assert.areEqual(2, module.factory.instantiationCount, 'Should instantiate twice, proving the first instance was evicted from cache');
+        Assert.areEqual(
+            2,
+            module.factory.instantiationCount,
+            'Should instantiate twice, proving the first instance was evicted from cache'
+        );
     }
 
     @IsTest
@@ -170,13 +174,21 @@ private class DiTest {
         Object instance2 = scope2.get(ScopedService.class);
 
         // Assert
-        Assert.areNotEqual(instance1, instance2, 'Different scopes should return different instances for SCOPED provider');
+        Assert.areNotEqual(
+            instance1,
+            instance2,
+            'Different scopes should return different instances for SCOPED provider'
+        );
 
         Object instanceRoot = consumerCtn.get(ScopedService.class);
         Object instanceRoot2 = consumerCtn.get(ScopedService.class);
 
         Assert.areNotEqual(instance1, instanceRoot, 'Scoped instance should not define Root instance');
-        Assert.areNotEqual(instanceRoot, instanceRoot2, 'Scoped provider resolved from Root should return new instances if not strictly singleton?');
+        Assert.areNotEqual(
+            instanceRoot,
+            instanceRoot2,
+            'Scoped provider resolved from Root should return new instances if not strictly singleton?'
+        );
     }
 
     @IsTest
@@ -191,7 +203,7 @@ private class DiTest {
             scope.get('BrokenService');
             Assert.fail('Should have thrown DiException');
         } catch (Di.DiException e) {
-             Assert.areEqual('Injection Failed Intentional', e.getMessage(), 'Should bubble up the injection exception');
+            Assert.areEqual('Injection Failed Intentional', e.getMessage(), 'Should bubble up the injection exception');
         }
 
         // Act 2: Second attempt should have evicted the broken instance and try again
@@ -199,12 +211,12 @@ private class DiTest {
             scope.get('BrokenService');
             Assert.fail('Should have thrown DiException on retry');
         } catch (Di.DiException e) {
-             // Success if we get here.
-             // We verify that it TRIED to instantiate/inject again.
-             // Instantiation count should be 2 because the first one failed during injection (after instantiation) and was evicted.
-             // So the second attempt creates a NEW instance.
-             Assert.areEqual(2, mod.factory.instantiationCount, 'Should have re-instantiated the service');
-             Assert.areEqual(2, mod.factory.injectionAttempts, 'Should have re-attempted injection');
+            // Success if we get here.
+            // We verify that it TRIED to instantiate/inject again.
+            // Instantiation count should be 2 because the first one failed during injection (after instantiation) and was evicted.
+            // So the second attempt creates a NEW instance.
+            Assert.areEqual(2, mod.factory.instantiationCount, 'Should have re-instantiated the service');
+            Assert.areEqual(2, mod.factory.injectionAttempts, 'Should have re-attempted injection');
         }
     }
 
@@ -315,6 +327,16 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_create_value_provider_from_type() {
+        // Act
+        Di.ValueProvider provider = new Di.ValueProvider(TestService.class, 'hello');
+
+        // Assert
+        Assert.areEqual('DiTest.TestService', provider.getToken(), 'Token should be the class name.');
+        Assert.areEqual('hello', provider.resolve(null, null), 'Should resolve the value.');
+    }
+
+    @IsTest
     static void should_return_instance_from_factory_for_factory_provider() {
         // Arrange: A module with a FactoryProvider is registered.
         Di.ModuleRef ref = Di.getModuleRef(FactoryModule.class);
@@ -357,6 +379,23 @@ private class DiTest {
         Assert.isNotNull(provider, 'Should return a valid provider instance.');
         Object result = provider.resolve(null, 'String');
         Assert.areEqual('arg:String', result, 'Factory created from string should work correctly.');
+    }
+
+    @IsTest
+    static void should_create_factory_provider_from_various_overloads() {
+        // Act & Assert
+        Assert.isNotNull(
+            new Di.FactoryProvider(TestService.class, new StringArgsFactory()),
+            'Should create from Type token and Factory instance.'
+        );
+        Assert.isNotNull(
+            new Di.FactoryProvider(TestService.class, StringArgsFactory.class.getName()),
+            'Should create from Type token and String factory type.'
+        );
+        Assert.isNotNull(
+            new Di.FactoryProvider(TestService.class, StringArgsFactory.class),
+            'Should create from Type token and Type factory type.'
+        );
     }
 
     @IsTest
@@ -568,6 +607,21 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_create_class_provider_from_various_overloads() {
+        // Act & Assert
+        Assert.areEqual(
+            'TestServiceImpl',
+            new Di.ClassProvider(TestService.class, 'TestServiceImpl').getType(),
+            'Should create from Type token and String type.'
+        );
+        Assert.areEqual(
+            'DiTest.TestServiceImpl',
+            new Di.ClassProvider(TestService.class, TestServiceImpl.class).getType(),
+            'Should create from Type token and Type type.'
+        );
+    }
+
+    @IsTest
     static void should_resolve_provider_using_existing_alias() {
         // Arrange: A module is registered with a provider aliased by another token.
         Di.ModuleRef ref = Di.getModuleRef(ExistingProviderModule.class);
@@ -579,6 +633,26 @@ private class DiTest {
         // Assert: Both tokens resolve to the same singleton instance.
         Assert.isTrue(original instanceof TestServiceImpl, 'Original should be correct type.');
         Assert.areEqual(original, alias, 'Alias should resolve to the same instance as the original provider.');
+    }
+
+    @IsTest
+    static void should_create_existing_provider_from_various_overloads() {
+        // Act & Assert
+        Assert.areEqual(
+            'DiTest.MockService',
+            new Di.ExistingProvider('TestService', MockService.class).getExisting(),
+            'Should create from String token and Type existing.'
+        );
+        Assert.areEqual(
+            'OtherService',
+            new Di.ExistingProvider(TestService.class, 'OtherService').getExisting(),
+            'Should create from Type token and String existing.'
+        );
+        Assert.areEqual(
+            'DiTest.MockService',
+            new Di.ExistingProvider(TestService.class, MockService.class).getExisting(),
+            'Should create from Type token and Type existing.'
+        );
     }
 
     //=========================================================================
@@ -891,7 +965,11 @@ private class DiTest {
 
         // Assert
         Assert.areEqual('FirstValue', result1, 'Pre-condition: First mock should resolve correctly.');
-        Assert.areEqual('SecondValue', result2, 'Post-clear: Second mock should be used, proving the validation cache was reset.');
+        Assert.areEqual(
+            'SecondValue',
+            result2,
+            'Post-clear: Second mock should be used, proving the validation cache was reset.'
+        );
     }
 
     @IsTest
@@ -996,30 +1074,26 @@ private class DiTest {
             consumerCtn.get('ClassProvider', 'someArgs');
             Assert.fail('Should throw exception when passing args to ClassProvider');
         } catch (Exception e) {
-             Assert.isInstanceOfType(e, Di.DiException.class, 'Should throw DiException');
-             // Optionally check message if we define specific message
+            Assert.isInstanceOfType(e, Di.DiException.class, 'Should throw DiException');
+            // Optionally check message if we define specific message
         }
 
         // 2. ValueProvider
         try {
             consumerCtn.get('ValueProvider', 'someArgs');
-            // Check if failure occurred
-            // Assert.fail('Should throw exception when passing args to ValueProvider');
-            // NOTE: ValueProvider might ignore args currently or fail. We expect it to FAIL after fix.
-            // If it succeeds now (ignoring args), this test fails (good).
+            Assert.fail('Should throw exception when passing args to ValueProvider');
         } catch (Exception e) {
-             // If we reach here, validation is working (or random error).
-             // We assert specific type if expecting fix.
+            Assert.isNotNull(e, 'Exception should be thrown for ValueProvider with args');
         }
 
         // 3. ExistingProvider
         try {
             consumerCtn.get('ExistingProvider', 'someArgs');
-            // Assert.fail('Should throw exception when passing args to ExistingProvider');
+            Assert.fail('Should throw exception when passing args to ExistingProvider');
         } catch (Exception e) {
+            Assert.isNotNull(e, 'Exception should be thrown for ExistingProvider with args');
         }
     }
-
 
     //=========================================================================
     // Module System (Imports, Exports, Overrides)
@@ -1418,9 +1492,11 @@ private class DiTest {
     @IsTest
     static void should_reset_loading_flag_on_clear() {
         // Arrange: Mock and Load
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>{
-            new DI_GlobalModule__mdt(DeveloperName='M', ModuleClass__c='DiTest.EmptyModule')
-        });
+        Di.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(DeveloperName = 'M', ModuleClass__c = 'DiTest.EmptyModule')
+            }
+        );
         Di.getModuleRef(EmptyModule.class);
 
         Assert.isTrue(Di.hasGlobalLoadBeenAttempted, 'Should be true after load');
@@ -1453,7 +1529,7 @@ private class DiTest {
             consumer.get('val');
             Assert.fail('Should have thrown UnknownProviderException because val should be removed from global scope');
         } catch (Di.UnknownProviderException e) {
-            // Expected
+            Assert.isNotNull(e, 'Expected UnknownProviderException');
         }
     }
 
@@ -1490,7 +1566,6 @@ private class DiTest {
         Assert.areEqual('hello', val, 'Provider from dynamically imported module should be resolved.');
     }
 
-
     @IsTest
     static void should_use_cached_module_instance_for_import() {
         // Arrange: Create a module instance and configure it with a specific value.
@@ -1511,7 +1586,11 @@ private class DiTest {
         // Assert: The value matches the one set in the constructor.
         // If the regression exists, it will likely resolve a NEW instance of ConfigurableModule (via default constructor or similar),
         // which might resolve to 'defaultValue' or null depending on implementation.
-        Assert.areEqual('configuredValue', val, 'Should use the pre-configured module instance provided to Di.import()');
+        Assert.areEqual(
+            'configuredValue',
+            val,
+            'Should use the pre-configured module instance provided to Di.import()'
+        );
     }
 
     @IsTest
@@ -2648,8 +2727,6 @@ private class DiTest {
                 provide('ScopedService').useFactory(new StringFactory('A')).scope(Di.Scope.SCOPED)
             };
         }
-        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
-        public override Set<String> exports() { return new Set<String>(); }
     }
 
     public class ScopeRefIntegrityReplacementModule extends Di.Module {
@@ -2661,14 +2738,16 @@ private class DiTest {
                 provide('ScopedService').useFactory(new StringFactory('B')).scope(Di.Scope.SCOPED)
             };
         }
-        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
-        public override Set<String> exports() { return new Set<String>(); }
     }
 
     public class StringFactory implements Di.Factory {
         private final String val;
-        public StringFactory(String val) { this.val = val; }
-        public Object newInstance(Di.Container c, Object args) { return val; }
+        public StringFactory(String val) {
+            this.val = val;
+        }
+        public Object newInstance(Di.Container c, Object args) {
+            return val;
+        }
     }
 
     public class MetadataProtoAliasModule extends Di.Module {
@@ -2678,19 +2757,13 @@ private class DiTest {
                 provide('AliasService').useMetadata('AliasProtoProvider')
             };
         }
-        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
-        public override Set<String> exports() { return new Set<String>(); }
     }
     // --- Helpers for Injection Failure Scenario ---
     public class InjectionFailureModule extends Di.Module {
         public BrokenServiceFactory factory = new BrokenServiceFactory();
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{
-                provide('BrokenService').useFactory(factory)
-            };
+            return new Set<Di.Provider>{ provide('BrokenService').useFactory(factory) };
         }
-        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
-        public override Set<String> exports() { return new Set<String>(); }
     }
 
     public class BrokenServiceFactory implements Di.Factory {
@@ -2716,46 +2789,55 @@ private class DiTest {
 
     public class ConfigurableModule extends Di.Module {
         private final String value;
-        public ConfigurableModule() { this.value = 'defaultValue'; }
-        public ConfigurableModule(String value) { this.value = value; }
+        public ConfigurableModule() {
+            this.value = 'defaultValue';
+        }
+        public ConfigurableModule(String value) {
+            this.value = value;
+        }
 
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{
-                provide('configVal').useValue(value)
-            };
+            return new Set<Di.Provider>{ provide('configVal').useValue(value) };
         }
-        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
-        public override Set<String> exports() { return new Set<String>{'configVal'}; }
+        public override Set<String> exports() {
+            return new Set<String>{ 'configVal' };
+        }
     }
 
     public class GlobalReexportModule extends Di.Module {
-        public GlobalReexportModule() { isGlobal = true; }
-        public override Set<Di.Provider> providers() { return new Set<Di.Provider>(); }
-        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public GlobalReexportModule() {
+            isGlobal = true;
+        }
         public override Set<Di.ModuleImport> reexports() {
             return new Set<Di.ModuleImport>{ Di.import(ValueModule.class) };
         }
-        public override Set<String> exports() { return new Set<String>(); }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
     }
 
     public class GlobalReexportModule2 extends Di.Module {
-        public GlobalReexportModule2() { isGlobal = true; }
-        public override Set<Di.Provider> providers() { return new Set<Di.Provider>(); }
-        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
+        public GlobalReexportModule2() {
+            isGlobal = true;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>();
+        }
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>();
+        }
         public override Set<Di.ModuleImport> reexports() {
             return new Set<Di.ModuleImport>();
         }
-        public override Set<String> exports() { return new Set<String>(); }
+        public override Set<String> exports() {
+            return new Set<String>();
+        }
     }
 
     public class ScopedInjectionFailureModule extends Di.Module {
         public BrokenServiceFactory factory = new BrokenServiceFactory();
         public override Set<Di.Provider> providers() {
-            return new Set<Di.Provider>{
-                provide('BrokenService').useFactory(factory).scope(Di.Scope.SCOPED)
-            };
+            return new Set<Di.Provider>{ provide('BrokenService').useFactory(factory).scope(Di.Scope.SCOPED) };
         }
-        public override Set<Di.ModuleImport> imports() { return new Set<Di.ModuleImport>(); }
-        public override Set<String> exports() { return new Set<String>(); }
     }
 }

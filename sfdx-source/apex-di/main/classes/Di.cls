@@ -286,9 +286,7 @@ public virtual inherited sharing class Di {
     private static Factory validateFactory(final Object raw, final String typeName, final String token) {
         Validate.isTrue(
             raw instanceof Factory,
-            new InvalidClassException(
-                String.format(INVALID_FACTORY_CLASS_MESSAGE, new List<String>{ typeName, token })
-            )
+            new InvalidClassException(String.format(INVALID_FACTORY_CLASS_MESSAGE, new List<String>{ typeName, token }))
         );
 
         return (Factory) raw;
@@ -575,7 +573,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual ExistingProvider useExisting(final Type existingToken) {
-            return useExisting(existingToken?.getName());
+            return new ExistingProvider(token, existingToken);
         }
 
         public virtual CustomMetadataTypesProvider useMetadata(final String developerName) {
@@ -637,12 +635,12 @@ public virtual inherited sharing class Di {
             this(token, type?.getName());
         }
 
-        public ClassProvider(final Type token, final Type type) {
-            this(token?.getName(), type?.getName());
-        }
-
         public ClassProvider(final Type token, final String type) {
             this(token?.getName(), type);
+        }
+
+        public ClassProvider(final Type token, final Type type) {
+            this(token?.getName(), type?.getName());
         }
 
         public override Object resolve(final Container container, final Object args) {
@@ -661,6 +659,10 @@ public virtual inherited sharing class Di {
         public ValueProvider(final String token, final Object value) {
             super(token);
             this.value = value;
+        }
+
+        public ValueProvider(final Type token, final Object value) {
+            this(token?.getName(), value);
         }
 
         public override Object resolve(final Container container, final Object args) {
@@ -683,8 +685,20 @@ public virtual inherited sharing class Di {
             this(token, validateFactory(instantiate(factoryType), factoryType, token));
         }
 
-        public FactoryProvider(String token, Type factoryType) {
+        public FactoryProvider(final String token, final Type factoryType) {
             this(token, factoryType?.getName());
+        }
+
+        public FactoryProvider(final Type token, final Factory factory) {
+            this(token?.getName(), factory);
+        }
+
+        public FactoryProvider(final Type token, final String factoryType) {
+            this(token?.getName(), factoryType);
+        }
+
+        public FactoryProvider(final Type token, final Type factoryType) {
+            this(token?.getName(), factoryType);
         }
 
         public override Object resolve(final Container container, final Object args) {
@@ -700,6 +714,18 @@ public virtual inherited sharing class Di {
             Validate.isTrue(existing != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             this.existing = existing;
+        }
+
+        public ExistingProvider(final String token, final Type existing) {
+            this(token, existing?.getName());
+        }
+
+        public ExistingProvider(final Type token, final String existing) {
+            this(token?.getName(), existing);
+        }
+
+        public ExistingProvider(final Type token, final Type existing) {
+            this(token?.getName(), existing?.getName());
         }
 
         public String getExisting() {
