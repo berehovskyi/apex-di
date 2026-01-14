@@ -54,6 +54,7 @@ public virtual inherited sharing class Di {
     private static final String INACTIVE_METADATA_PROVIDER_MESSAGE = 'Provider for token "{0}" is defined by Custom Metadata record "{1}", but the record is inactive.';
     private static final String INVALID_FACTORY_CLASS_MESSAGE = 'Class "{0}" provided by factory provider "{1}" does not implement the Di.Factory interface.';
     private static final String ARGS_NOT_SUPPORTED_MESSAGE = 'Arguments are only supported for FactoryProvider.';
+    private static final String NOT_INJECTABLE_MESSAGE = 'The instance does not implement the Di.Injectable interface.';
 
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ModuleRef> GLOBAL_MODULE_REGISTRY = new Map<String, ModuleRef>();
@@ -90,7 +91,6 @@ public virtual inherited sharing class Di {
     }
 
     @TestVisible
-    @SuppressWarnings('PMD.EmptyStatementBlock')
     private Di() {
     }
 
@@ -854,6 +854,13 @@ public virtual inherited sharing class Di {
             return resolve(token?.getName(), null);
         }
 
+        public virtual Object inject(final Object instance) {
+            if (!(instance instanceof Injectable)) {
+                throw new InvalidClassException(NOT_INJECTABLE_MESSAGE);
+            }
+            return autowire(instance);
+        }
+
         protected virtual Object getInternal(final String token, final Object args) {
             validateAndAddPath(token);
             try {
@@ -891,7 +898,7 @@ public virtual inherited sharing class Di {
             return provider.resolve(this, args);
         }
 
-        protected virtual Object inject(final Object instance) {
+        protected virtual Object autowire(final Object instance) {
             if (instance instanceof Injectable) {
                 ((Injectable) instance).inject(this);
             }
@@ -951,6 +958,11 @@ public virtual inherited sharing class Di {
             cache.remove(token);
         }
 
+        public virtual override Object resolve(final String token, final Object args) {
+            Object instance = super.resolve(token, args);
+            return autowire(instance);
+        }
+
         public virtual void refresh() {
             module.register();
             clearCache();
@@ -970,18 +982,13 @@ public virtual inherited sharing class Di {
                 cache.put(key, instance);
             }
             try {
-                return inject(instance);
+                return autowire(instance);
             } catch (Exception e) {
                 if (args == null && provider.getScope() == Scope.SINGLETON) {
                     cache.remove(key);
                 }
                 throw e;
             }
-        }
-
-        public virtual override Object resolve(final String token, final Object args) {
-            Object instance = super.resolve(token, args);
-            return inject(instance);
         }
 
         protected override Boolean hasInCache(final String token) {
@@ -1003,6 +1010,15 @@ public virtual inherited sharing class Di {
             super(parent, module);
         }
 
+        public override Object resolve(final String token, final Object args) {
+            Object instance = super.resolve(token, args);
+            return autowire(instance);
+        }
+
+        public virtual void clearCache() {
+            scopedCache.clear();
+        }
+
         protected virtual override Object getInstance(final Provider provider, final Object args) {
             if (provider.getScope() === Scope.SCOPED) {
                 String key = provider.getToken();
@@ -1014,7 +1030,7 @@ public virtual inherited sharing class Di {
                     scopedCache.put(key, instance);
                 }
                 try {
-                    return inject(instance);
+                    return autowire(instance);
                 } catch (Exception e) {
                     if (args == null) {
                         scopedCache.remove(key);
@@ -1023,11 +1039,6 @@ public virtual inherited sharing class Di {
                 }
             }
             return parent.getInstance(provider, args);
-        }
-
-        public override Object resolve(final String token, final Object args) {
-            Object instance = super.resolve(token, args);
-            return inject(instance);
         }
 
         protected override Object getInternal(final String token, final Object args) {
@@ -1040,19 +1051,6 @@ public virtual inherited sharing class Di {
             return super.resolveInternal(token, args);
         }
 
-        private void refreshIfModuleChanged() {
-            ModuleRef currentRef = Di.getModuleRef(module.getToken());
-            if (currentRef !== parent) {
-                parent = currentRef;
-                module = currentRef.getModule();
-                clearCache();
-            }
-        }
-
-        public virtual void clearCache() {
-            scopedCache.clear();
-        }
-
         protected override Boolean hasInCache(final String token) {
             return scopedCache.containsKey(token);
         }
@@ -1062,6 +1060,15 @@ public virtual inherited sharing class Di {
                 return;
             }
             super.validateAndAddPath(token);
+        }
+
+        private void refreshIfModuleChanged() {
+            ModuleRef currentRef = Di.getModuleRef(module.getToken());
+            if (currentRef !== parent) {
+                parent = currentRef;
+                module = currentRef.getModule();
+                clearCache();
+            }
         }
     }
 

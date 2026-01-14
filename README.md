@@ -277,6 +277,20 @@ This two-phase instantiation allows circular dependencies to be resolved automat
 
 ---
 
+## Manual Injection
+
+You can manually trigger dependency injection on an object that implements `Di.Injectable` using the `inject()` method on the container. This is useful when you have objects created outside of the DI container (e.g., in legacy code or framework-instantiated classes) but still want to populate their dependencies.
+
+```apex
+Di.ModuleRef ref = Di.getModuleRef(MyModule.class);
+MyService service = new MyService();
+
+// Manually inject dependencies
+ref.inject(service);
+```
+
+---
+
 ## Scopes
 
 Scopes control instance lifetime.

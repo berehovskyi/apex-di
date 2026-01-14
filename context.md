@@ -8,6 +8,7 @@ This is an advanced, NestJS-inspired Dependency Injection (DI) framework for Ape
 * **`Di.Container`:** An abstract base class for dependency resolution.
     * **`Di.ModuleRef`:** The root runtime container for a module instance. It is responsible for provider resolution and caching.
     * **`Di.ScopeRef`:** A short-lived, child container created from a `ModuleRef` via `.createScope()`. It enables the "Unit of Work" pattern by providing its own cache for `SCOPED` providers.
+    * **`inject()`:** The container exposes a public `inject()` method to manually wire dependencies into objects that implement `Di.Injectable`.
 * **Providers:** The framework supports multiple provider types:
     * **`useClass`:** Binds a token to a class constructor.
     * **`useValue`:** Binds a token to a literal value.

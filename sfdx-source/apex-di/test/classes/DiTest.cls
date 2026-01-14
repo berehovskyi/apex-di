@@ -1609,6 +1609,42 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_manually_inject_dependencies() {
+        // Arrange
+        // We need a container. We can use any valid module ref.
+        Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
+        FooInjectable instance = new FooInjectable();
+
+        // Pre-assert: inject has not been called
+        Assert.isFalse(instance.wasInjected, 'Pre-condition: inject() should not have been called yet.');
+
+        // Act
+        Object result = ref.inject(instance);
+
+        // Assert
+        Assert.isTrue(instance.wasInjected, 'The inject() method should be called after manual injection.');
+        Assert.areEqual(instance, result, 'inject() should return the injected instance.');
+    }
+
+    @IsTest
+    static void should_throw_exception_on_manual_injection_of_non_injectable() {
+        // Arrange
+        Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
+        Object nonInjectable = new TestServiceImpl(); // Implements TestService, NOT Injectable
+
+        // Act & Assert
+        try {
+            ref.inject(nonInjectable);
+            Assert.fail('Expected InvalidClassException was not thrown.');
+        } catch (Di.InvalidClassException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('implement the Di.Injectable interface'),
+                'Exception message should warn about missing interface.'
+            );
+        }
+    }
+
+    @IsTest
     static void should_clear_all_registries_and_caches() {
         // Arrange: A local module is added and a global module is loaded and verified.
         Di.addModule(new ValueModule());
