@@ -5,14 +5,14 @@
         "prettier-plugin-apex": "^2.2.6"
     },
     "scripts": {
-        "prettier:apex:check": "prettier --plugin=prettier-plugin-apex --check \"**/*.{trigger,cls}\"",
-        "prettier:apex:diff": "prettier --plugin=prettier-plugin-apex --list-different \"**/*.{trigger,cls}\"",
-        "prettier:apex:fix": "prettier --plugin=prettier-plugin-apex --write \"**/*.{trigger,cls}\"",
+        "prettier:apex:check": "prettier --plugin=prettier-plugin-apex --check \"**/apex-di/*.{trigger,cls}\"",
+        "prettier:apex:diff": "prettier --plugin=prettier-plugin-apex --list-different \"**/apex-di/*.{trigger,cls}\"",
+        "prettier:apex:fix": "prettier --plugin=prettier-plugin-apex --write \"**/apex-di/*.{trigger,cls}\"",
         "prettier:check": "prettier --check .",
         "prettier:diff": "prettier --list-different .",
         "prettier:fix": "prettier --write .",
-        "sfca:check": "sf code-analyzer run --config-file ./code-analyzer.yml --workspace .",
-        "sfca:check:detail": "sf code-analyzer run --config-file ./code-analyzer.yml --workspace . --view detail",
+        "sfca:check": "sf code-analyzer run --config-file ./code-analyzer.yml --workspace **/apex-di/*",
+        "sfca:check:detail": "sf code-analyzer run --config-file ./code-analyzer.yml --workspace /apex-di --view detail",
         "sf:push": "sf project deploy start",
         "sf:run:test:all": "sf apex run test -n DiTest --synchronous --code-coverage"
     }

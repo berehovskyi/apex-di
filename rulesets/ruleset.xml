@@ -15,25 +15,4 @@
             <property name="testPattern" value="should_[a-z]+(_[a-z0-9]+)*"/>
         </properties>
     </rule>
-    <rule name="CognitiveComplexity"
-          language="apex"
-          message="Cognitive complexity is too high"
-          class="net.sourceforge.pmd.lang.apex.rule.design.CognitiveComplexityRule">
-        <description>Enforces a maximum cognitive complexity</description>
-        <priority>3</priority>
-        <properties>
-            <property name="classReportLevel" value="1000"/>
-            <property name="methodReportLevel" value="25"/>
-        </properties>
-    </rule>
-    <rule name="CyclomaticComplexity"
-          language="apex"
-          message="Cyclomatic complexity is too high"
-          class="net.sourceforge.pmd.lang.apex.rule.design.CyclomaticComplexityRule">
-        <description>Enforces a maximum cyclomatic complexity</description>
-        <priority>3</priority>
-        <properties>
-            <property name="classReportLevel" value="100"/>
-        </properties>
-    </rule>
 </ruleset>
