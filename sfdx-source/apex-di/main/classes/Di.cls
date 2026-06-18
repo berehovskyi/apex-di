@@ -535,10 +535,14 @@ public virtual inherited sharing class Di {
 
             String token = newProvider.getToken();
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(
+                hasProvider(token),
+                new UnknownProviderException(
+                    String.format(UNKNOWN_PROVIDER_MESSAGE, new List<String>{ token, getToken() })
+                )
+            );
 
-            if (hasProvider(token)) {
-                providers.put(token, newProvider);
-            }
+            providers.put(token, newProvider);
             return this;
         }
 

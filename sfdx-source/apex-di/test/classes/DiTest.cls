@@ -572,6 +572,27 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_throw_when_replacing_missing_provider() {
+        // Arrange: A module is registered without the replacement token.
+        Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
+        Di.Provider missingProvider = new Di.ValueProvider('missing', 'world');
+
+        // Act & Assert: Replacing an absent provider should fail loudly.
+        try {
+            ref.replace(missingProvider);
+            Assert.fail('Expected UnknownProviderException when replacing a missing provider.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Could not find "missing" provider'),
+                'Exception message should identify the missing provider token.'
+            );
+        }
+
+        // Assert: Existing providers remain unchanged after the failed replacement.
+        Assert.areEqual('hello', ref.get('val'), 'Existing providers should not be changed by a failed replace.');
+    }
+
+    @IsTest
     static void should_instantiate_class_by_string_name() {
         // Arrange: A module provides a class using its string name.
         Di.ModuleRef ref = Di.getModuleRef(StringTypeModule.class);
