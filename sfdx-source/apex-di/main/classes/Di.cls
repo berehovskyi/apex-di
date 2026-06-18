@@ -56,6 +56,9 @@ public virtual inherited sharing class Di {
     private static final String MISSING_METADATA_PROVIDER_MESSAGE = 'Provider for token "{0}" is configured to use Custom Metadata record "{1}", but a record with that DeveloperName was not found.';
     private static final String INACTIVE_METADATA_PROVIDER_MESSAGE = 'Provider for token "{0}" is defined by Custom Metadata record "{1}", but the record is inactive.';
     private static final String INVALID_FACTORY_CLASS_MESSAGE = 'Class "{0}" provided by factory provider "{1}" does not implement the Di.Factory interface.';
+    private static final String INVALID_METADATA_SCOPE_MESSAGE =
+        'Invalid metadata scope "{0}" for provider "{1}" using Custom Metadata record "{2}". ' +
+        'Allowed values are SINGLETON, PROTOTYPE, and SCOPED.';
     private static final String ARGS_NOT_SUPPORTED_MESSAGE = 'Arguments are only supported for FactoryProvider.';
     private static final String NOT_INJECTABLE_MESSAGE = 'The instance does not implement the Di.Injectable interface.';
 
@@ -867,7 +870,7 @@ public virtual inherited sharing class Di {
             if (providerDefinitionByDeveloperName.containsKey(developerName)) {
                 DI_Provider__mdt definition = providerDefinitionByDeveloperName.get(developerName);
                 if (!String.isBlank(definition?.Scope__c)) {
-                    return Scope.valueOf(definition.Scope__c);
+                    return parseMetadataScope(definition);
                 }
             }
             return super.getScope();
@@ -895,11 +898,22 @@ public virtual inherited sharing class Di {
             return definition;
         }
 
+        private Scope parseMetadataScope(final DI_Provider__mdt definition) {
+            try {
+                return Scope.valueOf(definition.Scope__c);
+            } catch (Exception exc) {
+                throw new InvalidProviderException(
+                    String.format(
+                        INVALID_METADATA_SCOPE_MESSAGE,
+                        new List<String>{ definition.Scope__c, token, developerName }
+                    )
+                );
+            }
+        }
+
         public override Object resolve(final Container container, final Object args) {
             DI_Provider__mdt definition = getDefinition();
-            Scope scopeType = !String.isBlank(definition.Scope__c)
-                ? Scope.valueOf(definition.Scope__c)
-                : this.scopeType;
+            Scope scopeType = !String.isBlank(definition.Scope__c) ? parseMetadataScope(definition) : this.scopeType;
             // Runtime args have the highest priority
             Object factoryArgs = args ?? definition.Args__c;
             String typeName = definition.Type__c;

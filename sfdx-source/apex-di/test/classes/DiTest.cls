@@ -1075,6 +1075,56 @@ private class DiTest {
         );
     }
 
+    @IsTest
+    static void should_throw_invalid_provider_exception_for_invalid_metadata_scope_on_get() {
+        // Arrange: Mock a metadata provider with an invalid scope string.
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Class',
+            Value__c = 'DiTest.TestServiceImpl',
+            IsActive__c = true,
+            Scope__c = 'NOT_A_SCOPE'
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act & Assert: get() should wrap invalid metadata scopes in a framework exception.
+        try {
+            ref.get(IMetadataService.class);
+            Assert.fail('Expected InvalidProviderException for invalid metadata scope.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Invalid metadata scope "NOT_A_SCOPE"'),
+                'Exception message should identify the invalid metadata scope.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_throw_invalid_provider_exception_for_invalid_metadata_scope_on_resolve() {
+        // Arrange: Mock a metadata provider with an invalid scope string.
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'ConfigurableService',
+            Type__c = 'Class',
+            Value__c = 'DiTest.TestServiceImpl',
+            IsActive__c = true,
+            Scope__c = 'NOT_A_SCOPE'
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act & Assert: resolve() should wrap invalid metadata scopes in a framework exception.
+        try {
+            ref.resolve(IMetadataService.class);
+            Assert.fail('Expected InvalidProviderException for invalid metadata scope.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Invalid metadata scope "NOT_A_SCOPE"'),
+                'Exception message should identify the invalid metadata scope.'
+            );
+        }
+    }
+
     //=========================================================================
     // Arguments & Caching
     //=========================================================================
