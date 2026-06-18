@@ -123,11 +123,21 @@ public virtual inherited sharing class Di {
 
         ModuleRef ref = new ModuleRef(module);
         registry.put(token, ref);
-        module.register();
-        if (module.isGlobal()) {
-            addGlobalProviders(module);
+        try {
+            module.register();
+            if (module.isGlobal()) {
+                addGlobalProviders(module);
+            }
+            return ref;
+        } catch (Exception exc) {
+            if (registry.get(token) === ref) {
+                registry.remove(token);
+            }
+            if (module.isGlobal()) {
+                removeGlobalProviders(module.exports);
+            }
+            throw exc;
         }
-        return ref;
     }
 
     public static void replaceModule(final String token, final Module newModule) {

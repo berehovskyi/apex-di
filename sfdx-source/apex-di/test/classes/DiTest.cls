@@ -1275,6 +1275,63 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_not_keep_module_in_registry_when_registration_fails() {
+        // Arrange: A module registration fails because it exports an unknown provider.
+        LocalErrorModule failingModule = new LocalErrorModule();
+        String failedToken = failingModule.getToken();
+        try {
+            Di.addModule(failingModule);
+            Assert.fail('Expected an exception for an unknown export.');
+        } catch (Di.UnknownExportException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Cannot export "missing"'),
+                'Pre-condition: registration should fail before the retry.'
+            );
+        }
+
+        // Act: Retry registration with a valid module using the same token.
+        Di.DynamicModule validRetry = new Di.DynamicModule(failedToken);
+        validRetry.addProvider(validRetry.provide('retryValue').useValue('registered')).addExport('retryValue');
+        Di.ModuleRef retryRef = Di.addModule(validRetry);
+
+        // Assert: The failed attempt did not poison the module registry.
+        Assert.areEqual(
+            'registered',
+            retryRef.get('retryValue'),
+            'A failed registration should not block a clean retry with the same module token.'
+        );
+    }
+
+    @IsTest
+    static void should_not_keep_global_module_in_registry_when_registration_fails() {
+        // Arrange: A global module registration fails because it exports an unknown provider.
+        GlobalErrorModule failingModule = new GlobalErrorModule();
+        String failedToken = failingModule.getToken();
+        try {
+            Di.addModule(failingModule);
+            Assert.fail('Expected an exception for an unknown global export.');
+        } catch (Di.UnknownExportException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Cannot export "missingGlobal"'),
+                'Pre-condition: global registration should fail before the retry.'
+            );
+        }
+
+        // Act: Retry registration with a valid global module using the same token.
+        Di.DynamicModule validRetry = new Di.DynamicModule(failedToken).setGlobal();
+        validRetry.addProvider(validRetry.provide('globalRetryValue').useValue('registered'))
+            .addExport('globalRetryValue');
+        Di.addModule(validRetry);
+
+        // Assert: The failed global attempt did not poison the global module registry.
+        Assert.areEqual(
+            'registered',
+            Di.getModuleRef(EmptyModule.class).get('globalRetryValue'),
+            'A failed global registration should not block a clean retry with the same module token.'
+        );
+    }
+
+    @IsTest
     static void should_get_module_ref_by_instance() {
         // Arrange: A module instance is created but not yet registered.
         Di.Module mod = new ValueModule();
@@ -2594,6 +2651,14 @@ private class DiTest {
     public class LocalErrorModule extends EmptyModule {
         public override Set<String> exports() {
             return new Set<String>{ 'missing' };
+        }
+    }
+    public class GlobalErrorModule extends EmptyModule {
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'missingGlobal' };
         }
     }
     public class AbstractProviderModule extends EmptyModule {
