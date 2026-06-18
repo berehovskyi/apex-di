@@ -1955,6 +1955,45 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_refresh_existing_module_ref_when_local_module_is_replaced() {
+        // Arrange: A local module ref is held before the module is replaced.
+        SingleModule module = new SingleModule();
+        Di.ModuleRef ref = Di.addModule(module);
+        Assert.isTrue(ref.get('TestService') instanceof TestServiceImpl);
+        Di.DynamicModule replacement = new Di.DynamicModule(module.getToken());
+        replacement.addProvider(replacement.provide('TestService').useValue('replaced')).addExport('TestService');
+
+        // Act: The module is replaced while the old ref is still in use.
+        Di.replaceModule(module.getToken(), replacement);
+
+        // Assert: The old ref observes the replacement instead of serving stale providers/cache.
+        Object result = ref.get('TestService');
+        Assert.isTrue(result instanceof String, 'Existing refs should observe local module replacement.');
+        Assert.areEqual('replaced', (String) result, 'Existing refs should serve replacement providers.');
+    }
+
+    @IsTest
+    static void should_clear_dependent_singleton_caches_when_local_module_is_replaced() {
+        // Arrange: A consumer singleton is cached from an imported local module value.
+        ValueModule valueModule = new ValueModule();
+        Di.addModule(valueModule);
+        Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
+        Assert.areEqual('depends on hello', consumerRef.get('dependentVal'), 'Pre-condition: value should be cached.');
+        Di.DynamicModule replacement = new Di.DynamicModule(valueModule.getToken());
+        replacement.addProvider(replacement.provide('val').useValue('replaced')).addExport('val');
+
+        // Act: The imported local module is replaced.
+        Di.replaceModule(valueModule.getToken(), replacement);
+
+        // Assert: Dependent singleton caches are invalidated after local replacement.
+        Assert.areEqual(
+            'depends on replaced',
+            consumerRef.get('dependentVal'),
+            'Dependent singleton providers should be rebuilt after local module replacement.'
+        );
+    }
+
+    @IsTest
     static void should_throw_exception_when_replacing_module_with_scope_mismatch() {
         // Arrange: A local module is registered.
         Di.addModule(new SingleModule());

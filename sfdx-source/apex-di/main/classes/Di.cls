@@ -160,6 +160,7 @@ public virtual inherited sharing class Di {
 
         Map<String, ModuleRef> registry = oldModule.isGlobal() ? globalRegistry : MODULE_REGISTRY;
         ModuleRef newRef = new ModuleRef(newModule);
+        newRef.registryToken = token;
         newModule.register();
         if (oldModule.isGlobal()) {
             removeGlobalProviders(oldModule.exports);
@@ -168,6 +169,7 @@ public virtual inherited sharing class Di {
             clearAllModuleCaches();
         } else {
             registry.put(token, newRef);
+            clearAllModuleCaches();
         }
     }
 
@@ -1115,13 +1117,16 @@ public virtual inherited sharing class Di {
     }
 
     public virtual class ModuleRef extends Container {
+        protected String registryToken;
         protected final Map<String, Object> cache = new Map<String, Object>();
 
         public ModuleRef(final Module module) {
             super(null, module);
+            registryToken = module.getToken();
         }
 
         public virtual ScopeRef createScope() {
+            refreshIfModuleChanged();
             return new ScopeRef(this, module);
         }
 
@@ -1131,6 +1136,7 @@ public virtual inherited sharing class Di {
             String token = newProvider.getToken();
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
+            refreshIfModuleChanged();
             module.replace(newProvider);
             cache.remove(token);
         }
@@ -1140,6 +1146,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual void refresh() {
+            refreshIfModuleChanged();
             Set<String> oldExports = new Set<String>(module.exports ?? new Set<String>());
             module.register();
             if (module.isGlobal()) {
@@ -1183,6 +1190,24 @@ public virtual inherited sharing class Di {
                 return;
             }
             super.validateAndAddPath(token);
+        }
+
+        protected override Object getInternal(final String token, final Object args) {
+            refreshIfModuleChanged();
+            return super.getInternal(token, args);
+        }
+
+        protected override Object resolveInternal(final String token, final Object args) {
+            refreshIfModuleChanged();
+            return super.resolveInternal(token, args);
+        }
+
+        private void refreshIfModuleChanged() {
+            ModuleRef currentRef = findModuleRef(registryToken);
+            if (currentRef != null && currentRef !== this && currentRef.getModule() !== module) {
+                module = currentRef.getModule();
+                clearCache();
+            }
         }
     }
 
