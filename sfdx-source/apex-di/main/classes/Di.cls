@@ -109,7 +109,7 @@ public virtual inherited sharing class Di {
         isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
 
         String token = module.getToken();
-        return findModuleRef(token) ?? addModule(module);
+        return findRegisteredModuleRef(module) ?? addModule(module);
     }
 
     public static ModuleRef getModuleRef(final String token) {
@@ -229,13 +229,19 @@ public virtual inherited sharing class Di {
     }
 
     private static ModuleRef findModuleRef(String token) {
-        if (MODULE_REGISTRY.containsKey(token)) {
-            return MODULE_REGISTRY.get(token);
+        ModuleRef ref = MODULE_REGISTRY.get(token);
+        if (ref == null) {
+            ref = globalRegistry.get(token);
         }
-        if (globalRegistry.containsKey(token)) {
-            return globalRegistry.get(token);
-        }
-        return null;
+        return ref;
+    }
+
+    private static ModuleRef findRegisteredModuleRef(final Module module) {
+        return getLoadedRegistry(module).get(module.getToken());
+    }
+
+    private static Map<String, ModuleRef> getLoadedRegistry(final Module module) {
+        return module.isGlobal() ? globalRegistry : MODULE_REGISTRY;
     }
 
     private static void loadGlobalModules() {
@@ -376,7 +382,7 @@ public virtual inherited sharing class Di {
     }
 
     private static ModuleRef getRegisteredModuleRef(final Module module) {
-        ModuleRef ref = findModuleRef(module.getToken());
+        ModuleRef ref = findRegisteredModuleRef(module);
         return ref ?? getModuleRef(module);
     }
 
@@ -1093,7 +1099,7 @@ public virtual inherited sharing class Di {
 
         protected virtual Container getResolutionContainer(final ProviderBinding binding) {
             ModuleRef owner = binding.getOwner();
-            return owner.getModule().getToken().equals(module.getToken()) ? this : owner;
+            return owner === this ? this : owner;
         }
 
         private Object getInternalFrom(final Container target, final String token, final Object args) {
@@ -1298,11 +1304,15 @@ public virtual inherited sharing class Di {
         }
 
         private void refreshIfModuleChanged() {
-            ModuleRef currentRef = findModuleRef(registryToken);
+            ModuleRef currentRef = getCurrentRegisteredRef();
             if (currentRef != null && currentRef !== this && currentRef.getModule() !== module) {
                 module = currentRef.getModule();
                 clearCache();
             }
+        }
+
+        private ModuleRef getCurrentRegisteredRef() {
+            return getLoadedRegistry(module).get(registryToken);
         }
     }
 
@@ -1362,14 +1372,15 @@ public virtual inherited sharing class Di {
         protected override Container getResolutionContainer(final ProviderBinding binding) {
             ModuleRef owner = binding.getOwner();
             String ownerToken = owner.getModule().getToken();
-            if (ownerToken.equals(module.getToken())) {
+            if (owner === parent) {
                 return this;
             }
 
-            ScopeRef ownerScope = ownerScopes.get(ownerToken);
+            String ownerScopeKey = (owner.getModule().isGlobal() ? 'global:' : 'local:') + ownerToken;
+            ScopeRef ownerScope = ownerScopes.get(ownerScopeKey);
             if (ownerScope == null || ownerScope.parent !== owner) {
                 ownerScope = owner.createScope();
-                ownerScopes.put(ownerToken, ownerScope);
+                ownerScopes.put(ownerScopeKey, ownerScope);
             }
             return ownerScope;
         }
@@ -1382,8 +1393,8 @@ public virtual inherited sharing class Di {
         }
 
         private void refreshIfModuleChanged() {
-            ModuleRef currentRef = Di.getModuleRef(module.getToken());
-            if (currentRef !== parent) {
+            ModuleRef currentRef = ((ModuleRef) parent).getCurrentRegisteredRef();
+            if (currentRef != null && currentRef !== parent) {
                 parent = currentRef;
                 module = currentRef.getModule();
                 clearCache();

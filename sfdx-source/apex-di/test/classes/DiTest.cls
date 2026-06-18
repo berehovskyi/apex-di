@@ -1336,6 +1336,37 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_preserve_global_provider_owner_when_local_module_has_same_token() {
+        // Arrange: A local and global module share a token, but the exported provider belongs to the global module.
+        Di.ModuleRef localRef = Di.addModule(new TokenCollisionLocalModule());
+        Di.addModule(new TokenCollisionGlobalOwnerModule());
+        Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
+
+        // Act: Resolve the global provider from unrelated and same-token consumers.
+        ExportedPrivateFacade facade = (ExportedPrivateFacade) consumerRef.get(ExportedPrivateFacade.class);
+        ExportedPrivateFacade sameTokenFacade = (ExportedPrivateFacade) localRef.get(ExportedPrivateFacade.class);
+        ExportedPrivateFacade scopedSameTokenFacade = (ExportedPrivateFacade) localRef.createScope()
+            .get(ExportedPrivateFacade.class);
+
+        // Assert: The provider should autowire against its global owner, not the same-token local module.
+        Assert.areEqual(
+            'private-dependency',
+            facade.getDependencyValue(),
+            'Global provider ownership should not be confused by a local module with the same token.'
+        );
+        Assert.areEqual(
+            'private-dependency',
+            sameTokenFacade.getDependencyValue(),
+            'Root owner routing should use ModuleRef identity rather than module token equality.'
+        );
+        Assert.areEqual(
+            'private-dependency',
+            scopedSameTokenFacade.getDependencyValue(),
+            'Scoped owner routing should use ModuleRef identity rather than module token equality.'
+        );
+    }
+
+    @IsTest
     static void should_resolve_exported_provider_and_alias_through_owner_context() {
         // Arrange: Consumers import exported providers owned by other modules.
         Di.ModuleRef privateFacadeConsumerRef = Di.getModuleRef(PrivateFacadeConsumerModule.class);
@@ -1924,6 +1955,22 @@ private class DiTest {
 
         // Assert: The same ModuleRef instance is returned, hitting the `globalRegistry.get(token)` line.
         Assert.areEqual(ref1, ref2, 'Should return the existing ModuleRef from the global registry.');
+    }
+
+    @IsTest
+    static void should_return_existing_ref_for_cmdt_global_module_instance() {
+        // Arrange: A global module is defined via CMT mock, but the first lookup passes an equivalent module instance.
+        Di.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+            }
+        );
+
+        // Act: The module reference is requested by instance before any other DI operation loads globals.
+        Di.ModuleRef ref = Di.getModuleRef(new CmtGlobalModule());
+
+        // Assert: The CMT-defined global ref is reused instead of attempting duplicate registration.
+        Assert.areEqual('helloFromCmt', ref.get('cmtGlobalVal'), 'Should reuse the CMT-loaded global module ref.');
     }
 
     @IsTest
@@ -2930,6 +2977,26 @@ private class DiTest {
     public class PrivateFacadeConsumerModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(PrivateFacadeOwnerModule.class) };
+        }
+    }
+    public class TokenCollisionLocalModule extends Di.Module {
+        public TokenCollisionLocalModule() {
+            super('TokenCollisionModule');
+        }
+    }
+    public class TokenCollisionGlobalOwnerModule extends Di.Module {
+        public TokenCollisionGlobalOwnerModule() {
+            super('TokenCollisionModule');
+            isGlobal = true;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(PrivateDependencyService.class).useClass(PrivateDependencyService.class),
+                provide(ExportedPrivateFacade.class).useClass(ExportedPrivateFacade.class)
+            };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ ExportedPrivateFacade.class.getName() };
         }
     }
     public class ConsumerOnlyDependencyModule extends EmptyModule {
