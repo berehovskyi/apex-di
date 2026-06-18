@@ -1575,6 +1575,51 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_rollback_and_retry_global_metadata_load_after_failure() {
+        // Arrange: A consumer exists before global metadata loading is triggered.
+        Di.ModuleRef consumerRef = Di.addModule(new EmptyModule());
+        Di.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true),
+                new DI_GlobalModule__mdt(ModuleClass__c = 'DiTest.MissingGlobalModule', IsActive__c = true)
+            }
+        );
+
+        // Act: Global loading fails after the first global module row has already been processed.
+        try {
+            Di.getModuleRef(CmtGlobalModule.class.getName());
+            Assert.fail('Expected UnknownModuleException for the invalid global module row.');
+        } catch (Di.UnknownModuleException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Cannot find module "DiTest.MissingGlobalModule"'),
+                'Pre-condition: global load should fail on the invalid metadata row.'
+            );
+        }
+
+        // Assert: The failed load did not leave partially published global providers behind.
+        try {
+            consumerRef.get('cmtGlobalVal');
+            Assert.fail('Failed global metadata loading should not publish partial providers.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Could not find "cmtGlobalVal" provider'),
+                'Partially loaded global providers should be rolled back.'
+            );
+        }
+
+        // Act: Corrected metadata in the same transaction should retry and load successfully.
+        Di.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+            }
+        );
+        Di.getModuleRef(CmtGlobalModule.class.getName());
+
+        // Assert: The corrected global metadata is now visible.
+        Assert.areEqual('helloFromCmt', consumerRef.get('cmtGlobalVal'), 'Global loading should retry after failure.');
+    }
+
+    @IsTest
     static void should_prioritize_local_provider_over_global_provider() {
         // Arrange: A global module is defined via mocked CMT, and a local module provides a conflicting token.
         Di.mockGlobalModules(

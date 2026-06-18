@@ -62,12 +62,12 @@ public virtual inherited sharing class Di {
 
     @TestVisible
     private static Boolean hasGlobalLoadBeenAttempted = false;
+    private static Boolean isLoadingGlobalModules = false;
     private static Map<String, DI_Provider__mdt> mockProviders;
 
     private static final Map<String, ModuleRef> globalRegistry {
         get {
-            if (!hasGlobalLoadBeenAttempted) {
-                hasGlobalLoadBeenAttempted = true;
+            if (!hasGlobalLoadBeenAttempted && !isLoadingGlobalModules) {
                 loadGlobalModules();
             }
             return GLOBAL_MODULE_REGISTRY;
@@ -221,19 +221,35 @@ public virtual inherited sharing class Di {
     }
 
     private static void loadGlobalModules() {
-        for (DI_GlobalModule__mdt moduleDef : getGlobalModuleDefinitions()) {
-            if (!moduleDef.IsActive__c) {
-                continue;
-            }
-            Module module = create(moduleDef.ModuleClass__c);
-            isTrue(
-                module.isGlobal(),
-                new InvalidModuleException(
-                    String.format(INVALID_GLOBAL_MODULE_MESSAGE, new List<String>{ module.getToken() })
-                )
-            );
+        Map<String, ModuleRef> previousGlobalRegistry = new Map<String, ModuleRef>(GLOBAL_MODULE_REGISTRY);
+        Map<String, ProviderBinding> previousGlobalProviders = new Map<String, ProviderBinding>(GLOBAL_PROVIDERS);
+        Boolean previousLoadAttempted = hasGlobalLoadBeenAttempted;
+        isLoadingGlobalModules = true;
+        try {
+            for (DI_GlobalModule__mdt moduleDef : getGlobalModuleDefinitions()) {
+                if (!moduleDef.IsActive__c) {
+                    continue;
+                }
+                Module module = create(moduleDef.ModuleClass__c);
+                isTrue(
+                    module.isGlobal(),
+                    new InvalidModuleException(
+                        String.format(INVALID_GLOBAL_MODULE_MESSAGE, new List<String>{ module.getToken() })
+                    )
+                );
 
-            addModule(module);
+                addModule(module);
+            }
+            hasGlobalLoadBeenAttempted = true;
+        } catch (Exception exc) {
+            GLOBAL_MODULE_REGISTRY.clear();
+            GLOBAL_MODULE_REGISTRY.putAll(previousGlobalRegistry);
+            GLOBAL_PROVIDERS.clear();
+            GLOBAL_PROVIDERS.putAll(previousGlobalProviders);
+            hasGlobalLoadBeenAttempted = previousLoadAttempted;
+            throw exc;
+        } finally {
+            isLoadingGlobalModules = false;
         }
     }
 
