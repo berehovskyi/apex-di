@@ -572,6 +572,30 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_treat_string_tokens_as_exact_case_sensitive_keys() {
+        // Arrange: A module with a Type-token provider is registered.
+        Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
+        String lowerCaseTypeToken = TestService.class.getName().toLowerCase();
+
+        // Assert: Type overloads use the canonical Apex type name.
+        Assert.isTrue(
+            ref.get(TestService.class) instanceof TestServiceImpl,
+            'Type overloads should resolve through the canonical Type name.'
+        );
+
+        // Act & Assert: String tokens are exact keys, even when they look like class names.
+        try {
+            ref.get(lowerCaseTypeToken);
+            Assert.fail('Expected UnknownProviderException for a differently cased string token.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Could not find "' + lowerCaseTypeToken + '" provider'),
+                'String tokens should remain exact and case-sensitive.'
+            );
+        }
+    }
+
+    @IsTest
     static void should_replace_existing_class_provider() {
         // Arrange: A module with a standard provider is registered using a Type token.
         Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
