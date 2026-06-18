@@ -31,6 +31,8 @@ public virtual inherited sharing class Di {
     private static final String MODULE_SCOPE_MISMATCH_MESSAGE =
         'Cannot replace {0} module "{1}" with {2} module. ' +
         'The replacement module must have the same scope (global/local) as the original.';
+    private static final String MODULE_TOKEN_MISMATCH_MESSAGE =
+        'Cannot replace module "{0}" with module "{1}". ' + 'The replacement module token must match the target token.';
     private static final String UNKNOWN_EXPORT_MESSAGE =
         'Cannot export "{0}" from the "{1}" module. This provider ' +
         'has not been registered in the module.' +
@@ -142,6 +144,13 @@ public virtual inherited sharing class Di {
 
     public static void replaceModule(final String token, final Module newModule) {
         isTrue(newModule != null, new InvalidModuleException(INVALID_MODULE_REPLACEMENT_MESSAGE));
+        isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+        isTrue(
+            token.equals(newModule.getToken()),
+            new InvalidModuleException(
+                String.format(MODULE_TOKEN_MISMATCH_MESSAGE, new List<String>{ token, newModule.getToken() })
+            )
+        );
 
         Module oldModule = getModuleRef(token).getModule();
         isTrue(

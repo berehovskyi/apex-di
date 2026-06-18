@@ -2039,14 +2039,38 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_reject_module_replacement_with_mismatched_token() {
+        // Arrange: A replacement module is configured with a token that does not match the target module.
+        SingleModule module = new SingleModule();
+        Di.ModuleRef ref = Di.addModule(module);
+        Di.DynamicModule replacement = new Di.DynamicModule('DifferentModuleToken');
+        replacement.addProvider(replacement.provide('TestService').useValue('replaced')).addExport('TestService');
+
+        // Act: The replacement is rejected before it can be registered under the wrong key.
+        try {
+            Di.replaceModule(module.getToken(), replacement);
+            Assert.fail('Expected InvalidModuleException for a mismatched replacement token.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('must match'),
+                'Error should explain that replacement module tokens must match.'
+            );
+        }
+
+        // Assert: The failed replacement did not disturb the original module.
+        Assert.isTrue(ref.get('TestService') instanceof TestServiceImpl, 'Original module should remain active.');
+    }
+
+    @IsTest
     static void should_throw_exception_when_replacing_module_with_scope_mismatch() {
         // Arrange: A local module is registered.
-        Di.addModule(new SingleModule());
-        Di.DynamicModule globalReplacement = new Di.DynamicModule(new SingleModule().getToken()).setGlobal();
+        SingleModule module = new SingleModule();
+        Di.addModule(module);
+        Di.DynamicModule globalReplacement = new Di.DynamicModule(module.getToken()).setGlobal();
 
         // Act: An attempt is made to replace the local module with a global one.
         try {
-            Di.replaceModule(SingleModule.class, globalReplacement);
+            Di.replaceModule(module.getToken(), globalReplacement);
             Assert.fail('Expected InvalidModuleException was not thrown.');
         } catch (Di.InvalidModuleException ex) {
             // Assert: The correct exception is thrown.
@@ -2767,7 +2791,7 @@ private class DiTest {
     }
     public class ReplacementModule extends Di.Module {
         public ReplacementModule() {
-            super('SingleModule');
+            super(SingleModule.class.getName());
         }
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>();
@@ -3126,7 +3150,7 @@ private class DiTest {
 
     public class ScopeRefIntegrityReplacementModule extends Di.Module {
         public ScopeRefIntegrityReplacementModule() {
-            super(ScopeRefIntegrityReplacementModule.class.getName());
+            super(ScopeRefIntegrityModule.class.getName());
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{
@@ -3213,6 +3237,7 @@ private class DiTest {
 
     public class GlobalReexportModule2 extends Di.Module {
         public GlobalReexportModule2() {
+            super(GlobalReexportModule.class.getName());
             isGlobal = true;
         }
         public override Set<Di.Provider> providers() {
