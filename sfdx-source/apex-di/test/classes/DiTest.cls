@@ -180,14 +180,18 @@ private class DiTest {
             'Different scopes should return different instances for SCOPED provider'
         );
 
-        Object instanceRoot = consumerCtn.resolve(ScopedService.class);
-        Object instanceRoot2 = consumerCtn.resolve(ScopedService.class);
+        Object resolvedInScope1 = scope1.resolve(ScopedService.class);
+        Object resolvedInScope2 = scope1.resolve(ScopedService.class);
 
-        Assert.areNotEqual(instance1, instanceRoot, 'Scoped instance should not define Root instance');
         Assert.areNotEqual(
-            instanceRoot,
-            instanceRoot2,
-            'Scoped provider resolved from Root should return new instances.'
+            instance1,
+            resolvedInScope1,
+            'resolve() in a scope should create a fresh scoped instance instead of using the scope cache.'
+        );
+        Assert.areNotEqual(
+            resolvedInScope1,
+            resolvedInScope2,
+            'resolve() in a scope should create a fresh scoped instance on each call.'
         );
     }
 
@@ -200,6 +204,23 @@ private class DiTest {
         try {
             ref.get(ScopedService.class);
             Assert.fail('Expected InvalidScopeException when getting a scoped provider from the root module.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Use createScope() method instead'),
+                'Exception message should guide the user to create a scope.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_throw_when_resolving_scoped_provider_from_root_module_ref() {
+        // Arrange: A root module ref has no active scope cache for SCOPED providers.
+        Di.ModuleRef ref = Di.getModuleRef(ScopedModule.class);
+
+        // Act & Assert: Root resolve() should also require callers to create an explicit scope.
+        try {
+            ref.resolve(ScopedService.class);
+            Assert.fail('Expected InvalidScopeException when resolving a scoped provider from the root module.');
         } catch (Di.InvalidScopeException ex) {
             Assert.isTrue(
                 ex.getMessage().contains('Use createScope() method instead'),
@@ -1011,8 +1032,8 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_directly_resolve_metadata_existing_provider() {
-        // Arrange: Direct provider calls should still support metadata Existing definitions.
+    static void should_throw_when_resolving_metadata_existing_provider_directly() {
+        // Arrange: Metadata Existing providers are alias definitions and should only resolve through a container.
         Di.ModuleRef ref = Di.getModuleRef(MetadataProtoAliasModule.class);
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
             DeveloperName = 'AliasProtoProvider',
@@ -1026,12 +1047,16 @@ private class DiTest {
             'AliasProtoProvider'
         );
 
-        // Act: Direct provider resolution delegates to resolve() on the existing target.
-        Object first = provider.resolve(ref, null);
-        Object second = provider.resolve(ref, null);
-
-        // Assert: The prototype target is resolved directly without alias-level caching.
-        Assert.areNotEqual(first, second, 'Direct metadata Existing resolution should respect target prototype scope.');
+        // Act & Assert: Direct provider resolution is invalid for aliases.
+        try {
+            provider.resolve(ref, null);
+            Assert.fail('Expected InvalidProviderException when directly resolving a metadata Existing provider.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('This operation is not supported'),
+                'Exception message should indicate that alias providers are not directly executable.'
+            );
+        }
     }
 
     @IsTest
@@ -1302,6 +1327,44 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_reject_ambiguous_imported_provider_tokens() {
+        // Arrange: A consumer imports two modules that export the same token from different owners.
+        Di.ModuleRef ref = Di.getModuleRef(AmbiguousImportConsumerModule.class);
+
+        // Act: The ambiguous token is requested from the consumer.
+        try {
+            ref.get('ambiguousImportVal');
+            Assert.fail('Expected InvalidProviderException for ambiguous imported provider token.');
+        } catch (Di.InvalidProviderException ex) {
+            // Assert: The error identifies the ambiguous token and context.
+            Assert.isTrue(
+                ex.getMessage().contains('ambiguousImportVal'),
+                'Exception message should identify the ambiguous provider token.'
+            );
+            Assert.isTrue(
+                ex.getMessage().contains('AmbiguousImportConsumerModule'),
+                'Exception message should identify the consuming module context.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_allow_duplicate_import_reexports_from_same_owner() {
+        // Arrange: Two imported modules re-export the same provider owned by a shared common module.
+        Di.ModuleRef ref = Di.getModuleRef(SharedImportReexportConsumerModule.class);
+
+        // Act: The duplicate visible token is requested from the consumer.
+        Object val = ref.get('sharedImportReexportVal');
+
+        // Assert: Identical owner bindings are not ambiguous.
+        Assert.areEqual(
+            'shared',
+            val,
+            'Imports should be allowed to expose the same provider when the provider owner is identical.'
+        );
+    }
+
+    @IsTest
     static void should_share_singleton_export_between_multiple_importing_modules() {
         // Arrange: Two modules import the same exported singleton provider from a shared module.
         Di.ModuleRef leftRef = Di.getModuleRef(SharedSingletonConsumerLeftModule.class);
@@ -1567,6 +1630,26 @@ private class DiTest {
         // Assert: The returned references are the same as the initially registered ones.
         Assert.areEqual(localRef1, localRef2, 'Should return existing ref for local module instance.');
         Assert.areEqual(globalRef1, globalRef2, 'Should return existing ref for global module instance.');
+    }
+
+    @IsTest
+    static void should_reject_distinct_module_instance_with_registered_token() {
+        // Arrange: One module instance has already claimed its token in the registry.
+        ConfigurableModule registered = new ConfigurableModule('registered');
+        Di.ModuleRef ref = Di.getModuleRef(registered);
+
+        // Act & Assert: A different instance with the same token must not silently reuse the registered ref.
+        try {
+            Di.getModuleRef(new ConfigurableModule('other'));
+            Assert.fail('Expected InvalidModuleException for a distinct module instance with a registered token.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('already been registered'),
+                'Exception message should identify the duplicate module token.'
+            );
+        }
+
+        Assert.areEqual('registered', ref.get('configVal'), 'The original registered module should remain active.');
     }
 
     @IsTest
@@ -2003,19 +2086,26 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_return_existing_ref_for_cmdt_global_module_instance() {
-        // Arrange: A global module is defined via CMT mock, but the first lookup passes an equivalent module instance.
+    static void should_reject_distinct_cmdt_global_module_instance_with_registered_token() {
+        // Arrange: A global module is defined via CMT mock, but lookup passes a separate equivalent instance.
         Di.mockGlobalModules(
             new List<DI_GlobalModule__mdt>{
                 new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
             }
         );
 
-        // Act: The module reference is requested by instance before any other DI operation loads globals.
-        Di.ModuleRef ref = Di.getModuleRef(new CmtGlobalModule());
-
-        // Assert: The CMT-defined global ref is reused instead of attempting duplicate registration.
-        Assert.areEqual('helloFromCmt', ref.get('cmtGlobalVal'), 'Should reuse the CMT-loaded global module ref.');
+        // Act & Assert: The graph-owned CMT instance should not be replaced or ignored by a distinct instance.
+        try {
+            Di.getModuleRef(new CmtGlobalModule());
+            Assert.fail(
+                'Expected InvalidModuleException for a distinct global module instance with a registered token.'
+            );
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('already been registered'),
+                'Exception message should identify the duplicate global module token.'
+            );
+        }
     }
 
     @IsTest
@@ -2957,6 +3047,56 @@ private class DiTest {
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('foo').useValue('override') };
+        }
+    }
+    public class AmbiguousImportLeftModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('ambiguousImportVal').useValue('left') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'ambiguousImportVal' };
+        }
+    }
+    public class AmbiguousImportRightModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('ambiguousImportVal').useValue('right') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'ambiguousImportVal' };
+        }
+    }
+    public class AmbiguousImportConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{
+                Di.import(AmbiguousImportLeftModule.class),
+                Di.import(AmbiguousImportRightModule.class)
+            };
+        }
+    }
+    public class SharedImportReexportCommonModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('sharedImportReexportVal').useValue('shared') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'sharedImportReexportVal' };
+        }
+    }
+    public class SharedImportReexportLeftModule extends EmptyModule {
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(SharedImportReexportCommonModule.class) };
+        }
+    }
+    public class SharedImportReexportRightModule extends EmptyModule {
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(SharedImportReexportCommonModule.class) };
+        }
+    }
+    public class SharedImportReexportConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{
+                Di.import(SharedImportReexportLeftModule.class),
+                Di.import(SharedImportReexportRightModule.class)
+            };
         }
     }
     public class SharedSingletonOwnerModule extends EmptyModule {

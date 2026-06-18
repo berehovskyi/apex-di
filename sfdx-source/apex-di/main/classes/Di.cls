@@ -40,6 +40,9 @@ public virtual inherited sharing class Di {
     private static final String DUPLICATE_GLOBAL_PROVIDER_MESSAGE =
         'Cannot export global provider "{0}" from the "{1}" module. ' +
         'This token is already exported by the "{2}" module.';
+    private static final String AMBIGUOUS_IMPORTED_PROVIDER_MESSAGE =
+        'Cannot resolve provider "{0}" in the "{1}" module context. ' +
+        'This token is exported by both "{2}" and "{3}".';
     private static final String NULL_PROVIDER_MESSAGE = 'The provider cannot be null.';
     private static final String NULL_PROVIDER_FACTORY_MESSAGE = 'The provider factory cannot be null.';
     private static final String NULL_MODULE_IMPORT_MESSAGE = 'The module import cannot be null.';
@@ -49,8 +52,8 @@ public virtual inherited sharing class Di {
         'Cannot retrieve prototype-scoped provider "{0}" ' +
         'using get(). Prototype-scoped providers create a new instance on each request.' +
         '\nUse resolve() method instead to get a new instance.';
-    private static final String SCOPED_ROOT_GET_ERROR_MESSAGE =
-        'Cannot retrieve scoped provider "{0}" using get() from the root module. ' +
+    private static final String SCOPED_ROOT_ACCESS_ERROR_MESSAGE =
+        'Cannot access scoped provider "{0}" from the root module. ' +
         'Scoped providers require an active scope cache.' +
         '\nUse createScope() method instead to create a ScopeRef.';
     private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
@@ -112,13 +115,28 @@ public virtual inherited sharing class Di {
         isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
 
         String token = module.getToken();
-        return findRegisteredModuleRef(module) ?? addModule(module);
+        ModuleRef ref = findRegisteredModuleRef(module);
+        if (ref == null) {
+            return addModule(module);
+        }
+
+        isTrue(
+            ref.getModule() === module,
+            new InvalidModuleException(String.format(MODULE_ALREADY_REGISTERED_MESSAGE, new List<String>{ token }))
+        );
+        return ref;
     }
 
     public static ModuleRef getModuleRef(final String token) {
         isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
 
-        return findModuleRef(token) ?? getModuleRef(create(token));
+        ModuleRef ref = findModuleRef(token);
+        if (ref != null) {
+            return ref;
+        }
+
+        Module module = create(token);
+        return findModuleRef(module.getToken()) ?? addModule(module);
     }
 
     public static ModuleRef getModuleRef(final Type moduleType) {
@@ -528,15 +546,34 @@ public virtual inherited sharing class Di {
                 searchScope.addAll(reexports());
             }
 
+            ProviderBinding selectedProvider;
             for (ModuleImport moduleImport : searchScope) {
                 Module module = moduleImport.resolve();
                 if (!module.hasExport(token)) {
                     continue;
                 }
                 ProviderBinding provider = module.getProviderBinding(token);
-                if (provider != null) {
-                    return provider;
+                if (selectedProvider == null) {
+                    selectedProvider = provider;
+                    continue;
                 }
+                isTrue(
+                    selectedProvider.getOwner() === provider.getOwner(),
+                    new InvalidProviderException(
+                        String.format(
+                            AMBIGUOUS_IMPORTED_PROVIDER_MESSAGE,
+                            new List<String>{
+                                token,
+                                getToken(),
+                                selectedProvider.getOwner().getModule().getToken(),
+                                provider.getOwner().getModule().getToken()
+                            }
+                        )
+                    )
+                );
+            }
+            if (selectedProvider != null) {
+                return selectedProvider;
             }
 
             // Finally check global providers
@@ -965,7 +1002,7 @@ public virtual inherited sharing class Di {
                     provider = new FactoryProvider(token, value);
                 }
                 when 'Existing' {
-                    return container.resolve(value, factoryArgs);
+                    throw new InvalidProviderException(INVALID_OPERATION_MESSAGE);
                 }
                 when else {
                     throw new InvalidProviderException(
@@ -1280,11 +1317,12 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
-            if (provider.getScope() === Scope.SCOPED) {
-                throw new InvalidScopeException(
-                    String.format(SCOPED_ROOT_GET_ERROR_MESSAGE, new List<String>{ provider.getToken() })
-                );
-            }
+            isTrue(
+                provider.getScope() !== Scope.SCOPED,
+                new InvalidScopeException(
+                    String.format(SCOPED_ROOT_ACCESS_ERROR_MESSAGE, new List<String>{ provider.getToken() })
+                )
+            );
             String key = provider.getToken();
             if (args == null && provider.getScope() == Scope.SINGLETON && cache.containsKey(key)) {
                 return cache.get(key);
@@ -1301,6 +1339,16 @@ public virtual inherited sharing class Di {
                 }
                 throw e;
             }
+        }
+
+        protected override Object resolveInstance(final Provider provider, final Object args) {
+            isTrue(
+                provider.getScope() !== Scope.SCOPED,
+                new InvalidScopeException(
+                    String.format(SCOPED_ROOT_ACCESS_ERROR_MESSAGE, new List<String>{ provider.getToken() })
+                )
+            );
+            return super.resolveInstance(provider, args);
         }
 
         protected override Boolean hasInCache(final String token) {

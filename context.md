@@ -19,14 +19,16 @@ This is an advanced, NestJS-inspired Dependency Injection (DI) framework for Ape
 - **Scopes:** The framework supports three provider lifetimes:
     - **`SINGLETON` (Default):** A single instance is created and shared for the entire transaction (i.e., for the life of the root `ModuleRef`).
     - **`PROTOTYPE`:** A new instance is created every time it is requested via `.resolve()`.
-    - **`SCOPED`:** A single instance is created and shared _within a specific `ScopeRef`_. This is ideal for managing state within a unit of work.
+    - **`SCOPED`:** A single instance is created and shared _within a specific `ScopeRef`_. This is ideal for managing state within a unit of work. Scoped providers require an active `ScopeRef`; root `ModuleRef.get()` and root `ModuleRef.resolve()` both reject scoped providers.
 
 #### Key Architectural Decisions:
 
 - **Encapsulation & Safety:** The framework is architected with a `Container` base class to provide compile-time safety, ensuring that administrative methods like `replace()` and `refresh()` are only available on the root `ModuleRef`.
 - **Exports:** A module can export providers defined in its own `providers()` list, or re-export providers from imported modules using `reexports()`.
 - **Exported Provider Ownership:** Exported providers are resolved in the context of the module that owns the provider, not the consuming module. The owner module controls instantiation, singleton caching, scoped caching, and `Injectable` autowiring visibility. This means an exported provider can see private providers from its owner module, but it cannot see providers that are imported only by the consumer. For `SCOPED` exports, a consuming `ScopeRef` creates per-owner child scopes so the provider remains scoped to the active logical unit of work while preserving owner-module visibility.
+- **Module Instance Identity:** `Di.import(moduleInstance)` and `Di.getModuleRef(moduleInstance)` bind the exact module instance into the registry. If a different module instance with the same token is already registered, the framework rejects it instead of silently reusing or ignoring either instance.
 - **Global Modules:** The framework supports global modules loaded from Custom Metadata. These act as a fallback and their providers are available to all other modules.
+- **Metadata Aliases:** Custom Metadata `Existing` providers are aliases/redirects in the container graph. They inherit the target provider's scope through normal `get()` / `resolve()` calls and are not directly executable provider instances.
 - **Dynamic Modules:** `DynamicModule` allows for programmatic configuration but must be fully configured before being registered.
 - **Runtime Modification:**
     - `ModuleRef.replace(newProvider)` is the safe way to replace a provider at runtime on the root container.
