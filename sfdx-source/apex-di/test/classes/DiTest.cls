@@ -1448,6 +1448,33 @@ private class DiTest {
         Assert.areEqual('c-service', val, 'Dynamic modules should support re-exporting.');
     }
 
+    @IsTest
+    static void should_resolve_provider_through_transitive_reexport() {
+        // Arrange: A consumer imports a reexporter that reexports another reexporting module.
+        Di.ModuleRef ref = Di.getModuleRef(TransitiveReexportConsumerModule.class);
+
+        // Act: A provider from the deepest module is requested from the top-level consumer.
+        Object val = ref.get('serviceD');
+
+        // Assert: Computed exports should flow through more than one reexport layer.
+        Assert.areEqual('d-service', val, 'Provider should be visible through transitive reexports.');
+    }
+
+    @IsTest
+    static void should_detect_circular_reexports_during_registration() {
+        // Arrange / Act: A pair of modules reexport each other.
+        try {
+            Di.getModuleRef(CircularReexportAModule.class);
+            Assert.fail('Expected InvalidModuleException for circular module reexports.');
+        } catch (Di.InvalidModuleException ex) {
+            // Assert: The module graph cycle is reported as a framework exception.
+            Assert.isTrue(
+                ex.getMessage().contains('Circular module reexport detected'),
+                'Error should identify the circular reexport.'
+            );
+        }
+    }
+
     //=========================================================================
     // Lazy vs. Eager Imports
     //=========================================================================
@@ -2752,6 +2779,45 @@ private class DiTest {
         }
         public override Set<String> exports() {
             return new Set<String>();
+        }
+    }
+    public class ServiceDModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('serviceD').useValue('d-service') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'serviceD' };
+        }
+    }
+    public class TransitiveReexportMiddleModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ServiceDModule.class) };
+        }
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(ServiceDModule.class) };
+        }
+    }
+    public class TransitiveReexportRootModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(TransitiveReexportMiddleModule.class) };
+        }
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(TransitiveReexportMiddleModule.class) };
+        }
+    }
+    public class TransitiveReexportConsumerModule extends Di.Module {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(TransitiveReexportRootModule.class) };
+        }
+    }
+    public class CircularReexportAModule extends Di.Module {
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(CircularReexportBModule.class) };
+        }
+    }
+    public class CircularReexportBModule extends Di.Module {
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(CircularReexportAModule.class) };
         }
     }
 

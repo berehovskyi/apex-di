@@ -50,6 +50,7 @@ public virtual inherited sharing class Di {
         'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
     private static final String CIRCULAR_DEPENDENCY_MESSAGE = 'Circular dependency detected for provider "{0}". Resolution path: {1}';
+    private static final String CIRCULAR_REEXPORT_MESSAGE = 'Circular module reexport detected for module "{0}". Registration path: {1}';
     private static final String INVALID_OPERATION_MESSAGE = 'This operation is not supported for this provider type.';
     private static final String INVALID_DEVELOPER_NAME_MESSAGE = 'The developer name for a metadata provider cannot be blank.';
     private static final String MISSING_METADATA_PROVIDER_MESSAGE = 'Provider for token "{0}" is configured to use Custom Metadata record "{1}", but a record with that DeveloperName was not found.';
@@ -61,6 +62,7 @@ public virtual inherited sharing class Di {
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ModuleRef> GLOBAL_MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ProviderBinding> GLOBAL_PROVIDERS = new Map<String, ProviderBinding>();
+    private static final List<String> moduleRegistrationPath = new List<String>();
 
     @TestVisible
     private static Boolean hasGlobalLoadBeenAttempted = false;
@@ -371,6 +373,18 @@ public virtual inherited sharing class Di {
         return ref ?? getModuleRef(module);
     }
 
+    private static void assertNoCircularReexport(final String token) {
+        isTrue(
+            !moduleRegistrationPath.contains(token),
+            new InvalidModuleException(
+                String.format(
+                    CIRCULAR_REEXPORT_MESSAGE,
+                    new List<String>{ token, String.join(moduleRegistrationPath, ' -> ') + ' -> ' + token }
+                )
+            )
+        );
+    }
+
     private static void isTrue(final Boolean condition, final Exception exc) {
         if (condition ?? false) {
             return;
@@ -526,6 +540,15 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual void register() {
+            moduleRegistrationPath.add(getToken());
+            try {
+                registerInternal();
+            } finally {
+                moduleRegistrationPath.remove(moduleRegistrationPath.size() - 1);
+            }
+        }
+
+        private void registerInternal() {
             providers.clear();
             exports.clear();
 
@@ -546,8 +569,11 @@ public virtual inherited sharing class Di {
             }
 
             for (ModuleImport reexport : reexports() ?? new Set<ModuleImport>()) {
+                String reexportToken = reexport.getToken();
+                assertNoCircularReexport(reexportToken);
                 Module reexportedModule = reexport.resolve();
-                for (String token : reexportedModule.exports() ?? new Set<String>()) {
+                assertNoCircularReexport(reexportedModule.getToken());
+                for (String token : reexportedModule.exports) {
                     exports.add(token);
                 }
             }
