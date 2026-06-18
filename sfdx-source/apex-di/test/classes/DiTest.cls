@@ -1700,6 +1700,18 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_allow_long_global_module_class_names_in_metadata_field() {
+        // Arrange: Namespaced and inner Apex class names can exceed short text limits.
+        Integer moduleClassLength = DI_GlobalModule__mdt.ModuleClass__c.getDescribe().getLength();
+
+        // Act & Assert: The metadata field should support long fully-qualified class names.
+        Assert.isTrue(
+            moduleClassLength >= 255,
+            'ModuleClass__c should allow long namespaced or inner module class names.'
+        );
+    }
+
+    @IsTest
     static void should_rollback_and_retry_global_metadata_load_after_failure() {
         // Arrange: A consumer exists before global metadata loading is triggered.
         Di.ModuleRef consumerRef = Di.addModule(new EmptyModule());
