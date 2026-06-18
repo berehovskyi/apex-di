@@ -58,7 +58,7 @@ public virtual inherited sharing class Di {
 
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ModuleRef> GLOBAL_MODULE_REGISTRY = new Map<String, ModuleRef>();
-    private static final Map<String, Provider> GLOBAL_PROVIDERS = new Map<String, Provider>();
+    private static final Map<String, ProviderBinding> GLOBAL_PROVIDERS = new Map<String, ProviderBinding>();
 
     @TestVisible
     private static Boolean hasGlobalLoadBeenAttempted = false;
@@ -148,12 +148,14 @@ public virtual inherited sharing class Di {
             )
         );
 
-        newModule.register();
         Map<String, ModuleRef> registry = oldModule.isGlobal() ? globalRegistry : MODULE_REGISTRY;
+        ModuleRef newRef = new ModuleRef(newModule);
+        newModule.register();
         if (oldModule.isGlobal()) {
             for (String exportToken : oldModule.exports ?? new Set<String>()) {
                 GLOBAL_PROVIDERS.remove(exportToken);
             }
+            registry.put(token, newRef);
             addGlobalProviders(newModule);
 
             // Invalidate all module caches to ensure they pick up the global change.
@@ -163,8 +165,9 @@ public virtual inherited sharing class Di {
             for (ModuleRef ref : GLOBAL_MODULE_REGISTRY.values()) {
                 ref.clearCache();
             }
+        } else {
+            registry.put(token, newRef);
         }
-        registry.put(token, new ModuleRef(newModule));
     }
 
     public static void replaceModule(final Type token, final Module newModule) {
@@ -308,7 +311,7 @@ public virtual inherited sharing class Di {
         for (String token : module.exports ?? new Set<String>()) {
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
-            Provider provider = module.getProvider(token);
+            ProviderBinding provider = module.getProviderBinding(token);
             isTrue(
                 provider != null,
                 new UnknownExportException(
@@ -320,11 +323,44 @@ public virtual inherited sharing class Di {
         }
     }
 
+    private static ModuleRef getRegisteredModuleRef(final Module module) {
+        ModuleRef ref = findModuleRef(module.getToken());
+        return ref ?? getModuleRef(module);
+    }
+
     private static void isTrue(final Boolean condition, final Exception exc) {
         if (condition ?? false) {
             return;
         }
         throw exc;
+    }
+
+    private class ProviderBinding {
+        private final Provider provider;
+        private final ModuleRef owner;
+
+        private ProviderBinding(final Provider provider, final ModuleRef owner) {
+            this.provider = provider;
+            this.owner = owner;
+        }
+
+        private Provider getProvider() {
+            return provider;
+        }
+
+        private ModuleRef getOwner() {
+            return owner;
+        }
+    }
+
+    private class ResolutionContext {
+        private final Boolean inCall;
+        private final List<String> resolutionPath;
+
+        private ResolutionContext(final Boolean inCall, final List<String> resolutionPath) {
+            this.inCall = inCall;
+            this.resolutionPath = new List<String>(resolutionPath);
+        }
     }
 
     public abstract inherited sharing class Module {
@@ -381,11 +417,15 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Provider getProvider(final String token) {
+            return getProviderBinding(token).getProvider();
+        }
+
+        public virtual ProviderBinding getProviderBinding(final String token) {
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             // First check local definitions
             if (hasProvider(token)) {
-                return providers.get(token);
+                return new ProviderBinding(providers.get(token), getRegisteredModuleRef(this));
             }
 
             // Then check imported and re-exported modules
@@ -402,7 +442,7 @@ public virtual inherited sharing class Di {
                 if (!module.hasExport(token)) {
                     continue;
                 }
-                Provider provider = module.getProvider(token);
+                ProviderBinding provider = module.getProviderBinding(token);
                 if (provider != null) {
                     return provider;
                 }
@@ -894,7 +934,8 @@ public virtual inherited sharing class Di {
         protected virtual Object getInternal(final String token, final Object args) {
             validateAndAddPath(token);
             try {
-                Provider provider = module.getProvider(token);
+                ProviderBinding binding = module.getProviderBinding(token);
+                Provider provider = binding.getProvider();
                 isTrue(
                     provider.getScope() !== Scope.PROTOTYPE,
                     new InvalidScopeException(
@@ -902,10 +943,11 @@ public virtual inherited sharing class Di {
                     )
                 );
 
+                Container resolutionContainer = getResolutionContainer(binding);
                 if (provider instanceof ExistingProvider) {
-                    return getInternal(((ExistingProvider) provider).getExisting(), args);
+                    return getInternalFrom(resolutionContainer, ((ExistingProvider) provider).getExisting(), args);
                 }
-                return getInstance(provider, args);
+                return getInstanceFrom(resolutionContainer, provider, args);
             } finally {
                 popIfMatches(token);
             }
@@ -914,11 +956,13 @@ public virtual inherited sharing class Di {
         protected virtual Object resolveInternal(final String token, final Object args) {
             validateAndAddPath(token);
             try {
-                Provider provider = module.getProvider(token);
+                ProviderBinding binding = module.getProviderBinding(token);
+                Provider provider = binding.getProvider();
+                Container resolutionContainer = getResolutionContainer(binding);
                 if (provider instanceof ExistingProvider) {
-                    return resolveInternal(((ExistingProvider) provider).getExisting(), args);
+                    return resolveInternalFrom(resolutionContainer, ((ExistingProvider) provider).getExisting(), args);
                 }
-                return newInstance(provider, args);
+                return resolveInstanceFrom(resolutionContainer, provider, args);
             } finally {
                 popIfMatches(token);
             }
@@ -928,11 +972,98 @@ public virtual inherited sharing class Di {
             return provider.resolve(this, args);
         }
 
+        protected virtual Object resolveInstance(final Provider provider, final Object args) {
+            return autowire(newInstance(provider, args));
+        }
+
         protected virtual Object autowire(final Object instance) {
             if (instance instanceof Injectable) {
                 ((Injectable) instance).inject(this);
             }
             return instance;
+        }
+
+        protected virtual Container getResolutionContainer(final ProviderBinding binding) {
+            ModuleRef owner = binding.getOwner();
+            return owner.getModule().getToken().equals(module.getToken()) ? this : owner;
+        }
+
+        private Object getInternalFrom(final Container target, final String token, final Object args) {
+            if (target === this) {
+                return getInternal(token, args);
+            }
+            return target.getInternalWithContext(token, args, this);
+        }
+
+        private Object resolveInternalFrom(final Container target, final String token, final Object args) {
+            if (target === this) {
+                return resolveInternal(token, args);
+            }
+            return target.resolveInternalWithContext(token, args, this);
+        }
+
+        private Object getInstanceFrom(final Container target, final Provider provider, final Object args) {
+            if (target === this) {
+                return getInstance(provider, args);
+            }
+            return target.getInstanceWithContext(provider, args, this);
+        }
+
+        private Object resolveInstanceFrom(final Container target, final Provider provider, final Object args) {
+            if (target === this) {
+                return resolveInstance(provider, args);
+            }
+            return target.resolveInstanceWithContext(provider, args, this);
+        }
+
+        private Object getInternalWithContext(final String token, final Object args, final Container source) {
+            ResolutionContext previous = inheritResolutionContext(source);
+            try {
+                return getInternal(token, args);
+            } finally {
+                restoreResolutionContext(previous);
+            }
+        }
+
+        private Object resolveInternalWithContext(final String token, final Object args, final Container source) {
+            ResolutionContext previous = inheritResolutionContext(source);
+            try {
+                return resolveInternal(token, args);
+            } finally {
+                restoreResolutionContext(previous);
+            }
+        }
+
+        private Object getInstanceWithContext(final Provider provider, final Object args, final Container source) {
+            ResolutionContext previous = inheritResolutionContext(source);
+            try {
+                return getInstance(provider, args);
+            } finally {
+                restoreResolutionContext(previous);
+            }
+        }
+
+        private Object resolveInstanceWithContext(final Provider provider, final Object args, final Container source) {
+            ResolutionContext previous = inheritResolutionContext(source);
+            try {
+                return resolveInstance(provider, args);
+            } finally {
+                restoreResolutionContext(previous);
+            }
+        }
+
+        private ResolutionContext inheritResolutionContext(final Container source) {
+            ResolutionContext previous = new ResolutionContext(inCall, resolutionPath);
+            inCall = true;
+            resolutionPath.clear();
+            resolutionPath.addAll(source.resolutionPath);
+            return previous;
+        }
+
+        private void restoreResolutionContext(final ResolutionContext previous) {
+            inCall = previous.inCall;
+            resolutionPath.clear();
+            resolutionPath.addAll(previous.resolutionPath);
         }
 
         protected virtual void validateAndAddPath(final String token) {
@@ -989,8 +1120,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual override Object resolve(final String token, final Object args) {
-            Object instance = super.resolve(token, args);
-            return autowire(instance);
+            return super.resolve(token, args);
         }
 
         public virtual void refresh() {
@@ -1035,18 +1165,19 @@ public virtual inherited sharing class Di {
 
     public virtual class ScopeRef extends Container {
         protected final Map<String, Object> scopedCache = new Map<String, Object>();
+        protected final Map<String, ScopeRef> ownerScopes = new Map<String, ScopeRef>();
 
         protected ScopeRef(final ModuleRef parent, final Module module) {
             super(parent, module);
         }
 
         public override Object resolve(final String token, final Object args) {
-            Object instance = super.resolve(token, args);
-            return autowire(instance);
+            return super.resolve(token, args);
         }
 
         public virtual void clearCache() {
             scopedCache.clear();
+            ownerScopes.clear();
         }
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
@@ -1083,6 +1214,21 @@ public virtual inherited sharing class Di {
 
         protected override Boolean hasInCache(final String token) {
             return scopedCache.containsKey(token);
+        }
+
+        protected override Container getResolutionContainer(final ProviderBinding binding) {
+            ModuleRef owner = binding.getOwner();
+            String ownerToken = owner.getModule().getToken();
+            if (ownerToken.equals(module.getToken())) {
+                return this;
+            }
+
+            ScopeRef ownerScope = ownerScopes.get(ownerToken);
+            if (ownerScope == null || ownerScope.parent !== owner) {
+                ownerScope = owner.createScope();
+                ownerScopes.put(ownerToken, ownerScope);
+            }
+            return ownerScope;
         }
 
         protected override void validateAndAddPath(String token) {
@@ -1137,8 +1283,7 @@ public virtual inherited sharing class Di {
 
         public virtual Module resolve() {
             if (cachedModule != null) {
-                cachedModule.register();
-                return cachedModule;
+                return Di.getModuleRef(cachedModule).getModule();
             }
             return Di.getModuleRef(token).getModule();
         }

@@ -1125,6 +1125,103 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_share_singleton_export_between_multiple_importing_modules() {
+        // Arrange: Two modules import the same exported singleton provider from a shared module.
+        Di.ModuleRef leftRef = Di.getModuleRef(SharedSingletonConsumerLeftModule.class);
+        Di.ModuleRef rightRef = Di.getModuleRef(SharedSingletonConsumerRightModule.class);
+
+        // Act: Each consumer resolves the exported provider.
+        Object leftInstance = leftRef.get(SharedSingletonService.class);
+        Object rightInstance = rightRef.get(SharedSingletonService.class);
+
+        // Assert: The singleton belongs to the exporting module and should be shared by all importers.
+        Assert.areEqual(
+            leftInstance,
+            rightInstance,
+            'Exported singleton providers should be cached by the owning module, not per importer.'
+        );
+    }
+
+    @IsTest
+    static void should_resolve_exported_provider_with_private_dependency_from_owner_module() {
+        // Arrange: A consumer imports a module that exports a facade but keeps the facade dependency private.
+        Di.ModuleRef consumerRef = Di.getModuleRef(PrivateFacadeConsumerModule.class);
+
+        // Act: Resolve the exported facade from the importing module.
+        ExportedPrivateFacade facade = (ExportedPrivateFacade) consumerRef.get(ExportedPrivateFacade.class);
+
+        // Assert: The facade should be injected using its owner module context and see private owner providers.
+        Assert.areEqual(
+            'private-dependency',
+            facade.getDependencyValue(),
+            'Exported providers should be autowired with their owning module visibility.'
+        );
+    }
+
+    @IsTest
+    static void should_resolve_exported_provider_and_alias_through_owner_context() {
+        // Arrange: Consumers import exported providers owned by other modules.
+        Di.ModuleRef privateFacadeConsumerRef = Di.getModuleRef(PrivateFacadeConsumerModule.class);
+        Di.ModuleRef aliasConsumerRef = Di.getModuleRef(ExportedAliasConsumerModule.class);
+
+        // Act: Use resolve(), which bypasses singleton caches but must still use owner visibility.
+        ExportedPrivateFacade facade = (ExportedPrivateFacade) privateFacadeConsumerRef.resolve(ExportedPrivateFacade.class);
+        Object aliasInstance = aliasConsumerRef.resolve('SharedExportAlias');
+
+        // Assert: Both concrete providers and aliases resolve through the owner container.
+        Assert.areEqual(
+            'private-dependency',
+            facade.getDependencyValue(),
+            'resolve() should autowire exported providers with owner visibility.'
+        );
+        Assert.isTrue(
+            aliasInstance instanceof SharedSingletonService,
+            'resolve() should preserve owner context when following an exported alias.'
+        );
+    }
+
+    @IsTest
+    static void should_not_resolve_exported_provider_with_consumer_only_dependency() {
+        // Arrange: The owner exports a facade, while the consumer separately imports the facade dependency.
+        Di.ModuleRef consumerRef = Di.getModuleRef(ConsumerOnlyDependencyConsumerModule.class);
+
+        // Act & Assert: Exported providers should not inherit the consumer module's import visibility.
+        try {
+            consumerRef.get(ExportedConsumerOnlyFacade.class);
+            Assert.fail('Expected UnknownProviderException was not thrown.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains(ConsumerOnlyDependencyService.class.getName()),
+                'The exported provider should not see dependencies imported only by its consumer.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_scope_exported_provider_within_importing_scope() {
+        // Arrange: A scoped provider is exported from an imported owner module.
+        Di.ScopeRef firstScope = Di.getModuleRef(ScopedExportConsumerModule.class).createScope();
+        Di.ScopeRef secondScope = Di.getModuleRef(ScopedExportConsumerModule.class).createScope();
+
+        // Act: Resolve the exported scoped provider twice in one scope and once in another.
+        Object firstInstance = firstScope.get(ScopedExportService.class);
+        Object repeatedInstance = firstScope.get(ScopedExportService.class);
+        Object otherScopeInstance = secondScope.get(ScopedExportService.class);
+
+        // Assert: The provider remains scoped within the logical request, even though its owner module differs.
+        Assert.areEqual(
+            firstInstance,
+            repeatedInstance,
+            'Exported scoped providers should be cached inside the active scope.'
+        );
+        Assert.areNotEqual(
+            firstInstance,
+            otherScopeInstance,
+            'Each scope should receive its own exported scoped provider instance.'
+        );
+    }
+
+    @IsTest
     static void should_handle_circular_imports_gracefully() {
         // Arrange: Modules with a circular dependency (A -> B -> C -> A) are defined.
         Exception unexpectedEx;
@@ -2054,6 +2151,31 @@ private class DiTest {
             this.serviceA = (ForwardRefServiceA) container.get(ForwardRefServiceA.class);
         }
     }
+    public class SharedSingletonService {
+    }
+    public class ScopedExportService {
+    }
+    public class PrivateDependencyService {
+        public String getValue() {
+            return 'private-dependency';
+        }
+    }
+    public class ConsumerOnlyDependencyService {
+    }
+    public class ExportedPrivateFacade implements Di.Injectable {
+        private PrivateDependencyService dependency;
+        public void inject(Di.Container container) {
+            dependency = (PrivateDependencyService) container.get(PrivateDependencyService.class);
+        }
+        public String getDependencyValue() {
+            return dependency.getValue();
+        }
+    }
+    public class ExportedConsumerOnlyFacade implements Di.Injectable {
+        public void inject(Di.Container container) {
+            container.get(ConsumerOnlyDependencyService.class);
+        }
+    }
 
     // --- Basic Module Definitions ---
     public virtual class EmptyModule extends Di.Module {
@@ -2281,6 +2403,99 @@ private class DiTest {
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('foo').useValue('override') };
+        }
+    }
+    public class SharedSingletonOwnerModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide(SharedSingletonService.class).useClass(SharedSingletonService.class) };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ SharedSingletonService.class.getName() };
+        }
+    }
+    public class SharedSingletonConsumerLeftModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(SharedSingletonOwnerModule.class) };
+        }
+    }
+    public class SharedSingletonConsumerRightModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(SharedSingletonOwnerModule.class) };
+        }
+    }
+    public class ExportedAliasOwnerModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(SharedSingletonService.class).useClass(SharedSingletonService.class),
+                provide('SharedExportAlias').useExisting(SharedSingletonService.class)
+            };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'SharedExportAlias' };
+        }
+    }
+    public class ExportedAliasConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ExportedAliasOwnerModule.class) };
+        }
+    }
+    public class ScopedExportOwnerModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(ScopedExportService.class).useClass(ScopedExportService.class).scope(Di.Scope.SCOPED)
+            };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ ScopedExportService.class.getName() };
+        }
+    }
+    public class ScopedExportConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ScopedExportOwnerModule.class) };
+        }
+    }
+    public class PrivateFacadeOwnerModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(PrivateDependencyService.class).useClass(PrivateDependencyService.class),
+                provide(ExportedPrivateFacade.class).useClass(ExportedPrivateFacade.class)
+            };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ ExportedPrivateFacade.class.getName() };
+        }
+    }
+    public class PrivateFacadeConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(PrivateFacadeOwnerModule.class) };
+        }
+    }
+    public class ConsumerOnlyDependencyModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(ConsumerOnlyDependencyService.class).useClass(ConsumerOnlyDependencyService.class)
+            };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ ConsumerOnlyDependencyService.class.getName() };
+        }
+    }
+    public class ConsumerOnlyDependencyOwnerModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(ExportedConsumerOnlyFacade.class).useClass(ExportedConsumerOnlyFacade.class)
+            };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ ExportedConsumerOnlyFacade.class.getName() };
+        }
+    }
+    public class ConsumerOnlyDependencyConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{
+                Di.import(ConsumerOnlyDependencyOwnerModule.class),
+                Di.import(ConsumerOnlyDependencyModule.class)
+            };
         }
     }
 

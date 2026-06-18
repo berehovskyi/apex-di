@@ -12,12 +12,12 @@ Every application using Apex DI has at least one module, which serves as the sta
 
 The `Di.Module` class provides methods that describe the module:
 
-| Method | Purpose |
-|---|---|
-| `providers()` | The providers that will be instantiated by Apex DI and may be shared within this module |
-| `imports()` | The list of imported modules that export the providers required in this module |
-| `exports()` | The **tokens** of providers that should be available to other modules. You export the token (the `provide` key), not the class itself |
-| `reexports()` | Modules whose exports should be re-exported as part of this module's API |
+| Method        | Purpose                                                                                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `providers()` | The providers that will be instantiated by Apex DI and may be shared within this module                                               |
+| `imports()`   | The list of imported modules that export the providers required in this module                                                        |
+| `exports()`   | The **tokens** of providers that should be available to other modules. You export the token (the `provide` key), not the class itself |
+| `reexports()` | Modules whose exports should be re-exported as part of this module's API                                                              |
 
 The module **encapsulates providers by default**. This means you can only inject providers that are either part of the current module or explicitly exported from imported modules. The exported providers from a module essentially serve as the module's public interface or API.
 
@@ -61,7 +61,6 @@ public class OrderService implements Di.Injectable {
 
 ---
 
-
 ## Feature Modules
 
 In our example, the `AccountService` is specific to the accounts domain. It makes sense to group it into a feature module. A feature module organizes code relevant to a specific feature, helping to maintain clear boundaries and better organization. This is particularly important as the application or team grows, and it aligns with SOLID principles.
@@ -71,9 +70,7 @@ Let's create the `AccountsModule`:
 ```apex
 public class AccountsModule extends Di.Module {
     public override Set<Di.Provider> providers() {
-        return new Set<Di.Provider>{
-            provide(AccountService.class).useClass(AccountService.class)
-        };
+        return new Set<Di.Provider>{ provide(AccountService.class).useClass(AccountService.class) };
     }
 }
 ```
@@ -83,9 +80,7 @@ Above, we defined the `AccountsModule` in its own class. The last thing we need 
 ```apex
 public class SalesModule extends Di.Module {
     public override Set<Di.ModuleImport> imports() {
-        return new Set<Di.ModuleImport>{
-            Di.import(AccountsModule.class)
-        };
+        return new Set<Di.ModuleImport>{ Di.import(AccountsModule.class) };
     }
 }
 ```
@@ -101,11 +96,9 @@ Every module is automatically a shared module. Once created, it can be reused by
 ```apex
 public class CachingModule extends Di.Module {
     public override Set<Di.Provider> providers() {
-        return new Set<Di.Provider>{
-            provide(ICacheService.class).useClass(CacheService.class)
-        };
+        return new Set<Di.Provider>{ provide(ICacheService.class).useClass(CacheService.class) };
     }
-    
+
     public override Set<String> exports() {
         return new Set<String>{ ICacheService.class.getName() };
     }
@@ -127,15 +120,11 @@ As seen above, modules can export their internal providers. In addition, they ca
 ```apex
 public class CoreModule extends Di.Module {
     public override Set<Di.ModuleImport> imports() {
-        return new Set<Di.ModuleImport>{
-            Di.import(CommonModule.class)
-        };
+        return new Set<Di.ModuleImport>{ Di.import(CommonModule.class) };
     }
-    
+
     public override Set<Di.ModuleImport> reexports() {
-        return new Set<Di.ModuleImport>{
-            Di.import(CommonModule.class)
-        };
+        return new Set<Di.ModuleImport>{ Di.import(CommonModule.class) };
     }
 }
 ```
@@ -151,13 +140,11 @@ public class LoggingModule extends Di.Module {
     public override Boolean isGlobal() {
         return true;
     }
-    
+
     public override Set<Di.Provider> providers() {
-        return new Set<Di.Provider>{
-            provide(ILogger.class).useClass(ConsoleLogger.class)
-        };
+        return new Set<Di.Provider>{ provide(ILogger.class).useClass(ConsoleLogger.class) };
     }
-    
+
     public override Set<String> exports() {
         return new Set<String>{ ILogger.class.getName() };
     }
@@ -295,11 +282,11 @@ ref.inject(service);
 
 Scopes control instance lifetime.
 
-| Scope | Behavior |
-|---|---|
-| `SINGLETON` | One instance per `ModuleRef` (default) |
-| `PROTOTYPE` | New instance on every `resolve()` call |
-| `SCOPED` | One instance per `ScopeRef` (Unit of Work) |
+| Scope       | Behavior                                   |
+| ----------- | ------------------------------------------ |
+| `SINGLETON` | One instance per `ModuleRef` (default)     |
+| `PROTOTYPE` | New instance on every `resolve()` call     |
+| `SCOPED`    | One instance per `ScopeRef` (Unit of Work) |
 
 ```apex
 provide(UnitOfWork.class).useClass(UnitOfWork.class).scope(Di.Scope.SCOPED)
