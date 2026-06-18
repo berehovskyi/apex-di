@@ -1713,6 +1713,21 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_not_reregister_cached_module_instance_import_on_each_resolve() {
+        // Arrange: A module instance import is resolved immediately.
+        RegisterCountingModule mod = new RegisterCountingModule();
+        Di.ModuleImport moduleImport = Di.import(mod).immediately();
+        Assert.areEqual(1, mod.providerBuildCount, 'Pre-condition: immediate import should register once.');
+
+        // Act: The same module instance import is resolved repeatedly.
+        moduleImport.resolve().getProvider('counted');
+        moduleImport.resolve().getProvider('counted');
+
+        // Assert: Cached module instance imports should reuse the registered ModuleRef.
+        Assert.areEqual(1, mod.providerBuildCount, 'Cached module imports should not re-register on each lookup.');
+    }
+
+    @IsTest
     static void should_evaluate_module_import_equality_with_other_types() {
         // Arrange: A module import is created.
         Di.ModuleImport importA = Di.import('ModuleA');
@@ -3084,6 +3099,13 @@ private class DiTest {
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('dependentVal').useFactory(new DependentProviderFactory()) };
+        }
+    }
+    public class RegisterCountingModule extends EmptyModule {
+        public Integer providerBuildCount = 0;
+        public override Set<Di.Provider> providers() {
+            providerBuildCount++;
+            return new Set<Di.Provider>{ provide('counted').useValue('registered') };
         }
     }
     public class LazyErrorConsumerModule extends EmptyModule {
