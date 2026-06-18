@@ -1844,6 +1844,51 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_reject_duplicate_global_export_tokens() {
+        // Arrange: One global module already publishes a token.
+        Di.addModule(new DuplicateGlobalExportLeftModule());
+
+        // Act: Another global module attempts to publish the same token.
+        try {
+            Di.addModule(new DuplicateGlobalExportRightModule());
+            Assert.fail('Expected InvalidProviderException for duplicate global export token.');
+        } catch (Di.InvalidProviderException ex) {
+            // Assert: The ambiguity is rejected with a framework exception.
+            Assert.isTrue(
+                ex.getMessage().contains('duplicateGlobalVal'),
+                'Exception message should identify the duplicate provider token.'
+            );
+            Assert.isTrue(
+                ex.getMessage().contains('already exported'),
+                'Exception message should explain the global export collision.'
+            );
+        }
+
+        // Assert: Rejecting the duplicate does not remove the original global binding.
+        Assert.areEqual(
+            'left',
+            Di.getModuleRef(EmptyModule.class).get('duplicateGlobalVal'),
+            'Failed duplicate global registration should leave the original export intact.'
+        );
+    }
+
+    @IsTest
+    static void should_allow_duplicate_global_reexports_from_same_owner() {
+        // Arrange: Two global modules re-export the same provider owned by a shared common module.
+        Di.addModule(new SharedGlobalReexportLeftModule());
+
+        // Act: The second global module republishes the same owner binding.
+        Di.addModule(new SharedGlobalReexportRightModule());
+
+        // Assert: Identical owner bindings are not ambiguous and remain globally resolvable.
+        Assert.areEqual(
+            'shared',
+            Di.getModuleRef(EmptyModule.class).get('sharedGlobalReexportVal'),
+            'Globals should be allowed to re-export the same provider when the provider owner is identical.'
+        );
+    }
+
+    @IsTest
     static void should_allow_long_global_module_class_names_in_metadata_field() {
         // Arrange: Namespaced and inner Apex class names can exceed short text limits.
         Integer moduleClassLength = DI_GlobalModule__mdt.ModuleClass__c.getDescribe().getLength();
@@ -3250,6 +3295,52 @@ private class DiTest {
     public class GlobalSingletonConsumerLeftModule extends EmptyModule {
     }
     public class GlobalSingletonConsumerRightModule extends EmptyModule {
+    }
+    public class DuplicateGlobalExportLeftModule extends EmptyModule {
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('duplicateGlobalVal').useValue('left') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'duplicateGlobalVal' };
+        }
+    }
+    public class DuplicateGlobalExportRightModule extends EmptyModule {
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('duplicateGlobalVal').useValue('right') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'duplicateGlobalVal' };
+        }
+    }
+    public class SharedGlobalReexportCommonModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('sharedGlobalReexportVal').useValue('shared') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'sharedGlobalReexportVal' };
+        }
+    }
+    public class SharedGlobalReexportLeftModule extends EmptyModule {
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(SharedGlobalReexportCommonModule.class) };
+        }
+    }
+    public class SharedGlobalReexportRightModule extends EmptyModule {
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(SharedGlobalReexportCommonModule.class) };
+        }
     }
     public class OverrideGlobalModule extends EmptyModule {
         public override Boolean isGlobal() {

@@ -37,6 +37,9 @@ public virtual inherited sharing class Di {
         'Cannot export "{0}" from the "{1}" module. This provider ' +
         'has not been registered in the module.' +
         '\nPlease ensure "{0}" is listed in the "providers" array before exporting it.';
+    private static final String DUPLICATE_GLOBAL_PROVIDER_MESSAGE =
+        'Cannot export global provider "{0}" from the "{1}" module. ' +
+        'This token is already exported by the "{2}" module.';
     private static final String NULL_PROVIDER_MESSAGE = 'The provider cannot be null.';
     private static final String NULL_PROVIDER_FACTORY_MESSAGE = 'The provider factory cannot be null.';
     private static final String NULL_MODULE_IMPORT_MESSAGE = 'The module import cannot be null.';
@@ -127,6 +130,9 @@ public virtual inherited sharing class Di {
 
         String token = module.getToken();
         Map<String, ModuleRef> registry = module.isGlobal() ? globalRegistry : MODULE_REGISTRY;
+        Map<String, ProviderBinding> previousGlobalProviders = module.isGlobal()
+            ? new Map<String, ProviderBinding>(GLOBAL_PROVIDERS)
+            : null;
         isTrue(
             !registry.containsKey(token),
             new InvalidModuleException(String.format(MODULE_ALREADY_REGISTERED_MESSAGE, new List<String>{ token }))
@@ -145,7 +151,8 @@ public virtual inherited sharing class Di {
                 registry.remove(token);
             }
             if (module.isGlobal()) {
-                removeGlobalProviders(module.exports);
+                GLOBAL_PROVIDERS.clear();
+                GLOBAL_PROVIDERS.putAll(previousGlobalProviders);
             }
             throw exc;
         }
@@ -359,6 +366,20 @@ public virtual inherited sharing class Di {
                 provider != null,
                 new UnknownExportException(
                     String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, module.getToken() })
+                )
+            );
+
+            ProviderBinding existingProvider = GLOBAL_PROVIDERS.get(token);
+            String existingModuleToken = existingProvider == null
+                ? null
+                : existingProvider.getOwner().getModule().getToken();
+            isTrue(
+                existingProvider == null || existingProvider.getOwner() === provider.getOwner(),
+                new InvalidProviderException(
+                    String.format(
+                        DUPLICATE_GLOBAL_PROVIDER_MESSAGE,
+                        new List<String>{ token, module.getToken(), existingModuleToken }
+                    )
                 )
             );
 
