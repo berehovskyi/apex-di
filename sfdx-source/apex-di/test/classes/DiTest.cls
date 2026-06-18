@@ -908,6 +908,54 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_throw_when_getting_metadata_existing_alias_to_prototype_provider() {
+        // Arrange: A metadata Existing provider points to a prototype-scoped target provider.
+        Di.ModuleRef ref = Di.getModuleRef(MetadataProtoAliasModule.class);
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'AliasProtoProvider',
+            Type__c = 'Existing',
+            Value__c = 'PrototypeService',
+            IsActive__c = true
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProtoProvider' => mockMdt });
+
+        // Act & Assert: get() should inherit the target provider's prototype guard.
+        try {
+            ref.get('AliasService');
+            Assert.fail('Expected InvalidScopeException for metadata alias to prototype provider.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Use resolve() method instead'),
+                'Exception message should guide the user to use resolve().'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_directly_resolve_metadata_existing_provider() {
+        // Arrange: Direct provider calls should still support metadata Existing definitions.
+        Di.ModuleRef ref = Di.getModuleRef(MetadataProtoAliasModule.class);
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'AliasProtoProvider',
+            Type__c = 'Existing',
+            Value__c = 'PrototypeService',
+            IsActive__c = true
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProtoProvider' => mockMdt });
+        Di.CustomMetadataTypesProvider provider = new Di.CustomMetadataTypesProvider(
+            'AliasService',
+            'AliasProtoProvider'
+        );
+
+        // Act: Direct provider resolution delegates to resolve() on the existing target.
+        Object first = provider.resolve(ref, null);
+        Object second = provider.resolve(ref, null);
+
+        // Assert: The prototype target is resolved directly without alias-level caching.
+        Assert.areNotEqual(first, second, 'Direct metadata Existing resolution should respect target prototype scope.');
+    }
+
+    @IsTest
     static void should_throw_exception_for_invalid_provider_type_in_metadata() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);

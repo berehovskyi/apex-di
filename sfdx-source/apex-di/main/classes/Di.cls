@@ -873,7 +873,12 @@ public virtual inherited sharing class Di {
             return super.getScope();
         }
 
-        public override Object resolve(final Container container, final Object args) {
+        public String getExisting() {
+            DI_Provider__mdt definition = getDefinition();
+            return definition.Type__c == 'Existing' ? definition.Value__c : null;
+        }
+
+        private DI_Provider__mdt getDefinition() {
             DI_Provider__mdt definition = providerDefinitionByDeveloperName.get(developerName);
             isTrue(
                 definition != null,
@@ -887,7 +892,11 @@ public virtual inherited sharing class Di {
                     String.format(INACTIVE_METADATA_PROVIDER_MESSAGE, new List<String>{ token, developerName })
                 )
             );
+            return definition;
+        }
 
+        public override Object resolve(final Container container, final Object args) {
+            DI_Provider__mdt definition = getDefinition();
             Scope scopeType = !String.isBlank(definition.Scope__c)
                 ? Scope.valueOf(definition.Scope__c)
                 : this.scopeType;
@@ -907,11 +916,7 @@ public virtual inherited sharing class Di {
                     provider = new FactoryProvider(token, value);
                 }
                 when 'Existing' {
-                    try {
-                        return container.get(value, factoryArgs);
-                    } catch (InvalidScopeException e) {
-                        return container.resolve(value, factoryArgs);
-                    }
+                    return container.resolve(value, factoryArgs);
                 }
                 when else {
                     throw new InvalidProviderException(
@@ -1016,6 +1021,12 @@ public virtual inherited sharing class Di {
                 if (provider instanceof ExistingProvider) {
                     return getInternalFrom(resolutionContainer, ((ExistingProvider) provider).getExisting(), args);
                 }
+                if (provider instanceof CustomMetadataTypesProvider) {
+                    String existing = ((CustomMetadataTypesProvider) provider).getExisting();
+                    if (existing != null) {
+                        return getInternalFrom(resolutionContainer, existing, args);
+                    }
+                }
                 return getInstanceFrom(resolutionContainer, provider, args);
             } finally {
                 popIfMatches(token);
@@ -1030,6 +1041,12 @@ public virtual inherited sharing class Di {
                 Container resolutionContainer = getResolutionContainer(binding);
                 if (provider instanceof ExistingProvider) {
                     return resolveInternalFrom(resolutionContainer, ((ExistingProvider) provider).getExisting(), args);
+                }
+                if (provider instanceof CustomMetadataTypesProvider) {
+                    String existing = ((CustomMetadataTypesProvider) provider).getExisting();
+                    if (existing != null) {
+                        return resolveInternalFrom(resolutionContainer, existing, args);
+                    }
                 }
                 return resolveInstanceFrom(resolutionContainer, provider, args);
             } finally {
