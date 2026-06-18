@@ -46,6 +46,10 @@ public virtual inherited sharing class Di {
         'Cannot retrieve prototype-scoped provider "{0}" ' +
         'using get(). Prototype-scoped providers create a new instance on each request.' +
         '\nUse resolve() method instead to get a new instance.';
+    private static final String SCOPED_ROOT_GET_ERROR_MESSAGE =
+        'Cannot retrieve scoped provider "{0}" using get() from the root module. ' +
+        'Scoped providers require an active scope cache.' +
+        '\nUse createScope() method instead to create a ScopeRef.';
     private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
         'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
@@ -1249,6 +1253,11 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
+            if (provider.getScope() === Scope.SCOPED) {
+                throw new InvalidScopeException(
+                    String.format(SCOPED_ROOT_GET_ERROR_MESSAGE, new List<String>{ provider.getToken() })
+                );
+            }
             String key = provider.getToken();
             if (args == null && provider.getScope() == Scope.SINGLETON && cache.containsKey(key)) {
                 return cache.get(key);

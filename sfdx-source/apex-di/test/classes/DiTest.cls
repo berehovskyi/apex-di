@@ -180,15 +180,32 @@ private class DiTest {
             'Different scopes should return different instances for SCOPED provider'
         );
 
-        Object instanceRoot = consumerCtn.get(ScopedService.class);
-        Object instanceRoot2 = consumerCtn.get(ScopedService.class);
+        Object instanceRoot = consumerCtn.resolve(ScopedService.class);
+        Object instanceRoot2 = consumerCtn.resolve(ScopedService.class);
 
         Assert.areNotEqual(instance1, instanceRoot, 'Scoped instance should not define Root instance');
         Assert.areNotEqual(
             instanceRoot,
             instanceRoot2,
-            'Scoped provider resolved from Root should return new instances if not strictly singleton?'
+            'Scoped provider resolved from Root should return new instances.'
         );
+    }
+
+    @IsTest
+    static void should_throw_when_getting_scoped_provider_from_root_module_ref() {
+        // Arrange: A root module ref has no active scope cache for SCOPED providers.
+        Di.ModuleRef ref = Di.getModuleRef(ScopedModule.class);
+
+        // Act & Assert: Root get() should require callers to create an explicit scope.
+        try {
+            ref.get(ScopedService.class);
+            Assert.fail('Expected InvalidScopeException when getting a scoped provider from the root module.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Use createScope() method instead'),
+                'Exception message should guide the user to create a scope.'
+            );
+        }
     }
 
     @IsTest
@@ -245,6 +262,23 @@ private class DiTest {
             service2.singletonDep,
             'The singleton dependency should be the same instance across different scopes.'
         );
+    }
+
+    @IsTest
+    static void should_throw_when_singleton_depends_on_scoped_provider() {
+        // Arrange: A singleton service attempts to capture a scoped dependency.
+        Di.ScopeRef scope = Di.getModuleRef(SingletonWithScopedDepModule.class).createScope();
+
+        // Act & Assert: Even when requested from a ScopeRef, the singleton is built by the root module.
+        try {
+            scope.get(SingletonWithScopedDepService.class);
+            Assert.fail('Expected InvalidScopeException when a singleton depends on a scoped provider.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Use createScope() method instead'),
+                'Exception message should identify the invalid scoped dependency access.'
+            );
+        }
     }
 
     @IsTest
@@ -2485,6 +2519,12 @@ private class DiTest {
             singletonDep = (SingletonService) container.get(SingletonService.class);
         }
     }
+    public class SingletonWithScopedDepService implements Di.Injectable {
+        public ScopedService scopedDep { get; private set; }
+        public void inject(Di.Container container) {
+            scopedDep = (ScopedService) container.get(ScopedService.class);
+        }
+    }
     public class ScopedWithPrototypeDepService implements Di.Injectable {
         public PrototypeService prototypeDep { get; private set; }
         public void inject(Di.Container container) {
@@ -2643,6 +2683,16 @@ private class DiTest {
         }
         public override Set<String> exports() {
             return new Set<String>();
+        }
+    }
+    public class SingletonWithScopedDepModule extends Di.Module {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide(ScopedService.class).useClass(ScopedService.class).scope(Di.Scope.SCOPED),
+                provide(SingletonWithScopedDepService.class)
+                    .useClass(SingletonWithScopedDepService.class)
+                    .scope(Di.Scope.SINGLETON)
+            };
         }
     }
     public class ScopedWithPrototypeDepModule extends Di.Module {
