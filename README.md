@@ -21,9 +21,11 @@ The `Di.Module` class provides methods that describe the module:
 
 The module **encapsulates providers by default**. This means you can only inject providers that are either part of the current module or explicitly exported from imported modules. The exported providers from a module essentially serve as the module's public interface or API.
 
+Exported providers are resolved in the context of the module that owns the provider, not the consuming module. The owner controls instantiation, singleton caching, scoped caching, and `Di.Injectable` autowiring visibility. This means an exported provider can inject private dependencies from its owner module, but it cannot see providers imported only by the consumer.
+
 ### Using Modules
 
-**1. Direct Resolution** — Typically used in controllers or entry points:
+**1. Direct Resolution** - Typically used in controllers or entry points:
 
 ```apex
 public with sharing class AccountController {
@@ -36,7 +38,7 @@ public with sharing class AccountController {
 }
 ```
 
-**2. Importing** — Import one module into another to access its exported providers:
+**2. Importing** - Import one module into another to access its exported providers:
 
 ```apex
 public class SalesModule extends Di.Module {
@@ -47,7 +49,7 @@ public class SalesModule extends Di.Module {
 }
 ```
 
-**3. Dependency Injection** — Implement `Di.Injectable` to receive the container:
+**3. Dependency Injection** - Implement `Di.Injectable` to receive the container:
 
 ```apex
 public class OrderService implements Di.Injectable {
@@ -107,9 +109,11 @@ public class CachingModule extends Di.Module {
 
 Now any module that imports the `CachingModule` has access to the `ICacheService` and will share the same instance with all other modules that import it as well.
 
+Singleton sharing is owner-based. If two consumers import the same exported singleton, both consumers resolve through the exporting module's cache. The same ownership rule applies to global providers.
+
 If we were to directly register the `CacheService` in every module that requires it, each module would get its own separate instance. This leads to increased memory usage and could cause unexpected behavior, such as state inconsistency if the service maintains any internal state.
 
-By encapsulating the service inside a module and exporting it, we ensure that the same instance is reused across all modules that import it. This is one of the key benefits of modularity and dependency injection—allowing services to be efficiently shared throughout the application.
+By encapsulating the service inside a module and exporting it, we ensure that the same instance is reused across all modules that import it. This is one of the key benefits of modularity and dependency injection, allowing services to be efficiently shared throughout the application.
 
 ---
 
@@ -153,7 +157,7 @@ public class LoggingModule extends Di.Module {
 
 Global modules should be registered only once. In the above example, the `ILogger` provider will be ubiquitous, and modules that wish to inject the service will not need to import the `LoggingModule` in their `imports()`.
 
-You can also define global modules via Custom Metadata (`DI_GlobalModule__mdt`) with `ModuleClass__c` and `IsActive__c` fields.
+You can also define global modules via Custom Metadata (`DI_GlobalModule__mdt`) with `ModuleClass__c` and `IsActive__c` fields. `ModuleClass__c` should contain the fully qualified Apex class name, such as `MyNamespace__LoggingModule` or `OuterClass.InnerModule`.
 
 > **Hint**: Making everything global is not recommended as a design practice. While global modules can help reduce boilerplate, it's generally better to use the `imports()` to make a module's API available to other modules in a controlled and clear way.
 
@@ -179,6 +183,8 @@ dbModule.addProvider(dbModule.provide('ConnectionString').useValue('new-connecti
 ref.refresh();
 ```
 
+For global dynamic modules, `refresh()` republishes the module's current computed exports and clears module caches so consumers do not keep stale singleton instances.
+
 If you want to register a dynamic module in the global scope:
 
 ```apex
@@ -193,12 +199,23 @@ dbModule.setGlobal();
 
 Providers tell the framework how to create your objects. They map a **token** (a string or Type) to a concrete implementation.
 
+### Token Identity
+
+`Type` overloads canonicalize tokens through `Type.getName()`:
+
+```apex
+provide(ILogger.class).useClass(ConsoleLogger.class);
+ILogger logger = (ILogger) ref.get(ILogger.class);
+```
+
+`String` tokens are exact, case-sensitive keys. `provide('Foo')` and `get('foo')` are different tokens. Prefer `Type` overloads for Apex class/interface tokens, and reserve string tokens for deliberate aliases or configuration keys with stable casing.
+
 ### useClass
 
 Binds a token to a class. The framework instantiates the class on demand.
 
 ```apex
-provide(ILogger.class).useClass(ConsoleLogger.class)
+provide(ILogger.class).useClass(ConsoleLogger.class);
 ```
 
 ### useValue
@@ -206,7 +223,7 @@ provide(ILogger.class).useClass(ConsoleLogger.class)
 Binds a token to a literal value. Useful for configuration.
 
 ```apex
-provide('API_URL').useValue('https://api.example.com')
+provide('API_URL').useValue('https://api.example.com');
 ```
 
 ### useFactory
@@ -221,7 +238,7 @@ public class HttpClientFactory implements Di.Factory {
     }
 }
 
-provide(HttpClient.class).useFactory(new HttpClientFactory())
+provide(HttpClient.class).useFactory(new HttpClientFactory());
 ```
 
 > **Note**: Only factory providers support runtime arguments via `get(token, args)` or `resolve(token, args)`.
@@ -231,16 +248,20 @@ provide(HttpClient.class).useFactory(new HttpClientFactory())
 Creates an alias to another provider. The alias respects the target's scope.
 
 ```apex
-provide('Logger').useExisting(ILogger.class)
+provide('Logger').useExisting(ILogger.class);
 ```
+
+If the target provider is `PROTOTYPE`, use `resolve()` instead of `get()`. Native and metadata-backed `Existing` aliases follow the same target-scope behavior.
 
 ### useMetadata
 
 Resolves a provider from `DI_Provider__mdt` custom metadata by `DeveloperName`.
 
 ```apex
-provide('EmailService').useMetadata('EmailService_Config')
+provide('EmailService').useMetadata('EmailService_Config');
 ```
+
+Invalid metadata configuration is surfaced as framework exceptions. For example, an invalid `Scope__c` value raises `Di.InvalidProviderException` with the provider token and metadata record name.
 
 ---
 
@@ -276,20 +297,22 @@ MyService service = new MyService();
 ref.inject(service);
 ```
 
+Manual `inject()` is strict and throws if the supplied object does not implement `Di.Injectable`. Automatic provider autowiring is opportunistic and no-ops for objects that are not `Di.Injectable`.
+
 ---
 
 ## Scopes
 
 Scopes control instance lifetime.
 
-| Scope       | Behavior                                   |
-| ----------- | ------------------------------------------ |
-| `SINGLETON` | One instance per `ModuleRef` (default)     |
-| `PROTOTYPE` | New instance on every `resolve()` call     |
-| `SCOPED`    | One instance per `ScopeRef` (Unit of Work) |
+| Scope       | Behavior                                                         |
+| ----------- | ---------------------------------------------------------------- |
+| `SINGLETON` | One instance per owning `ModuleRef` (default)                    |
+| `PROTOTYPE` | New instance on every `resolve()` call                           |
+| `SCOPED`    | One instance per active `ScopeRef` or owner scope (Unit of Work) |
 
 ```apex
-provide(UnitOfWork.class).useClass(UnitOfWork.class).scope(Di.Scope.SCOPED)
+provide(UnitOfWork.class).useClass(UnitOfWork.class).scope(Di.Scope.SCOPED);
 ```
 
 ### Creating a Scope
@@ -304,11 +327,23 @@ UnitOfWork uow2 = (UnitOfWork) scope.get(UnitOfWork.class);
 Assert.areEqual(uow1, uow2); // Same instance
 ```
 
+Use `createScope()` before resolving `SCOPED` providers with `get()`. Calling root `ModuleRef.get()` for a scoped provider raises `Di.InvalidScopeException`; root `resolve()` remains available for an uncached one-off instance.
+
 ---
 
 ## Installation
 
 Copy `Di.cls` and optionally the `DI_Provider__mdt` and `DI_GlobalModule__mdt` custom metadata types into your Salesforce project.
+
+Local tooling is npm-based:
+
+```bash
+npm ci
+npm run prettier:apex:check
+npm run sfca:check
+```
+
+Salesforce test commands require an authenticated/default org unless a `--target-org` is supplied explicitly.
 
 ---
 
