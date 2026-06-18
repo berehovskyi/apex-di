@@ -1165,7 +1165,9 @@ private class DiTest {
         Di.ModuleRef aliasConsumerRef = Di.getModuleRef(ExportedAliasConsumerModule.class);
 
         // Act: Use resolve(), which bypasses singleton caches but must still use owner visibility.
-        ExportedPrivateFacade facade = (ExportedPrivateFacade) privateFacadeConsumerRef.resolve(ExportedPrivateFacade.class);
+        ExportedPrivateFacade facade = (ExportedPrivateFacade) privateFacadeConsumerRef.resolve(
+            ExportedPrivateFacade.class
+        );
         Object aliasInstance = aliasConsumerRef.resolve('SharedExportAlias');
 
         // Assert: Both concrete providers and aliases resolve through the owner container.
@@ -1705,6 +1707,35 @@ private class DiTest {
 
         // Assert: The provider is resolved from the global cache.
         Assert.areEqual('is-global', val, 'Provider from dynamic global module should be globally available.');
+    }
+
+    @IsTest
+    static void should_update_global_dynamic_module_exports_when_refreshed() {
+        // Arrange: A global dynamic module is registered with one exported provider.
+        Di.DynamicModule dynGlobal = new Di.DynamicModule('RefreshableGlobalDynamic').setGlobal();
+        dynGlobal.addProvider(dynGlobal.provide('globalRefreshValue').useValue('initial'))
+            .addExport('globalRefreshValue');
+        Di.ModuleRef globalRef = Di.addModule(dynGlobal);
+        Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
+        Assert.areEqual('initial', consumerRef.get('globalRefreshValue'), 'Pre-condition: global export is visible.');
+
+        // Act: Existing and newly exported global providers are changed, then the global module is refreshed.
+        dynGlobal.addProvider(dynGlobal.provide('globalRefreshValue').useValue('updated'));
+        dynGlobal.addProvider(dynGlobal.provide('globalRefreshAdded').useValue('added'))
+            .addExport('globalRefreshAdded');
+        globalRef.refresh();
+
+        // Assert: Global consumers should see the refreshed export map and provider bindings.
+        Assert.areEqual(
+            'updated',
+            consumerRef.get('globalRefreshValue'),
+            'Existing global exports should point to the refreshed provider binding.'
+        );
+        Assert.areEqual(
+            'added',
+            consumerRef.get('globalRefreshAdded'),
+            'New exports from refreshed global modules should become globally visible.'
+        );
     }
 
     @IsTest

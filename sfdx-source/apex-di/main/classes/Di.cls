@@ -152,19 +152,10 @@ public virtual inherited sharing class Di {
         ModuleRef newRef = new ModuleRef(newModule);
         newModule.register();
         if (oldModule.isGlobal()) {
-            for (String exportToken : oldModule.exports ?? new Set<String>()) {
-                GLOBAL_PROVIDERS.remove(exportToken);
-            }
+            removeGlobalProviders(oldModule.exports);
             registry.put(token, newRef);
             addGlobalProviders(newModule);
-
-            // Invalidate all module caches to ensure they pick up the global change.
-            for (ModuleRef ref : MODULE_REGISTRY.values()) {
-                ref.clearCache();
-            }
-            for (ModuleRef ref : GLOBAL_MODULE_REGISTRY.values()) {
-                ref.clearCache();
-            }
+            clearAllModuleCaches();
         } else {
             registry.put(token, newRef);
         }
@@ -320,6 +311,21 @@ public virtual inherited sharing class Di {
             );
 
             GLOBAL_PROVIDERS.put(token, provider);
+        }
+    }
+
+    private static void removeGlobalProviders(Set<String> exportTokens) {
+        for (String token : exportTokens ?? new Set<String>()) {
+            GLOBAL_PROVIDERS.remove(token);
+        }
+    }
+
+    private static void clearAllModuleCaches() {
+        for (ModuleRef ref : MODULE_REGISTRY.values()) {
+            ref.clearCache();
+        }
+        for (ModuleRef ref : GLOBAL_MODULE_REGISTRY.values()) {
+            ref.clearCache();
         }
     }
 
@@ -1124,7 +1130,14 @@ public virtual inherited sharing class Di {
         }
 
         public virtual void refresh() {
+            Set<String> oldExports = new Set<String>(module.exports ?? new Set<String>());
             module.register();
+            if (module.isGlobal()) {
+                removeGlobalProviders(oldExports);
+                addGlobalProviders(module);
+                clearAllModuleCaches();
+                return;
+            }
             clearCache();
         }
 
