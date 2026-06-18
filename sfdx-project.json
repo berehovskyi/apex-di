@@ -5,19 +5,8 @@
             "package": "apex-di",
             "versionName": "ver 0.0.1",
             "versionNumber": "0.0.1.NEXT",
-            "default": true,
-            "versionDescription": "",
-            "dependencies": [
-                {
-                    "package": "apex-validate",
-                    "versionNumber": "2.0.2.LATEST"
-                }
-            ]
+            "default": true
         }
     ],
-    "name": "apex-di",
-    "namespace": "",
-    "packageAliases": {
-        "apex-validate@latest": "04tJ5000000D7clIAC"
-    }
+    "name": "apex-di"
 }

@@ -95,14 +95,14 @@ public virtual inherited sharing class Di {
     }
 
     public static ModuleRef getModuleRef(final Module module) {
-        Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+        isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
 
         String token = module.getToken();
         return findModuleRef(token) ?? addModule(module);
     }
 
     public static ModuleRef getModuleRef(final String token) {
-        Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+        isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
 
         return findModuleRef(token) ?? getModuleRef(create(token));
     }
@@ -112,11 +112,11 @@ public virtual inherited sharing class Di {
     }
 
     public static ModuleRef addModule(final Module module) {
-        Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+        isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
 
         String token = module.getToken();
         Map<String, ModuleRef> registry = module.isGlobal() ? globalRegistry : MODULE_REGISTRY;
-        Validate.isTrue(
+        isTrue(
             !registry.containsKey(token),
             new InvalidModuleException(String.format(MODULE_ALREADY_REGISTERED_MESSAGE, new List<String>{ token }))
         );
@@ -131,10 +131,10 @@ public virtual inherited sharing class Di {
     }
 
     public static void replaceModule(final String token, final Module newModule) {
-        Validate.isTrue(newModule != null, new InvalidModuleException(INVALID_MODULE_REPLACEMENT_MESSAGE));
+        isTrue(newModule != null, new InvalidModuleException(INVALID_MODULE_REPLACEMENT_MESSAGE));
 
         Module oldModule = getModuleRef(token).getModule();
-        Validate.isTrue(
+        isTrue(
             oldModule.isGlobal() == newModule.isGlobal(),
             new InvalidModuleException(
                 String.format(
@@ -220,7 +220,7 @@ public virtual inherited sharing class Di {
                 continue;
             }
             Module module = create(moduleDef.ModuleClass__c);
-            Validate.isTrue(
+            isTrue(
                 module.isGlobal(),
                 new InvalidModuleException(
                     String.format(INVALID_GLOBAL_MODULE_MESSAGE, new List<String>{ module.getToken() })
@@ -233,7 +233,7 @@ public virtual inherited sharing class Di {
 
     private static Module create(final String token) {
         Type moduleType = Type.forName(token);
-        Validate.isTrue(
+        isTrue(
             moduleType != null,
             new UnknownModuleException(String.format(UNKNOWN_MODULE_MESSAGE, new List<String>{ token }))
         );
@@ -247,7 +247,7 @@ public virtual inherited sharing class Di {
                 exc
             );
         }
-        Validate.isTrue(
+        isTrue(
             raw instanceof Module,
             new InvalidModuleException(String.format(INVALID_MODULE_MESSAGE, new List<String>{ token }))
         );
@@ -257,13 +257,13 @@ public virtual inherited sharing class Di {
     }
 
     private static Object instantiate(final String typeName) {
-        Validate.isTrue(
+        isTrue(
             typeName != null,
             new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ 'null' }))
         );
 
         Type providedType = Type.forName(typeName);
-        Validate.isTrue(
+        isTrue(
             providedType != null,
             new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ typeName }))
         );
@@ -272,7 +272,7 @@ public virtual inherited sharing class Di {
     }
 
     private static Object instantiate(final Type type) {
-        Validate.isTrue(type != null, new InvalidClassException(NULL_PROVIDER_FACTORY_MESSAGE));
+        isTrue(type != null, new InvalidClassException(NULL_PROVIDER_FACTORY_MESSAGE));
         try {
             return type.newInstance();
         } catch (Exception exc) {
@@ -284,7 +284,7 @@ public virtual inherited sharing class Di {
     }
 
     private static Factory validateFactory(final Object raw, final String typeName, final String token) {
-        Validate.isTrue(
+        isTrue(
             raw instanceof Factory,
             new InvalidClassException(String.format(INVALID_FACTORY_CLASS_MESSAGE, new List<String>{ typeName, token }))
         );
@@ -306,10 +306,10 @@ public virtual inherited sharing class Di {
 
     private static void addGlobalProviders(Module module) {
         for (String token : module.exports ?? new Set<String>()) {
-            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             Provider provider = module.getProvider(token);
-            Validate.isTrue(
+            isTrue(
                 provider != null,
                 new UnknownExportException(
                     String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, module.getToken() })
@@ -318,6 +318,13 @@ public virtual inherited sharing class Di {
 
             GLOBAL_PROVIDERS.put(token, provider);
         }
+    }
+
+    private static void isTrue(final Boolean condition, final Exception exc) {
+        if (condition ?? false) {
+            return;
+        }
+        throw exc;
     }
 
     public abstract inherited sharing class Module {
@@ -331,7 +338,7 @@ public virtual inherited sharing class Di {
         }
 
         protected Module(final String token) {
-            Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
 
             this.token = token;
         }
@@ -374,7 +381,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Provider getProvider(final String token) {
-            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             // First check local definitions
             if (hasProvider(token)) {
@@ -424,10 +431,10 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual Module replace(final Provider newProvider) {
-            Validate.isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
+            isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
 
             String token = newProvider.getToken();
-            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             if (hasProvider(token)) {
                 providers.put(token, newProvider);
@@ -444,8 +451,8 @@ public virtual inherited sharing class Di {
             }
 
             for (String token : exports() ?? new Set<String>()) {
-                Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
-                Validate.isTrue(
+                isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+                isTrue(
                     hasProvider(token),
                     new UnknownExportException(
                         String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, getToken() })
@@ -507,28 +514,28 @@ public virtual inherited sharing class Di {
         }
 
         public DynamicModule addImport(final ModuleImport moduleImport) {
-            Validate.isTrue(moduleImport != null, new InvalidModuleException(NULL_MODULE_IMPORT_MESSAGE));
+            isTrue(moduleImport != null, new InvalidModuleException(NULL_MODULE_IMPORT_MESSAGE));
 
             dynamicImports.add(moduleImport);
             return this;
         }
 
         public DynamicModule addProvider(final Provider provider) {
-            Validate.isTrue(provider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
+            isTrue(provider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
 
             dynamicProviders.put(provider.getToken(), provider);
             return this;
         }
 
         public DynamicModule addExport(final String token) {
-            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             dynamicExports.add(token);
             return this;
         }
 
         public DynamicModule addReexport(final ModuleImport moduleImport) {
-            Validate.isTrue(moduleImport != null, new InvalidModuleException(NULL_MODULE_IMPORT_MESSAGE));
+            isTrue(moduleImport != null, new InvalidModuleException(NULL_MODULE_IMPORT_MESSAGE));
 
             dynamicReexports.add(moduleImport);
             return this;
@@ -539,7 +546,7 @@ public virtual inherited sharing class Di {
         protected final String token;
 
         protected ProviderBuilder(final String token) {
-            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             this.token = token;
         }
@@ -586,7 +593,7 @@ public virtual inherited sharing class Di {
         protected Scope scopeType = Scope.SINGLETON;
 
         protected Provider(String token) {
-            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             this.token = token;
         }
@@ -623,7 +630,7 @@ public virtual inherited sharing class Di {
 
         public ClassProvider(final String token, final String type) {
             super(token);
-            Validate.isTrue(
+            isTrue(
                 type != null,
                 new InvalidProviderException(String.format(INVALID_PROVIDER_TYPE_MESSAGE, new List<String>{ token }))
             );
@@ -644,7 +651,7 @@ public virtual inherited sharing class Di {
         }
 
         public override Object resolve(final Container container, final Object args) {
-            Validate.isTrue(args == null, new InvalidProviderException(ARGS_NOT_SUPPORTED_MESSAGE));
+            isTrue(args == null, new InvalidProviderException(ARGS_NOT_SUPPORTED_MESSAGE));
             return instantiate(typeName);
         }
 
@@ -666,7 +673,7 @@ public virtual inherited sharing class Di {
         }
 
         public override Object resolve(final Container container, final Object args) {
-            Validate.isTrue(args == null, new InvalidProviderException(ARGS_NOT_SUPPORTED_MESSAGE));
+            isTrue(args == null, new InvalidProviderException(ARGS_NOT_SUPPORTED_MESSAGE));
             return value;
         }
     }
@@ -676,7 +683,7 @@ public virtual inherited sharing class Di {
 
         public FactoryProvider(final String token, final Factory factory) {
             super(token);
-            Validate.isTrue(factory != null, new InvalidProviderException(NULL_PROVIDER_FACTORY_MESSAGE));
+            isTrue(factory != null, new InvalidProviderException(NULL_PROVIDER_FACTORY_MESSAGE));
 
             this.factory = factory;
         }
@@ -711,7 +718,7 @@ public virtual inherited sharing class Di {
 
         public ExistingProvider(final String token, final String existing) {
             super(token);
-            Validate.isTrue(existing != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(existing != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             this.existing = existing;
         }
@@ -742,10 +749,7 @@ public virtual inherited sharing class Di {
 
         public CustomMetadataTypesProvider(final String token, final String developerName) {
             super(token);
-            Validate.isTrue(
-                !String.isBlank(developerName),
-                new InvalidProviderException(INVALID_DEVELOPER_NAME_MESSAGE)
-            );
+            isTrue(!String.isBlank(developerName), new InvalidProviderException(INVALID_DEVELOPER_NAME_MESSAGE));
 
             this.developerName = developerName;
         }
@@ -762,13 +766,13 @@ public virtual inherited sharing class Di {
 
         public override Object resolve(final Container container, final Object args) {
             DI_Provider__mdt definition = providerDefinitionByDeveloperName.get(developerName);
-            Validate.isTrue(
+            isTrue(
                 definition != null,
                 new InvalidProviderException(
                     String.format(MISSING_METADATA_PROVIDER_MESSAGE, new List<String>{ token, developerName })
                 )
             );
-            Validate.isTrue(
+            isTrue(
                 definition.IsActive__c,
                 new InvalidProviderException(
                     String.format(INACTIVE_METADATA_PROVIDER_MESSAGE, new List<String>{ token, developerName })
@@ -818,7 +822,7 @@ public virtual inherited sharing class Di {
         protected Boolean inCall = false;
 
         protected Container(final Container parent, final Module module) {
-            Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+            isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
 
             this.parent = parent;
             this.module = module;
@@ -891,7 +895,7 @@ public virtual inherited sharing class Di {
             validateAndAddPath(token);
             try {
                 Provider provider = module.getProvider(token);
-                Validate.isTrue(
+                isTrue(
                     provider.getScope() !== Scope.PROTOTYPE,
                     new InvalidScopeException(
                         String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ provider.getToken() })
@@ -932,7 +936,7 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual void validateAndAddPath(final String token) {
-            Validate.isTrue(
+            isTrue(
                 !resolutionPath.contains(token),
                 new CircularDependencyException(
                     String.format(
@@ -975,10 +979,10 @@ public virtual inherited sharing class Di {
         }
 
         public virtual void replace(final Provider newProvider) {
-            Validate.isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
+            isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
 
             String token = newProvider.getToken();
-            Validate.isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             module.replace(newProvider);
             cache.remove(token);
@@ -1104,13 +1108,13 @@ public virtual inherited sharing class Di {
         protected Module cachedModule;
 
         protected ModuleImport(final String token) {
-            Validate.isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+            isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
 
             this.token = token;
         }
 
         protected ModuleImport(final Module module) {
-            Validate.isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+            isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
 
             token = module.getToken();
             cachedModule = module;
