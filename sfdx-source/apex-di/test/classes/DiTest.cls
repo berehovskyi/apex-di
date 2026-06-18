@@ -1794,6 +1794,25 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_share_global_singleton_between_multiple_consumers() {
+        // Arrange: A global module owns and exports a singleton provider.
+        Di.addModule(new GlobalSharedSingletonModule());
+        Di.ModuleRef leftRef = Di.getModuleRef(GlobalSingletonConsumerLeftModule.class);
+        Di.ModuleRef rightRef = Di.getModuleRef(GlobalSingletonConsumerRightModule.class);
+
+        // Act: Two unrelated consumers resolve the same global provider.
+        Object leftInstance = leftRef.get(SharedSingletonService.class);
+        Object rightInstance = rightRef.get(SharedSingletonService.class);
+
+        // Assert: Global singletons should be cached by their owning global module, not per consumer.
+        Assert.areEqual(
+            leftInstance,
+            rightInstance,
+            'Global singleton providers should be shared by all consumers through the owner module cache.'
+        );
+    }
+
+    @IsTest
     static void should_allow_long_global_module_class_names_in_metadata_field() {
         // Arrange: Namespaced and inner Apex class names can exceed short text limits.
         Integer moduleClassLength = DI_GlobalModule__mdt.ModuleClass__c.getDescribe().getLength();
@@ -3149,6 +3168,21 @@ private class DiTest {
         public override Set<String> exports() {
             return new Set<String>{ 'cmtGlobalVal' };
         }
+    }
+    public class GlobalSharedSingletonModule extends EmptyModule {
+        public GlobalSharedSingletonModule() {
+            isGlobal = true;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide(SharedSingletonService.class).useClass(SharedSingletonService.class) };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ SharedSingletonService.class.getName() };
+        }
+    }
+    public class GlobalSingletonConsumerLeftModule extends EmptyModule {
+    }
+    public class GlobalSingletonConsumerRightModule extends EmptyModule {
     }
     public class OverrideGlobalModule extends EmptyModule {
         public override Boolean isGlobal() {
