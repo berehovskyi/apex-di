@@ -318,7 +318,7 @@ public virtual inherited sharing class Di {
             return getModuleRef(moduleImport.getToken()).getModule();
         }
 
-        protected ProviderBinding getGlobalProviderBinding(final String token) {
+        private ProviderBinding getGlobalProviderBinding(final String token) {
             return globalProviders.get(token);
         }
 
@@ -637,7 +637,7 @@ public virtual inherited sharing class Di {
             return getProviderBinding(token).getProvider();
         }
 
-        public virtual ProviderBinding getProviderBinding(final String token) {
+        private ProviderBinding getProviderBinding(final String token) {
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             // First check local definitions
@@ -1231,7 +1231,7 @@ public virtual inherited sharing class Di {
                     )
                 );
 
-                Container resolutionContainer = getResolutionContainer(binding);
+                Container resolutionContainer = getResolutionContainer(binding.getOwner());
                 if (provider instanceof ExistingProvider) {
                     return getInternalFrom(resolutionContainer, ((ExistingProvider) provider).getExisting(), args);
                 }
@@ -1252,7 +1252,7 @@ public virtual inherited sharing class Di {
             try {
                 ProviderBinding binding = module.getProviderBinding(token);
                 Provider provider = binding.getProvider();
-                Container resolutionContainer = getResolutionContainer(binding);
+                Container resolutionContainer = getResolutionContainer(binding.getOwner());
                 if (provider instanceof ExistingProvider) {
                     return resolveInternalFrom(resolutionContainer, ((ExistingProvider) provider).getExisting(), args);
                 }
@@ -1290,8 +1290,7 @@ public virtual inherited sharing class Di {
             return instance;
         }
 
-        protected virtual Container getResolutionContainer(final ProviderBinding binding) {
-            ModuleRef owner = binding.getOwner();
+        protected virtual Container getResolutionContainer(final ModuleRef owner) {
             return owner === this ? this : owner;
         }
 
@@ -1578,8 +1577,7 @@ public virtual inherited sharing class Di {
             return scopedCache.containsKey(token);
         }
 
-        protected override Container getResolutionContainer(final ProviderBinding binding) {
-            ModuleRef owner = binding.getOwner();
+        protected override Container getResolutionContainer(final ModuleRef owner) {
             String ownerToken = owner.getModule().getToken();
             if (owner === parent) {
                 return this;
