@@ -12,6 +12,13 @@ private class DiTest {
         Di.mockProviders(new Map<String, DI_Provider__mdt>());
     }
 
+    private static Di.ApplicationContext newTestContext() {
+        Di.ApplicationContext context = Di.createContext();
+        context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        context.mockProviders(new Map<String, DI_Provider__mdt>());
+        return context;
+    }
+
     //=========================================================================
     // Core Provider Tests (get, resolve, scopes)
     //=========================================================================
@@ -39,6 +46,18 @@ private class DiTest {
 
         // Assert: The two retrieved objects are different instances.
         Assert.areNotEqual(r1, r2, 'resolve() should always create a new instance, regardless of scope.');
+    }
+
+    @IsTest
+    static void should_create_module_ref_directly_in_default_context() {
+        // Arrange: A module ref is constructed directly for the default application context.
+        SingleModule module = new SingleModule();
+
+        // Act
+        Di.ModuleRef ref = new Di.ModuleRef(module);
+
+        // Assert
+        Assert.areEqual(module, ref.getModule(), 'Direct ModuleRef construction should preserve the supplied module.');
     }
 
     @IsTest
@@ -993,6 +1012,47 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_read_metadata_provider_helpers_from_default_context() {
+        // Arrange: Mock a metadata alias with explicit scope in the default context.
+        DI_Provider__mdt mockMdt = new DI_Provider__mdt(
+            DeveloperName = 'AliasProvider',
+            Type__c = 'Existing',
+            Value__c = 'TargetService',
+            IsActive__c = true,
+            Scope__c = 'PROTOTYPE'
+        );
+        Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProvider' => mockMdt });
+        Di.CustomMetadataTypesProvider provider = new Di.CustomMetadataTypesProvider('AliasService', 'AliasProvider');
+
+        // Act & Assert: Direct provider helper calls use the default application context.
+        Assert.areEqual(Di.Scope.PROTOTYPE, provider.getScope(), 'Default context should supply metadata scope.');
+        Assert.areEqual(
+            'TargetService',
+            provider.getExisting(),
+            'Default context should supply metadata alias target.'
+        );
+    }
+
+    @IsTest
+    static void should_read_unmocked_metadata_provider_source_from_application_context() {
+        // Arrange: Use a context without provider mocks, so it falls through to DI_Provider__mdt.getAll().
+        Di.ApplicationContext context = Di.createContext();
+        context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
+
+        // Act & Assert: No packaged metadata records exist for this test token, so the framework error is raised.
+        try {
+            ref.get(IMetadataService.class);
+            Assert.fail('Expected InvalidProviderException for missing unmocked metadata provider.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('ConfigurableService'),
+                'Exception should identify the missing metadata provider developer name.'
+            );
+        }
+    }
+
+    @IsTest
     static void should_respect_prototype_scope_in_existing_provider() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataProtoAliasModule.class);
@@ -1837,19 +1897,16 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_on_immediately_call_for_missing_import() {
-        // Arrange: An import for a non-existent module is created.
-        Di.ModuleImport invalidImport = Di.import('NonExistent.Module');
-
-        // Act: The immediately() method is called, which triggers immediate resolution.
+    static void should_throw_exception_when_registering_module_with_missing_immediate_import() {
+        // Arrange & Act: A module with an immediate import for a non-existent module is registered.
         try {
-            invalidImport.immediately();
+            Di.getModuleRef(ImmediateMissingImportModule.class);
             Assert.fail('Expected UnknownModuleException was not thrown.');
         } catch (Di.UnknownModuleException ex) {
-            // Assert: The exception is thrown during the immediately() call.
+            // Assert: The exception is thrown during module registration.
             Assert.isTrue(
                 ex.getMessage().contains('Cannot find module "NonExistent.Module"'),
-                'Error should be thrown on immediately() call.'
+                'Error should be thrown while registering an immediate import.'
             );
         }
     }
@@ -1869,10 +1926,11 @@ private class DiTest {
 
     @IsTest
     static void should_not_reregister_cached_module_instance_import_on_each_resolve() {
-        // Arrange: A module instance import is resolved immediately.
+        // Arrange: A module instance import is created.
+        Di.ApplicationContext context = newTestContext();
         RegisterCountingModule mod = new RegisterCountingModule();
-        Di.ModuleImport moduleImport = Di.import(mod).immediately();
-        Assert.areEqual(1, mod.providerBuildCount, 'Pre-condition: immediate import should register once.');
+        Di.ModuleImport moduleImport = context.import(mod).immediately();
+        Assert.areEqual(0, mod.providerBuildCount, 'Pre-condition: import marker should not register standalone.');
 
         // Act: The same module instance import is resolved repeatedly.
         moduleImport.resolve().getProvider('counted');
@@ -2432,6 +2490,116 @@ private class DiTest {
                 'Global cache should be empty.'
             );
         }
+    }
+
+    @IsTest
+    static void should_isolate_local_modules_between_application_contexts() {
+        // Arrange: Two application contexts register the same module token independently.
+        Di.ApplicationContext leftContext = newTestContext();
+        Di.ApplicationContext rightContext = newTestContext();
+        leftContext.addModule(new SingleModule());
+        rightContext.addModule(new SingleModule());
+
+        // Act: Only the left context replaces the module.
+        leftContext.replaceModule(SingleModule.class, new ReplacementModule());
+
+        // Assert: The replacement is visible only in the left context.
+        Assert.areEqual(
+            'replaced',
+            leftContext.getModuleRef(SingleModule.class).get('TestService'),
+            'Left context should see its replacement.'
+        );
+        Assert.isTrue(
+            rightContext.getModuleRef(SingleModule.class).get('TestService') instanceof TestServiceImpl,
+            'Right context should keep its own original module.'
+        );
+    }
+
+    @IsTest
+    static void should_reject_same_module_instance_registered_in_multiple_application_contexts() {
+        // Arrange: The same module instance is already owned by the left context.
+        Di.ApplicationContext leftContext = newTestContext();
+        Di.ApplicationContext rightContext = newTestContext();
+        LazyConsumerModule consumer = new LazyConsumerModule();
+        Di.ModuleRef leftRef = leftContext.addModule(consumer);
+        Assert.areEqual(
+            'depends on hello',
+            leftRef.resolve('dependentVal'),
+            'Pre-condition: left context should own the consumer module.'
+        );
+
+        // Act & Assert: A second context must not steal the module instance.
+        try {
+            rightContext.addModule(consumer);
+            Assert.fail('Expected InvalidModuleException for a module instance already bound to another context.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('already registered in another application context'),
+                'Error should explain the context ownership violation.'
+            );
+        }
+
+        Assert.areEqual(
+            'depends on hello',
+            leftRef.resolve('dependentVal'),
+            'Original context binding should remain intact.'
+        );
+    }
+
+    @IsTest
+    static void should_isolate_global_metadata_mocks_between_application_contexts() {
+        // Arrange: Only the left context has a mocked global module.
+        Di.ApplicationContext leftContext = newTestContext();
+        Di.ApplicationContext rightContext = newTestContext();
+        leftContext.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+            }
+        );
+
+        // Act & Assert: The left context can resolve the mocked global provider.
+        Assert.areEqual(
+            'helloFromCmt',
+            leftContext.getModuleRef(EmptyModule.class).get('cmtGlobalVal'),
+            'Left context should load its mocked global module.'
+        );
+
+        // Act & Assert: The right context remains isolated from the left context's mock.
+        try {
+            rightContext.getModuleRef(EmptyModule.class).get('cmtGlobalVal');
+            Assert.fail('Expected UnknownProviderException in the context without mocked globals.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Could not find "cmtGlobalVal" provider'),
+                'Right context should not see globals loaded by the left context.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_resolve_imports_within_the_application_context() {
+        // Arrange: The default context and an application context register different modules under ValueModule's token.
+        Di.clear();
+        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        Di.mockProviders(new Map<String, DI_Provider__mdt>());
+        Di.addModule(new ValueModule());
+        Di.ApplicationContext context = newTestContext();
+        Di.DynamicModule contextValueModule = new Di.DynamicModule(ValueModule.class.getName());
+        contextValueModule.addProvider(contextValueModule.provide('val').useValue('context-replaced'));
+        contextValueModule.addExport('val');
+        context.addModule(contextValueModule);
+
+        // Act: The same consumer module is resolved through each context.
+        Object defaultValue = Di.getModuleRef(LazyConsumerModule.class).get('dependentVal');
+        Object contextValue = context.getModuleRef(LazyConsumerModule.class).get('dependentVal');
+
+        // Assert: Imports use the context that owns the consuming module, not the static default context.
+        Assert.areEqual('depends on hello', defaultValue, 'Default context should use its own ValueModule.');
+        Assert.areEqual(
+            'depends on context-replaced',
+            contextValue,
+            'ApplicationContext imports should resolve inside that same context.'
+        );
     }
 
     @IsTest
@@ -3423,6 +3591,11 @@ private class DiTest {
     public class LazyErrorConsumerModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import('NonExistent.Module') };
+        }
+    }
+    public class ImmediateMissingImportModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import('NonExistent.Module').immediately() };
         }
     }
 
