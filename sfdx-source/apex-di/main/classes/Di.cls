@@ -360,12 +360,24 @@ public virtual inherited sharing class Di {
             return getModuleRef(moduleImport.getToken()).getModule();
         }
 
-        private ProviderBinding getCompiledProviderBinding(final Module module, final String token) {
-            if (!isCompiled) {
-                return null;
-            }
+        private ProviderBinding getVisibleProviderBinding(final Module module, final String token) {
             Map<String, ProviderBinding> visibleProviders = visibleProvidersByModuleKey.get(getModuleKey(module));
             return visibleProviders == null ? null : visibleProviders.get(token);
+        }
+
+        private ProviderBinding indexVisibleProviderBinding(
+            final Module module,
+            final String token,
+            final ProviderBinding binding
+        ) {
+            String moduleKey = getModuleKey(module);
+            Map<String, ProviderBinding> visibleProviders = visibleProvidersByModuleKey.get(moduleKey);
+            if (visibleProviders == null) {
+                visibleProviders = new Map<String, ProviderBinding>();
+                visibleProvidersByModuleKey.put(moduleKey, visibleProviders);
+            }
+            visibleProviders.put(token, binding);
+            return binding;
         }
 
         private Boolean hasCompiledGraph() {
@@ -832,9 +844,9 @@ public virtual inherited sharing class Di {
         private ProviderBinding getProviderBinding(final String token, final Boolean includeGlobals) {
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
-            ProviderBinding compiledProvider = getContext().getCompiledProviderBinding(this, token);
-            if (compiledProvider != null) {
-                return compiledProvider;
+            ProviderBinding visibleProvider = getContext().getVisibleProviderBinding(this, token);
+            if (visibleProvider != null) {
+                return visibleProvider;
             }
             isTrue(
                 !getContext().hasCompiledGraph(),
@@ -845,7 +857,12 @@ public virtual inherited sharing class Di {
 
             // First check local definitions
             if (hasProvider(token)) {
-                return new ProviderBinding(providers.get(token), getContext().getRegisteredModuleRef(this));
+                return getContext()
+                    .indexVisibleProviderBinding(
+                        this,
+                        token,
+                        new ProviderBinding(providers.get(token), getContext().getRegisteredModuleRef(this))
+                    );
             }
 
             // Then check imported and re-exported modules
@@ -884,14 +901,14 @@ public virtual inherited sharing class Di {
                 );
             }
             if (selectedProvider != null) {
-                return selectedProvider;
+                return getContext().indexVisibleProviderBinding(this, token, selectedProvider);
             }
 
             // Finally check implicit global module exports.
             if (includeGlobals) {
                 ProviderBinding globalProvider = getContext().getImplicitGlobalProviderBinding(token);
                 if (globalProvider != null) {
-                    return globalProvider;
+                    return getContext().indexVisibleProviderBinding(this, token, globalProvider);
                 }
             }
 

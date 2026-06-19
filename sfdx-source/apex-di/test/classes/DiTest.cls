@@ -1442,6 +1442,44 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_reuse_visible_binding_index_between_graph_mutations() {
+        // Arrange: A consumer exposes how often its import visibility is traversed.
+        Di.ApplicationContext context = newTestContext();
+        BindingIndexCountingConsumerModule consumer = new BindingIndexCountingConsumerModule();
+        Di.ModuleRef consumerRef = context.addModule(consumer);
+
+        // Act: Resolve the same imported binding twice without mutating the graph.
+        Assert.areEqual('hello', consumerRef.get('val'));
+        Integer traversalsAfterFirstLookup = consumer.importTraversalCount;
+        Assert.areEqual('hello', consumerRef.get('val'));
+
+        // Assert: Dynamic resolution should reuse the context's visible-binding index.
+        Assert.areEqual(
+            traversalsAfterFirstLookup,
+            consumer.importTraversalCount,
+            'Repeated imported-provider lookups should not rescan module visibility.'
+        );
+
+        // Act: Replace the imported owner provider and resolve through the consumer again.
+        Integer traversalsBeforeMutation = consumer.importTraversalCount;
+        context.getModuleRef(ValueModule.class).replace(consumer.provide('val').useValue('updated'));
+        Assert.areEqual('updated', consumerRef.get('val'));
+        Integer traversalsAfterMutation = consumer.importTraversalCount;
+        Assert.isTrue(
+            traversalsAfterMutation > traversalsBeforeMutation,
+            'A graph mutation should invalidate and rebuild visible provider bindings.'
+        );
+
+        // Assert: The rebuilt binding is reused until another mutation occurs.
+        Assert.areEqual('updated', consumerRef.get('val'));
+        Assert.areEqual(
+            traversalsAfterMutation,
+            consumer.importTraversalCount,
+            'The rebuilt visible-binding index should remain current until the graph changes again.'
+        );
+    }
+
+    @IsTest
     static void should_share_singleton_export_between_multiple_importing_modules() {
         // Arrange: Two modules import the same exported singleton provider from a shared module.
         Di.ModuleRef leftRef = Di.getModuleRef(SharedSingletonConsumerLeftModule.class);
@@ -3556,6 +3594,13 @@ private class DiTest {
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('internal').useFactory(new InternalConsumerFactory()) };
+        }
+    }
+    public class BindingIndexCountingConsumerModule extends EmptyModule {
+        public Integer importTraversalCount = 0;
+        public override Set<Di.ModuleImport> imports() {
+            importTraversalCount++;
+            return new Set<Di.ModuleImport>{ Di.import(ValueModule.class) };
         }
     }
     public class OverrideModule extends EmptyModule {
