@@ -76,7 +76,7 @@ public virtual inherited sharing class Di {
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ModuleRef> GLOBAL_MODULE_REGISTRY = new Map<String, ModuleRef>();
     private static final Map<String, ProviderBinding> GLOBAL_PROVIDERS = new Map<String, ProviderBinding>();
-    private static final List<String> moduleRegistrationPath = new List<String>();
+    private static final List<String> MODULE_REGISTRATION_PATH = new List<String>();
 
     @TestVisible
     private static Boolean hasGlobalLoadBeenAttempted = false;
@@ -428,11 +428,11 @@ public virtual inherited sharing class Di {
 
     private static void assertNoCircularReexport(final String token) {
         isTrue(
-            !moduleRegistrationPath.contains(token),
+            !MODULE_REGISTRATION_PATH.contains(token),
             new InvalidModuleException(
                 String.format(
                     CIRCULAR_REEXPORT_MESSAGE,
-                    new List<String>{ token, String.join(moduleRegistrationPath, ' -> ') + ' -> ' + token }
+                    new List<String>{ token, String.join(MODULE_REGISTRATION_PATH, ' -> ') + ' -> ' + token }
                 )
             )
         );
@@ -616,11 +616,11 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual void register() {
-            moduleRegistrationPath.add(getToken());
+            MODULE_REGISTRATION_PATH.add(getToken());
             try {
                 registerInternal();
             } finally {
-                moduleRegistrationPath.remove(moduleRegistrationPath.size() - 1);
+                MODULE_REGISTRATION_PATH.remove(MODULE_REGISTRATION_PATH.size() - 1);
             }
         }
 

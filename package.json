@@ -11,8 +11,8 @@
         "prettier:check": "prettier --check .",
         "prettier:diff": "prettier --list-different .",
         "prettier:fix": "prettier --write .",
-        "sfca:check": "sf code-analyzer run --config-file ./code-analyzer.yml --workspace sfdx-source/apex-di",
-        "sfca:check:detail": "sf code-analyzer run --config-file ./code-analyzer.yml --workspace sfdx-source/apex-di --view detail",
+        "sfca:check": "sf code-analyzer run --config-file ./code-analyzer.yml --workspace sfdx-source/apex-di --severity-threshold 3",
+        "sfca:check:detail": "sf code-analyzer run --config-file ./code-analyzer.yml --workspace sfdx-source/apex-di --view detail --severity-threshold 3",
         "sf:push": "sf project deploy start",
         "sf:run:test:all": "sf apex run test -n DiTest --synchronous --code-coverage"
     }

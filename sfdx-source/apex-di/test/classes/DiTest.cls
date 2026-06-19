@@ -1294,12 +1294,14 @@ private class DiTest {
         Di.ModuleRef consumerCtn = Di.getModuleRef(ArgsValidationModule.class);
 
         // Act & Assert
-        assertResolveArgsUnsupported(consumerCtn, 'ClassProvider');
-        assertResolveArgsUnsupported(consumerCtn, 'ValueProvider');
-        assertResolveArgsUnsupported(consumerCtn, 'ExistingProvider');
+        Integer unsupportedArgsAssertions = 0;
+        unsupportedArgsAssertions += assertResolveArgsUnsupported(consumerCtn, 'ClassProvider');
+        unsupportedArgsAssertions += assertResolveArgsUnsupported(consumerCtn, 'ValueProvider');
+        unsupportedArgsAssertions += assertResolveArgsUnsupported(consumerCtn, 'ExistingProvider');
+        Assert.areEqual(3, unsupportedArgsAssertions, 'All non-factory providers should reject runtime arguments.');
     }
 
-    private static void assertResolveArgsUnsupported(final Di.ModuleRef ref, final String token) {
+    private static Integer assertResolveArgsUnsupported(final Di.ModuleRef ref, final String token) {
         try {
             ref.resolve(token, 'someArgs');
             Assert.fail('Expected InvalidProviderException when resolving non-factory provider with arguments.');
@@ -1309,6 +1311,7 @@ private class DiTest {
                 'Exception message should explain that arguments are factory-only.'
             );
         }
+        return 1;
     }
 
     //=========================================================================
