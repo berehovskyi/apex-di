@@ -16,6 +16,7 @@ This is an advanced, NestJS-inspired Dependency Injection (DI) framework for Ape
     - **`useExisting`:** Creates an alias for an existing provider token. It **respects the target provider's scope**: if the target is `PROTOTYPE`, the alias behaves as a prototype; if `SINGLETON`, it forces a singleton resolution.
 - **Token Identity:** `Type` overloads canonicalize tokens through `Type.getName()`. `String` tokens are exact, case-sensitive keys, so `provide('Foo')` and `get('foo')` are different tokens. Prefer `Type` overloads for Apex class/interface tokens, and reserve `String` tokens for deliberate aliases or configuration keys with stable casing.
 - **Lazy Resolution:** By default, module imports are resolved lazily when a provider is first requested. The `.immediately()` method on a `ModuleImport` can be used to force eager resolution.
+- **Runtime Arguments:** Runtime arguments are supported by `resolve(token, args)`, not `get(token, args)`. `get()` is the cached retrieval path and rejects runtime arguments so singleton/scoped cache semantics stay unambiguous.
 - **Scopes:** The framework supports three provider lifetimes:
     - **`SINGLETON` (Default):** A single instance is created and shared for the entire transaction (i.e., for the life of the root `ModuleRef`).
     - **`PROTOTYPE`:** A new instance is created every time it is requested via `.resolve()`.

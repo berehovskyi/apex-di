@@ -545,23 +545,28 @@ private class DiTest {
         // Arrange: A module with a FactoryProvider that accepts arguments is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsModule.class);
 
-        // Act: The provider is requested with arguments.
-        Object out = ref.get('arg', new List<String>{ 'X' });
+        // Act: The provider is resolved with arguments.
+        Object out = ref.resolve('arg', new List<String>{ 'X' });
 
         // Assert: The factory correctly uses the arguments to produce the value.
         Assert.areEqual('arg:X', out, 'Arguments should be passed to and used by the factory.');
     }
 
     @IsTest
-    static void should_get_provider_by_type_with_arguments() {
+    static void should_throw_when_getting_provider_by_type_with_arguments() {
         // Arrange: A module with a factory provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
 
-        // Act: The provider is requested by Type with arguments.
-        Object result = ref.get(TestServiceImpl.class, new List<Object>{ 'Args' });
-
-        // Assert: The factory receives the arguments and produces the correct value.
-        Assert.areEqual('arg:Args', result, 'get(Type, args) should resolve the correct provider and pass arguments.');
+        // Act & Assert: get() is the cached path and does not accept runtime arguments.
+        try {
+            ref.get(TestServiceImpl.class, new List<Object>{ 'Args' });
+            Assert.fail('Expected InvalidProviderException when calling get(Type, args).');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Use resolve()'),
+                'Exception message should guide callers to resolve() for runtime arguments.'
+            );
+        }
     }
 
     @IsTest
@@ -1233,18 +1238,18 @@ private class DiTest {
     // Arguments & Caching
     //=========================================================================
     @IsTest
-    static void should_bypass_cache_with_args() {
+    static void should_resolve_with_args_without_using_singleton_cache() {
         // Arrange
         Di.clear();
         Di.ModuleRef consumerCtn = Di.getModuleRef(ArgsValidationModule.class);
 
         // Act & Assert
         // 1. Resolve with Args "A"
-        Object instanceA = consumerCtn.get('SingletonArgsFactory', 'A');
+        Object instanceA = consumerCtn.resolve('SingletonArgsFactory', 'A');
         Assert.areEqual('A', instanceA, 'Should return args as instance');
 
         // 2. Resolve with Args "B"
-        Object instanceB = consumerCtn.get('SingletonArgsFactory', 'B');
+        Object instanceB = consumerCtn.resolve('SingletonArgsFactory', 'B');
         Assert.areEqual('B', instanceB, 'Should return new args as instance, bypassing cache');
 
         // 3. Verify instances are different
@@ -1260,40 +1265,49 @@ private class DiTest {
         Assert.areEqual(instanceNull, instanceNull2, 'Should return cached instance when no args passed');
 
         // 6. Resolve with Args "C" (should still bypass cache even if cache is populated)
-        Object instanceC = consumerCtn.get('SingletonArgsFactory', 'C');
+        Object instanceC = consumerCtn.resolve('SingletonArgsFactory', 'C');
         Assert.areEqual('C', instanceC, 'Should bypass cache even if cache is populated');
     }
 
     @IsTest
-    static void should_throw_on_args_to_non_factory() {
+    static void should_throw_when_getting_with_arguments() {
         // Arrange
         Di.clear();
         Di.ModuleRef consumerCtn = Di.getModuleRef(ArgsValidationModule.class);
 
         // Act & Assert
-        // 1. ClassProvider
         try {
-            consumerCtn.get('ClassProvider', 'someArgs');
-            Assert.fail('Should throw exception when passing args to ClassProvider');
-        } catch (Exception e) {
-            Assert.isInstanceOfType(e, Di.DiException.class, 'Should throw DiException');
-            // Optionally check message if we define specific message
+            consumerCtn.get('SingletonArgsFactory', 'someArgs');
+            Assert.fail('Expected InvalidProviderException when calling get(String, args).');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Use resolve()'),
+                'Exception message should guide callers to resolve() for runtime arguments.'
+            );
         }
+    }
 
-        // 2. ValueProvider
-        try {
-            consumerCtn.get('ValueProvider', 'someArgs');
-            Assert.fail('Should throw exception when passing args to ValueProvider');
-        } catch (Exception e) {
-            Assert.isNotNull(e, 'Exception should be thrown for ValueProvider with args');
-        }
+    @IsTest
+    static void should_throw_when_resolving_non_factory_with_arguments() {
+        // Arrange
+        Di.clear();
+        Di.ModuleRef consumerCtn = Di.getModuleRef(ArgsValidationModule.class);
 
-        // 3. ExistingProvider
+        // Act & Assert
+        assertResolveArgsUnsupported(consumerCtn, 'ClassProvider');
+        assertResolveArgsUnsupported(consumerCtn, 'ValueProvider');
+        assertResolveArgsUnsupported(consumerCtn, 'ExistingProvider');
+    }
+
+    private static void assertResolveArgsUnsupported(final Di.ModuleRef ref, final String token) {
         try {
-            consumerCtn.get('ExistingProvider', 'someArgs');
-            Assert.fail('Should throw exception when passing args to ExistingProvider');
-        } catch (Exception e) {
-            Assert.isNotNull(e, 'Exception should be thrown for ExistingProvider with args');
+            ref.resolve(token, 'someArgs');
+            Assert.fail('Expected InvalidProviderException when resolving non-factory provider with arguments.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Arguments are only supported for FactoryProvider'),
+                'Exception message should explain that arguments are factory-only.'
+            );
         }
     }
 

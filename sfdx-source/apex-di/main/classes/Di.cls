@@ -70,6 +70,7 @@ public virtual inherited sharing class Di {
         'Invalid metadata scope "{0}" for provider "{1}" using Custom Metadata record "{2}". ' +
         'Allowed values are SINGLETON, PROTOTYPE, and SCOPED.';
     private static final String ARGS_NOT_SUPPORTED_MESSAGE = 'Arguments are only supported for FactoryProvider.';
+    private static final String GET_ARGS_NOT_SUPPORTED_MESSAGE = 'Runtime arguments are not supported by get(). Use resolve() when passing arguments.';
     private static final String NOT_INJECTABLE_MESSAGE = 'The instance does not implement the Di.Injectable interface.';
 
     private static final Map<String, ModuleRef> MODULE_REGISTRY = new Map<String, ModuleRef>();
@@ -1037,6 +1038,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object get(final String token, final Object args) {
+            isTrue(args == null, new InvalidProviderException(GET_ARGS_NOT_SUPPORTED_MESSAGE));
             if (!inCall) {
                 startResolution();
                 try {
