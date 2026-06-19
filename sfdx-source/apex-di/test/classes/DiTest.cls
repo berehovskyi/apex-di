@@ -1572,6 +1572,31 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_share_scoped_provider_across_module_refs_with_same_scope_context() {
+        // Arrange: Two different consumers participate in the same logical unit of work.
+        Di.ScopeContext scopeContext = new Di.ScopeContext();
+        Di.ModuleRef leftRef = Di.getModuleRef(ScopedExportConsumerLeftModule.class);
+        Di.ModuleRef rightRef = Di.getModuleRef(ScopedExportConsumerRightModule.class);
+
+        // Act: Resolve the same exported scoped provider through two different module refs.
+        Object leftInstance = leftRef.createScope(scopeContext).get(ScopedExportService.class);
+        Object rightInstance = rightRef.createScope(scopeContext).get(ScopedExportService.class);
+        Object isolatedInstance = rightRef.createScope(new Di.ScopeContext()).get(ScopedExportService.class);
+
+        // Assert: Shared scope contexts share scoped instances; different contexts do not.
+        Assert.areEqual(
+            leftInstance,
+            rightInstance,
+            'A shared ScopeContext should cache scoped providers across module refs in one unit of work.'
+        );
+        Assert.areNotEqual(
+            leftInstance,
+            isolatedInstance,
+            'A different ScopeContext should receive an isolated scoped provider instance.'
+        );
+    }
+
+    @IsTest
     static void should_handle_circular_imports_gracefully() {
         // Arrange: Modules with a circular dependency (A -> B -> C -> A) are defined.
         Exception unexpectedEx;
@@ -3542,6 +3567,16 @@ private class DiTest {
         }
     }
     public class ScopedExportConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ScopedExportOwnerModule.class) };
+        }
+    }
+    public class ScopedExportConsumerLeftModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ScopedExportOwnerModule.class) };
+        }
+    }
+    public class ScopedExportConsumerRightModule extends EmptyModule {
         public override Set<Di.ModuleImport> imports() {
             return new Set<Di.ModuleImport>{ Di.import(ScopedExportOwnerModule.class) };
         }

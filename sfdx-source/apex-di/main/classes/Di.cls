@@ -59,6 +59,7 @@ public virtual inherited sharing class Di {
         'Cannot access scoped provider "{0}" from the root module. ' +
         'Scoped providers require an active scope cache.' +
         '\nUse createScope() method instead to create a ScopeRef.';
+    private static final String NULL_SCOPE_CONTEXT_MESSAGE = 'Cannot create a scope with a null ScopeContext.';
     private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
         'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
@@ -1563,8 +1564,13 @@ public virtual inherited sharing class Di {
         }
 
         public virtual ScopeRef createScope() {
+            return createScope(new ScopeContext());
+        }
+
+        public virtual ScopeRef createScope(final ScopeContext scopeContext) {
+            isTrue(scopeContext != null, new InvalidScopeException(NULL_SCOPE_CONTEXT_MESSAGE));
             refreshIfModuleChanged();
-            return new ScopeRef(this, module);
+            return new ScopeRef(this, module, scopeContext);
         }
 
         public virtual void replace(final Provider newProvider) {
@@ -1671,12 +1677,52 @@ public virtual inherited sharing class Di {
         }
     }
 
+    public virtual class ScopeContext {
+        private final Map<String, Map<String, Object>> scopedCacheByOwner = new Map<String, Map<String, Object>>();
+
+        public virtual void clear() {
+            scopedCacheByOwner.clear();
+        }
+
+        private Boolean contains(final Module ownerModule, final String providerToken) {
+            Map<String, Object> scopedCache = scopedCacheByOwner.get(getOwnerKey(ownerModule));
+            return scopedCache != null && scopedCache.containsKey(providerToken);
+        }
+
+        private Object get(final Module ownerModule, final String providerToken) {
+            Map<String, Object> scopedCache = scopedCacheByOwner.get(getOwnerKey(ownerModule));
+            return scopedCache == null ? null : scopedCache.get(providerToken);
+        }
+
+        private void put(final Module ownerModule, final String providerToken, final Object instance) {
+            String ownerKey = getOwnerKey(ownerModule);
+            Map<String, Object> scopedCache = scopedCacheByOwner.get(ownerKey);
+            if (scopedCache == null) {
+                scopedCache = new Map<String, Object>();
+                scopedCacheByOwner.put(ownerKey, scopedCache);
+            }
+            scopedCache.put(providerToken, instance);
+        }
+
+        private void remove(final Module ownerModule, final String providerToken) {
+            Map<String, Object> scopedCache = scopedCacheByOwner.get(getOwnerKey(ownerModule));
+            if (scopedCache != null) {
+                scopedCache.remove(providerToken);
+            }
+        }
+
+        private String getOwnerKey(final Module ownerModule) {
+            return (ownerModule.isGlobal() ? 'global:' : 'local:') + ownerModule.getToken();
+        }
+    }
+
     public virtual class ScopeRef extends Container {
-        protected final Map<String, Object> scopedCache = new Map<String, Object>();
+        protected final ScopeContext scopeContext;
         protected final Map<String, ScopeRef> ownerScopes = new Map<String, ScopeRef>();
 
-        protected ScopeRef(final ModuleRef parent, final Module module) {
+        protected ScopeRef(final ModuleRef parent, final Module module, final ScopeContext scopeContext) {
             super(parent.context, parent, module);
+            this.scopeContext = scopeContext;
         }
 
         public override Object resolve(final String token, final Object args) {
@@ -1684,25 +1730,25 @@ public virtual inherited sharing class Di {
         }
 
         public virtual void clearCache() {
-            scopedCache.clear();
+            scopeContext.clear();
             ownerScopes.clear();
         }
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
             if (getProviderScope(provider) === Scope.SCOPED) {
                 String key = provider.getToken();
-                if (args == null && scopedCache.containsKey(key)) {
-                    return scopedCache.get(key);
+                if (args == null && scopeContext.contains(module, key)) {
+                    return scopeContext.get(module, key);
                 }
                 Object instance = newInstance(provider, args);
                 if (args == null) {
-                    scopedCache.put(key, instance);
+                    scopeContext.put(module, key, instance);
                 }
                 try {
                     return autowire(instance);
                 } catch (Exception e) {
                     if (args == null) {
-                        scopedCache.remove(key);
+                        scopeContext.remove(module, key);
                     }
                     throw e;
                 }
@@ -1721,7 +1767,7 @@ public virtual inherited sharing class Di {
         }
 
         protected override Boolean hasInCache(final String token) {
-            return scopedCache.containsKey(token);
+            return scopeContext.contains(module, token);
         }
 
         protected override Container getResolutionContainer(final ModuleRef owner) {
@@ -1733,7 +1779,7 @@ public virtual inherited sharing class Di {
             String ownerScopeKey = (owner.getModule().isGlobal() ? 'global:' : 'local:') + ownerToken;
             ScopeRef ownerScope = ownerScopes.get(ownerScopeKey);
             if (ownerScope == null || ownerScope.parent !== owner) {
-                ownerScope = owner.createScope();
+                ownerScope = owner.createScope(scopeContext);
                 ownerScopes.put(ownerScopeKey, ownerScope);
             }
             return ownerScope;
