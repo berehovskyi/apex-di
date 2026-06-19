@@ -1583,9 +1583,10 @@ private class DiTest {
         context.getModuleRef(ValueModule.class).replace(consumer.provide('val').useValue('updated'));
         Assert.areEqual('updated', consumerRef.get('val'));
         Integer traversalsAfterMutation = consumer.importTraversalCount;
-        Assert.isTrue(
-            traversalsAfterMutation > traversalsBeforeMutation,
-            'A graph mutation should invalidate and rebuild visible provider bindings.'
+        Assert.areEqual(
+            traversalsBeforeMutation,
+            traversalsAfterMutation,
+            'Binding invalidation should reuse the committed import snapshot without rerunning declarations.'
         );
 
         // Assert: The rebuilt binding is reused until another mutation occurs.
@@ -2399,10 +2400,11 @@ private class DiTest {
     static void should_reject_duplicate_global_export_tokens() {
         // Arrange: One global module already publishes a token.
         Di.addModule(new DuplicateGlobalExportLeftModule());
+        DuplicateGlobalExportRightModule rejectedModule = new DuplicateGlobalExportRightModule();
 
         // Act: Another global module attempts to publish the same token.
         try {
-            Di.addModule(new DuplicateGlobalExportRightModule());
+            Di.addModule(rejectedModule);
             Assert.fail('Expected InvalidProviderException for duplicate global export token.');
         } catch (Di.InvalidProviderException ex) {
             // Assert: The ambiguity is rejected with a framework exception.
@@ -2421,6 +2423,10 @@ private class DiTest {
             'left',
             Di.getModuleRef(EmptyModule.class).get('duplicateGlobalVal'),
             'Failed duplicate global registration should leave the original export intact.'
+        );
+        Assert.isFalse(
+            rejectedModule.hasProvider('duplicateGlobalVal'),
+            'A rejected module instance must not retain an uncommitted provider definition.'
         );
     }
 
@@ -2742,6 +2748,36 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_restore_global_module_definition_when_refresh_validation_fails() {
+        // Arrange: Two global modules own distinct exports.
+        Di.DynamicModule refreshedModule = new Di.DynamicModule('AtomicRefreshGlobal').setGlobal();
+        refreshedModule.addProvider(refreshedModule.provide('atomicRefreshValue').useValue('stable'))
+            .addExport('atomicRefreshValue');
+        Di.ModuleRef refreshedRef = Di.addModule(refreshedModule);
+        Di.DynamicModule conflictOwner = new Di.DynamicModule('AtomicRefreshConflictOwner').setGlobal();
+        conflictOwner.addProvider(conflictOwner.provide('atomicRefreshConflict').useValue('owner'))
+            .addExport('atomicRefreshConflict');
+        Di.addModule(conflictOwner);
+        Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
+        Assert.areEqual('stable', consumerRef.get('atomicRefreshValue'));
+
+        // Act: The refreshed candidate attempts to claim another global owner's export.
+        refreshedModule.addProvider(refreshedModule.provide('atomicRefreshConflict').useValue('candidate'))
+            .addExport('atomicRefreshConflict');
+        try {
+            refreshedRef.refresh();
+            Assert.fail('Expected InvalidProviderException for a conflicting global refresh.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('atomicRefreshConflict'));
+        }
+
+        // Assert: Both previously committed definitions and global bindings remain intact.
+        Assert.isFalse(refreshedRef.getModule().hasProvider('atomicRefreshConflict'));
+        Assert.areEqual('stable', consumerRef.get('atomicRefreshValue'));
+        Assert.areEqual('owner', consumerRef.get('atomicRefreshConflict'));
+    }
+
+    @IsTest
     static void should_update_global_export_when_global_provider_is_replaced() {
         // Arrange: A global module exports a provider, and a consumer resolves it through the global fallback.
         Di.DynamicModule dynGlobal = new Di.DynamicModule('ReplaceableGlobalDynamic').setGlobal();
@@ -2787,9 +2823,10 @@ private class DiTest {
             .replace(globalModule.provide('sharedGlobalReexportVal').useValue('updated'));
         Assert.areEqual('updated', consumerRef.get('sharedGlobalReexportVal'));
         Integer traversalsAfterMutation = globalModule.bindingTraversalCount;
-        Assert.isTrue(
-            traversalsAfterMutation > traversalsBeforeMutation,
-            'A graph mutation should invalidate and rebuild the global binding index.'
+        Assert.areEqual(
+            traversalsBeforeMutation,
+            traversalsAfterMutation,
+            'Global index invalidation should reuse committed re-export definitions.'
         );
 
         // Assert: The rebuilt index is also reused until another graph mutation occurs.
@@ -2823,6 +2860,34 @@ private class DiTest {
 
         // Assert: The new provider is now available through the original module reference.
         Assert.areEqual('refreshed', ref.get('newValue'), 'Provider should be available after refresh.');
+    }
+
+    @IsTest
+    static void should_preserve_committed_module_definition_when_refresh_fails() {
+        // Arrange: The module starts with a valid, committed provider definition.
+        FailingRefreshModule module = new FailingRefreshModule();
+        Di.ModuleRef ref = Di.addModule(module);
+        Assert.areEqual('stable', ref.get('stableRefreshValue'));
+
+        // Act: Its next declaration is invalid after defining a different provider.
+        module.shouldFailRefresh = true;
+        try {
+            ref.refresh();
+            Assert.fail('Expected UnknownExportException for the invalid refreshed definition.');
+        } catch (Di.UnknownExportException ex) {
+            Assert.isTrue(ex.getMessage().contains('missingRefreshExport'));
+        }
+
+        // Assert: Failed staging leaves the previously committed definition fully intact.
+        Assert.isTrue(ref.getModule().hasProvider('stableRefreshValue'));
+        Assert.isFalse(ref.getModule().hasProvider('uncommittedRefreshValue'));
+        Assert.areEqual('stable', ref.get('stableRefreshValue'));
+        try {
+            ref.get('uncommittedRefreshValue');
+            Assert.fail('A provider from a failed refresh must not become visible.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('uncommittedRefreshValue'));
+        }
     }
 
     @IsTest
@@ -3204,6 +3269,10 @@ private class DiTest {
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('original', consumerRef.get('replacementRollbackValue'));
         Assert.areEqual('owner', consumerRef.get('replacementConflictValue'));
+        Assert.isFalse(
+            replacement.hasProvider('replacementRollbackValue'),
+            'A rejected replacement instance must not retain its candidate definition.'
+        );
     }
 
     @IsTest
@@ -4091,6 +4160,19 @@ private class DiTest {
         public override Set<Di.Provider> providers() {
             providerBuildCount++;
             return new Set<Di.Provider>{ provide('counted').useValue('registered') };
+        }
+    }
+    public class FailingRefreshModule extends EmptyModule {
+        public Boolean shouldFailRefresh = false;
+        public override Set<Di.Provider> providers() {
+            return shouldFailRefresh
+                ? new Set<Di.Provider>{ provide('uncommittedRefreshValue').useValue('uncommitted') }
+                : new Set<Di.Provider>{ provide('stableRefreshValue').useValue('stable') };
+        }
+        public override Set<String> exports() {
+            return shouldFailRefresh
+                ? new Set<String>{ 'missingRefreshExport' }
+                : new Set<String>{ 'stableRefreshValue' };
         }
     }
     public class LazyErrorConsumerModule extends EmptyModule {

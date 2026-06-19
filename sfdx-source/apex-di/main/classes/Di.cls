@@ -273,6 +273,7 @@ public virtual inherited sharing class Di {
 
             String token = module.getToken();
             Map<String, ModuleRef> registry = module.isGlobal() ? globalRegistry : moduleRegistry;
+            ModuleDefinition previousDefinition = module.definition;
             isTrue(
                 !registry.containsKey(token),
                 new InvalidModuleException(String.format(MODULE_ALREADY_REGISTERED_MESSAGE, new List<String>{ token }))
@@ -290,6 +291,7 @@ public virtual inherited sharing class Di {
                 if (registry.get(token) === ref) {
                     registry.remove(token);
                 }
+                module.definition = previousDefinition;
                 module.clearContext(this);
                 markGraphChanged();
                 throw exc;
@@ -326,6 +328,7 @@ public virtual inherited sharing class Di {
 
             Map<String, ModuleRef> registry = oldModule.isGlobal() ? globalRegistry : moduleRegistry;
             ModuleRef newRef = new ModuleRef(this, newModule);
+            ModuleDefinition previousNewDefinition = newModule.definition;
             newRef.registryToken = token;
             newModule.register(this);
             if (oldModule.isGlobal()) {
@@ -339,6 +342,7 @@ public virtual inherited sharing class Di {
                 } catch (Exception exc) {
                     registry.remove(token);
                     registry.put(oldRegistryToken, oldRef);
+                    newModule.definition = previousNewDefinition;
                     newModule.clearContext(this);
                     markGraphChanged();
                     throw exc;
@@ -521,14 +525,14 @@ public virtual inherited sharing class Di {
                 Set<String> localProviderTokens = new Set<String>();
                 ModuleRef owner = getRegisteredModuleRef(module);
 
-                for (Provider provider : module.providers.values()) {
+                for (Provider provider : module.definition.providers.values()) {
                     localProviderTokens.add(provider.getToken());
                     visibleProviders.put(provider.getToken(), new ProviderBinding(provider, owner));
                 }
 
                 Set<ModuleImport> searchScope = new Set<ModuleImport>();
-                searchScope.addAll(module.imports() ?? new Set<ModuleImport>());
-                searchScope.addAll(module.reexports() ?? new Set<ModuleImport>());
+                searchScope.addAll(module.definition.imports);
+                searchScope.addAll(module.definition.reexports);
                 for (ModuleImport moduleImport : searchScope) {
                     Module importedModule = resolveImport(moduleImport);
                     Map<String, ProviderBinding> importedProviders = compileModule(
@@ -536,7 +540,7 @@ public virtual inherited sharing class Di {
                         compiledProvidersByModuleKey,
                         compilingModuleKeys
                     );
-                    for (String token : importedModule.exports) {
+                    for (String token : importedModule.definition.exports) {
                         if (localProviderTokens.contains(token)) {
                             continue;
                         }
@@ -659,7 +663,7 @@ public virtual inherited sharing class Di {
             Map<String, ProviderBinding> candidateBindings = new Map<String, ProviderBinding>();
             for (ModuleRef ref : globalModuleRegistry.values()) {
                 Module module = ref.getModule();
-                for (String token : module.exports ?? new Set<String>()) {
+                for (String token : module.definition.exports) {
                     addGlobalProviderBinding(candidateBindings, module, token);
                 }
             }
@@ -854,6 +858,25 @@ public virtual inherited sharing class Di {
         }
     }
 
+    private class ModuleDefinition {
+        private final Map<String, Provider> providers;
+        private final Set<String> exports;
+        private final Set<ModuleImport> imports;
+        private final Set<ModuleImport> reexports;
+
+        private ModuleDefinition(
+            final Map<String, Provider> providers,
+            final Set<String> exports,
+            final Set<ModuleImport> imports,
+            final Set<ModuleImport> reexports
+        ) {
+            this.providers = new Map<String, Provider>(providers);
+            this.exports = new Set<String>(exports);
+            this.imports = new Set<ModuleImport>(imports);
+            this.reexports = new Set<ModuleImport>(reexports);
+        }
+    }
+
     private class MetadataOverrideSource implements MetadataSource {
         private final MetadataSource delegate;
         private Iterable<GlobalModuleDefinition> globalModules;
@@ -884,9 +907,13 @@ public virtual inherited sharing class Di {
 
     public abstract inherited sharing class Module {
         protected final String token;
-        protected final Map<String, Provider> providers = new Map<String, Provider>();
-        protected final Set<String> exports = new Set<String>();
         protected Boolean isGlobal = false;
+        private ModuleDefinition definition = new ModuleDefinition(
+            new Map<String, Provider>(),
+            new Set<String>(),
+            new Set<ModuleImport>(),
+            new Set<ModuleImport>()
+        );
         private ApplicationContext context;
 
         protected Module() {
@@ -938,7 +965,7 @@ public virtual inherited sharing class Di {
         }
 
         public Boolean hasImport(final String token) {
-            for (ModuleImport moduleImport : imports() ?? new Set<ModuleImport>()) {
+            for (ModuleImport moduleImport : definition.imports) {
                 if (moduleImport.getToken().equals(token)) {
                     return true;
                 }
@@ -947,11 +974,11 @@ public virtual inherited sharing class Di {
         }
 
         public Boolean hasProvider(final String token) {
-            return providers.containsKey(token);
+            return definition.providers.containsKey(token);
         }
 
         public Boolean hasExport(final String token) {
-            return exports.contains(token);
+            return definition.exports.contains(token);
         }
 
         public virtual Provider getProvider(final String token) {
@@ -982,18 +1009,14 @@ public virtual inherited sharing class Di {
                     .indexVisibleProviderBinding(
                         this,
                         token,
-                        new ProviderBinding(providers.get(token), getContext().getRegisteredModuleRef(this))
+                        new ProviderBinding(definition.providers.get(token), getContext().getRegisteredModuleRef(this))
                     );
             }
 
             // Then check imported and re-exported modules
             Set<ModuleImport> searchScope = new Set<ModuleImport>();
-            if (imports() != null) {
-                searchScope.addAll(imports());
-            }
-            if (reexports() != null) {
-                searchScope.addAll(reexports());
-            }
+            searchScope.addAll(definition.imports);
+            searchScope.addAll(definition.reexports);
 
             ProviderBinding selectedProvider;
             for (ModuleImport moduleImport : searchScope) {
@@ -1062,55 +1085,72 @@ public virtual inherited sharing class Di {
                 )
             );
 
-            providers.put(token, newProvider);
+            Map<String, Provider> replacementProviders = new Map<String, Provider>(definition.providers);
+            replacementProviders.put(token, newProvider);
+            definition = new ModuleDefinition(
+                replacementProviders,
+                definition.exports,
+                definition.imports,
+                definition.reexports
+            );
             return this;
         }
 
         protected virtual void register(final ApplicationContext context) {
+            ApplicationContext previousContext = this.context;
+            ModuleDefinition previousDefinition = definition;
             setContext(context);
             context.pushRegistration(getToken());
             try {
-                registerInternal();
+                definition = compileDefinition();
+            } catch (Exception exc) {
+                definition = previousDefinition;
+                this.context = previousContext;
+                throw exc;
             } finally {
                 context.popRegistration();
             }
         }
 
-        private void registerInternal() {
-            providers.clear();
-            exports.clear();
+        private ModuleDefinition compileDefinition() {
+            Map<String, Provider> candidateProviders = new Map<String, Provider>();
+            Set<String> candidateExports = new Set<String>();
 
             for (Provider provider : providers() ?? new Set<Provider>()) {
-                providers.put(provider.getToken(), provider);
+                candidateProviders.put(provider.getToken(), provider);
             }
 
             for (String token : exports() ?? new Set<String>()) {
                 isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
                 isTrue(
-                    hasProvider(token),
+                    candidateProviders.containsKey(token),
                     new UnknownExportException(
                         String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, getToken() })
                     )
                 );
 
-                exports.add(token);
+                candidateExports.add(token);
             }
 
-            for (ModuleImport moduleImport : imports() ?? new Set<ModuleImport>()) {
+            Set<ModuleImport> candidateImports = new Set<ModuleImport>(imports() ?? new Set<ModuleImport>());
+            for (ModuleImport moduleImport : candidateImports) {
                 if (moduleImport.isEager) {
                     getContext().resolveImport(moduleImport);
                 }
             }
 
-            for (ModuleImport reexport : reexports() ?? new Set<ModuleImport>()) {
+            Set<ModuleImport> candidateReexports = new Set<ModuleImport>(reexports() ?? new Set<ModuleImport>());
+            for (ModuleImport reexport : candidateReexports) {
                 String reexportToken = reexport.getToken();
                 getContext().assertNoCircularReexport(reexportToken);
                 Module reexportedModule = getContext().resolveImport(reexport);
                 getContext().assertNoCircularReexport(reexportedModule.getToken());
-                for (String token : reexportedModule.exports) {
-                    exports.add(token);
+                for (String token : reexportedModule.definition.exports) {
+                    candidateExports.add(token);
                 }
             }
+
+            return new ModuleDefinition(candidateProviders, candidateExports, candidateImports, candidateReexports);
         }
 
         public Boolean equals(final Object obj) {
@@ -1787,13 +1827,20 @@ public virtual inherited sharing class Di {
         public virtual void refresh() {
             refreshIfModuleChanged();
             context.markGraphChanged();
-            module.register(context);
-            if (module.isGlobal()) {
-                context.validateGlobalProviderBindings();
-                context.clearAllModuleCaches();
-                return;
+            ModuleDefinition previousDefinition = module.definition;
+            try {
+                module.register(context);
+                if (module.isGlobal()) {
+                    context.validateGlobalProviderBindings();
+                    context.clearAllModuleCaches();
+                    return;
+                }
+                clearCache();
+            } catch (Exception exc) {
+                module.definition = previousDefinition;
+                context.markGraphChanged();
+                throw exc;
             }
-            clearCache();
         }
 
         public virtual void clearCache() {
