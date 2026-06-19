@@ -3154,6 +3154,28 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_share_replacement_runtime_between_held_and_registered_module_refs() {
+        // Arrange: Hold the original ref before replacing its module with another singleton provider definition.
+        SingleModule module = new SingleModule();
+        Di.ModuleRef heldRef = Di.addModule(module);
+        Di.DynamicModule replacement = new Di.DynamicModule(module.getToken());
+        replacement.addProvider(replacement.provide('TestService').useClass(TestServiceImpl.class));
+
+        // Act: Resolve through both the current registry ref and the previously held ref.
+        Di.replaceModule(module.getToken(), replacement);
+        Di.ModuleRef registeredRef = Di.getModuleRef(module.getToken());
+        Object registeredInstance = registeredRef.get('TestService');
+        Object heldInstance = heldRef.get('TestService');
+
+        // Assert: Both refs converge on the replacement module's one singleton runtime.
+        Assert.areEqual(
+            registeredInstance,
+            heldInstance,
+            'Held and registered refs should share the replacement runtime singleton cache.'
+        );
+    }
+
+    @IsTest
     static void should_clear_dependent_singleton_caches_when_local_module_is_replaced() {
         // Arrange: A consumer singleton is cached from an imported local module value.
         ValueModule valueModule = new ValueModule();
@@ -3171,6 +3193,25 @@ private class DiTest {
             'depends on replaced',
             consumerRef.get('dependentVal'),
             'Dependent singleton providers should be rebuilt after local module replacement.'
+        );
+    }
+
+    @IsTest
+    static void should_clear_dependent_singleton_caches_when_provider_is_replaced() {
+        // Arrange: A consumer singleton captures an imported owner value.
+        ValueModule valueModule = new ValueModule();
+        Di.ModuleRef ownerRef = Di.addModule(valueModule);
+        Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
+        Assert.areEqual('depends on hello', consumerRef.get('dependentVal'));
+
+        // Act: Replace only the imported provider on its owner runtime.
+        ownerRef.replace(valueModule.provide('val').useValue('provider-replaced'));
+
+        // Assert: All dependent module runtimes are invalidated, not only the owner cache entry.
+        Assert.areEqual(
+            'depends on provider-replaced',
+            consumerRef.get('dependentVal'),
+            'Dependent singleton providers should rebuild after provider replacement.'
         );
     }
 

@@ -1523,19 +1523,27 @@ public virtual inherited sharing class Di {
         }
     }
 
+    private class ModuleRuntime {
+        private final Module module;
+        private final Map<String, Object> singletonCache = new Map<String, Object>();
+
+        private ModuleRuntime(final Module module) {
+            isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+            this.module = module;
+        }
+    }
+
     public abstract inherited sharing class Container {
         protected ApplicationContext context;
         protected Container parent;
-        protected Module module;
+        private ModuleRuntime runtime;
         protected final List<String> resolutionPath = new List<String>();
         protected Boolean inCall = false;
 
         protected Container(final ApplicationContext context, final Container parent, final Module module) {
-            isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
-
             this.context = context ?? DEFAULT_CONTEXT;
             this.parent = parent;
-            this.module = module;
+            this.runtime = new ModuleRuntime(module);
         }
 
         protected abstract Object getInstance(final Provider provider, final Object args);
@@ -1543,7 +1551,7 @@ public virtual inherited sharing class Di {
         protected abstract Boolean hasInCache(final String token);
 
         public Module getModule() {
-            return module;
+            return runtime.module;
         }
 
         public virtual Object get(final String token, final Object args) {
@@ -1603,7 +1611,7 @@ public virtual inherited sharing class Di {
         protected virtual Object getInternal(final String token, final Object args) {
             validateAndAddPath(token);
             try {
-                ProviderBinding binding = module.getProviderBinding(token);
+                ProviderBinding binding = getModule().getProviderBinding(token);
                 Provider provider = binding.getProvider();
                 isTrue(
                     getProviderScope(provider) !== Scope.PROTOTYPE,
@@ -1631,7 +1639,7 @@ public virtual inherited sharing class Di {
         protected virtual Object resolveInternal(final String token, final Object args) {
             validateAndAddPath(token);
             try {
-                ProviderBinding binding = module.getProviderBinding(token);
+                ProviderBinding binding = getModule().getProviderBinding(token);
                 Provider provider = binding.getProvider();
                 Container resolutionContainer = getResolutionContainer(binding.getOwner());
                 if (provider instanceof ExistingProvider) {
@@ -1673,6 +1681,30 @@ public virtual inherited sharing class Di {
 
         protected virtual Container getResolutionContainer(final ModuleRef owner) {
             return owner === this ? this : owner;
+        }
+
+        private void adoptRuntime(final Container source) {
+            runtime = source.runtime;
+        }
+
+        private Boolean hasSingleton(final String token) {
+            return runtime.singletonCache.containsKey(token);
+        }
+
+        private Object getSingleton(final String token) {
+            return runtime.singletonCache.get(token);
+        }
+
+        private void putSingleton(final String token, final Object instance) {
+            runtime.singletonCache.put(token, instance);
+        }
+
+        private void removeSingleton(final String token) {
+            runtime.singletonCache.remove(token);
+        }
+
+        private void clearSingletons() {
+            runtime.singletonCache.clear();
         }
 
         private Object getInternalFrom(final Container target, final String token, final Object args) {
@@ -1787,7 +1819,6 @@ public virtual inherited sharing class Di {
 
     public virtual class ModuleRef extends Container {
         protected String registryToken;
-        protected final Map<String, Object> cache = new Map<String, Object>();
 
         public ModuleRef(final Module module) {
             this(DEFAULT_CONTEXT, module);
@@ -1805,7 +1836,7 @@ public virtual inherited sharing class Di {
         public virtual ScopeRef createScope(final ScopeContext scopeContext) {
             isTrue(scopeContext != null, new InvalidScopeException(NULL_SCOPE_CONTEXT_MESSAGE));
             refreshIfModuleChanged();
-            return new ScopeRef(this, module, scopeContext);
+            return new ScopeRef(this, scopeContext);
         }
 
         public virtual void replace(final Provider newProvider) {
@@ -1815,9 +1846,9 @@ public virtual inherited sharing class Di {
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             refreshIfModuleChanged();
+            getModule().replace(newProvider);
             context.markGraphChanged();
-            module.replace(newProvider);
-            cache.remove(token);
+            context.clearAllModuleCaches();
         }
 
         public virtual override Object resolve(final String token, final Object args) {
@@ -1827,24 +1858,25 @@ public virtual inherited sharing class Di {
         public virtual void refresh() {
             refreshIfModuleChanged();
             context.markGraphChanged();
-            ModuleDefinition previousDefinition = module.definition;
+            Module currentModule = getModule();
+            ModuleDefinition previousDefinition = currentModule.definition;
             try {
-                module.register(context);
-                if (module.isGlobal()) {
+                currentModule.register(context);
+                if (currentModule.isGlobal()) {
                     context.validateGlobalProviderBindings();
                     context.clearAllModuleCaches();
                     return;
                 }
                 clearCache();
             } catch (Exception exc) {
-                module.definition = previousDefinition;
+                currentModule.definition = previousDefinition;
                 context.markGraphChanged();
                 throw exc;
             }
         }
 
         public virtual void clearCache() {
-            cache.clear();
+            clearSingletons();
         }
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
@@ -1856,18 +1888,18 @@ public virtual inherited sharing class Di {
                 )
             );
             String key = provider.getToken();
-            if (args == null && providerScope == Scope.SINGLETON && cache.containsKey(key)) {
-                return cache.get(key);
+            if (args == null && providerScope == Scope.SINGLETON && hasSingleton(key)) {
+                return getSingleton(key);
             }
             Object instance = newInstance(provider, args);
             if (args == null && providerScope == Scope.SINGLETON) {
-                cache.put(key, instance);
+                putSingleton(key, instance);
             }
             try {
                 return autowire(instance);
             } catch (Exception e) {
                 if (args == null && providerScope == Scope.SINGLETON) {
-                    cache.remove(key);
+                    removeSingleton(key);
                 }
                 throw e;
             }
@@ -1884,7 +1916,7 @@ public virtual inherited sharing class Di {
         }
 
         protected override Boolean hasInCache(final String token) {
-            return cache.containsKey(token);
+            return hasSingleton(token);
         }
 
         protected override void validateAndAddPath(String token) {
@@ -1906,14 +1938,13 @@ public virtual inherited sharing class Di {
 
         private void refreshIfModuleChanged() {
             ModuleRef currentRef = getCurrentRegisteredRef();
-            if (currentRef != null && currentRef !== this && currentRef.getModule() !== module) {
-                module = currentRef.getModule();
-                clearCache();
+            if (currentRef != null && currentRef !== this && currentRef.getModule() !== getModule()) {
+                adoptRuntime(currentRef);
             }
         }
 
         private ModuleRef getCurrentRegisteredRef() {
-            return context.getLoadedRegistry(module).get(registryToken);
+            return context.getLoadedRegistry(getModule()).get(registryToken);
         }
     }
 
@@ -1960,8 +1991,9 @@ public virtual inherited sharing class Di {
         protected final ScopeContext scopeContext;
         protected final Map<String, ScopeRef> ownerScopes = new Map<String, ScopeRef>();
 
-        protected ScopeRef(final ModuleRef parent, final Module module, final ScopeContext scopeContext) {
-            super(parent.context, parent, module);
+        protected ScopeRef(final ModuleRef parent, final ScopeContext scopeContext) {
+            super(parent.context, parent, parent.getModule());
+            adoptRuntime(parent);
             this.scopeContext = scopeContext;
         }
 
@@ -1977,18 +2009,19 @@ public virtual inherited sharing class Di {
         protected virtual override Object getInstance(final Provider provider, final Object args) {
             if (getProviderScope(provider) === Scope.SCOPED) {
                 String key = provider.getToken();
-                if (args == null && scopeContext.contains(module, key)) {
-                    return scopeContext.get(module, key);
+                Module ownerModule = getModule();
+                if (args == null && scopeContext.contains(ownerModule, key)) {
+                    return scopeContext.get(ownerModule, key);
                 }
                 Object instance = newInstance(provider, args);
                 if (args == null) {
-                    scopeContext.put(module, key, instance);
+                    scopeContext.put(ownerModule, key, instance);
                 }
                 try {
                     return autowire(instance);
                 } catch (Exception e) {
                     if (args == null) {
-                        scopeContext.remove(module, key);
+                        scopeContext.remove(ownerModule, key);
                     }
                     throw e;
                 }
@@ -2007,7 +2040,7 @@ public virtual inherited sharing class Di {
         }
 
         protected override Boolean hasInCache(final String token) {
-            return scopeContext.contains(module, token);
+            return scopeContext.contains(getModule(), token);
         }
 
         protected override Container getResolutionContainer(final ModuleRef owner) {
@@ -2036,7 +2069,7 @@ public virtual inherited sharing class Di {
             ModuleRef currentRef = ((ModuleRef) parent).getCurrentRegisteredRef();
             if (currentRef != null && currentRef !== parent) {
                 parent = currentRef;
-                module = currentRef.getModule();
+                adoptRuntime(currentRef);
                 clearCache();
             }
         }
