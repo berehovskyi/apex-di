@@ -1591,6 +1591,30 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_reject_circular_imports_when_compiling_application_context_graph() {
+        // Arrange: Compiled graphs validate the whole module import graph up front.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new CircularA());
+
+        // Act & Assert: A circular module-import graph is rejected during compile.
+        try {
+            context.compile();
+            Assert.fail('Expected InvalidModuleException for circular module imports.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Circular module import detected'),
+                'Compile should reject circular module import graphs.'
+            );
+            Assert.isTrue(
+                ex.getMessage().contains(new CircularA().getToken()) ||
+                    ex.getMessage().contains(new CircularB().getToken()) ||
+                    ex.getMessage().contains(new CircularC().getToken()),
+                'Error should identify one module from the import cycle.'
+            );
+        }
+    }
+
+    @IsTest
     static void should_prevent_recursion_when_registering_self_importing_module() {
         // Arrange: A module that imports itself is defined.
         Exception unexpectedEx;
@@ -1892,6 +1916,195 @@ private class DiTest {
             Assert.isTrue(
                 ex.getMessage().contains('Cannot find module "NonExistent.Module"'),
                 'Error should be thrown on provider access.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_throw_exception_when_compiling_context_with_missing_lazy_import() {
+        // Arrange: A context contains a module with a lazy import for a non-existent module.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new LazyErrorConsumerModule());
+
+        // Act & Assert: Compiling the context validates the whole graph before provider resolution.
+        try {
+            context.compile();
+            Assert.fail('Expected UnknownModuleException was not thrown.');
+        } catch (Di.UnknownModuleException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Cannot find module "NonExistent.Module"'),
+                'Compile should validate lazy imports before runtime provider access.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_resolve_provider_from_compiled_application_context_graph() {
+        // Arrange: A context contains a consumer and its imported dependency.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new ValueModule());
+        context.addModule(new LazyConsumerModule());
+
+        // Act: Compile the graph and resolve through the compiled visibility map.
+        context.compile();
+        Object resolved = context.getModuleRef(LazyConsumerModule.class).get('dependentVal');
+
+        // Assert
+        Assert.areEqual('depends on hello', resolved, 'Compiled graph should preserve imported provider visibility.');
+    }
+
+    @IsTest
+    static void should_preserve_local_override_in_compiled_application_context_graph() {
+        // Arrange: A context contains a module with a local provider that overrides an imported token.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new OverrideModule());
+
+        // Act
+        context.compile();
+        Object resolved = context.getModuleRef(OverrideModule.class).get('foo');
+
+        // Assert
+        Assert.areEqual('override', resolved, 'Compiled graph should preserve local provider precedence.');
+    }
+
+    @IsTest
+    static void should_reject_ambiguous_imports_when_compiling_application_context_graph() {
+        // Arrange: A context contains a consumer with two different imported owners for the same token.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new AmbiguousImportConsumerModule());
+
+        // Act & Assert
+        try {
+            context.compile();
+            Assert.fail('Expected InvalidProviderException for ambiguous imported provider token.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('ambiguousImportVal'),
+                'Compile should identify the ambiguous provider token.'
+            );
+            Assert.isTrue(
+                ex.getMessage().contains('AmbiguousImportConsumerModule'),
+                'Compile should identify the consuming module context.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_resolve_global_provider_from_compiled_application_context_graph() {
+        // Arrange: A context has a global metadata module and a local consumer.
+        Di.ApplicationContext context = newTestContext();
+        context.mockGlobalModules(
+            new List<DI_GlobalModule__mdt>{
+                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+            }
+        );
+        context.addModule(new EmptyModule());
+
+        // Act
+        context.compile();
+        Object resolved = context.getModuleRef(EmptyModule.class).get('cmtGlobalVal');
+
+        // Assert
+        Assert.areEqual(
+            'helloFromCmt',
+            resolved,
+            'Compiled graph should expose global providers as fallback bindings.'
+        );
+    }
+
+    @IsTest
+    static void should_autowire_exported_provider_with_owner_context_from_compiled_application_context_graph() {
+        // Arrange: A compiled context contains a consumer of an exported facade with a private owner dependency.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new PrivateFacadeConsumerModule());
+
+        // Act
+        context.compile();
+        ExportedPrivateFacade facade = (ExportedPrivateFacade) context.getModuleRef(PrivateFacadeConsumerModule.class)
+            .get(ExportedPrivateFacade.class);
+
+        // Assert
+        Assert.areEqual(
+            'private-dependency',
+            facade.getDependencyValue(),
+            'Compiled graph bindings should preserve owner visibility for exported providers.'
+        );
+    }
+
+    @IsTest
+    static void should_scope_exported_provider_from_compiled_application_context_graph() {
+        // Arrange: A compiled context contains a consumer of an exported scoped provider.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new ScopedExportConsumerModule());
+
+        // Act
+        context.compile();
+        Di.ModuleRef consumerRef = context.getModuleRef(ScopedExportConsumerModule.class);
+        Di.ScopeRef firstScope = consumerRef.createScope();
+        Di.ScopeRef secondScope = consumerRef.createScope();
+        Object firstInstance = firstScope.get(ScopedExportService.class);
+        Object repeatedInstance = firstScope.get(ScopedExportService.class);
+        Object otherScopeInstance = secondScope.get(ScopedExportService.class);
+
+        // Assert
+        Assert.areEqual(
+            firstInstance,
+            repeatedInstance,
+            'Compiled graph should keep exported scoped providers cached within the active scope.'
+        );
+        Assert.areNotEqual(
+            firstInstance,
+            otherScopeInstance,
+            'Compiled graph should keep exported scoped providers isolated across scopes.'
+        );
+    }
+
+    @IsTest
+    static void should_resolve_metadata_existing_alias_from_compiled_application_context_graph() {
+        // Arrange: A compiled context contains a metadata Existing alias and its local target.
+        Di.ApplicationContext context = newTestContext();
+        context.mockProviders(
+            new Map<String, DI_Provider__mdt>{
+                'AliasProvider' => new DI_Provider__mdt(
+                    DeveloperName = 'AliasProvider',
+                    Type__c = 'Existing',
+                    Value__c = 'TargetService',
+                    IsActive__c = true
+                )
+            }
+        );
+        context.addModule(new MetadataExistingModule());
+
+        // Act
+        context.compile();
+        Di.ModuleRef ref = context.getModuleRef(MetadataExistingModule.class);
+        Object target = ref.get('TargetService');
+        Object alias = ref.get('AliasService');
+
+        // Assert
+        Assert.isTrue(target instanceof TestServiceImpl, 'Compiled metadata target should resolve normally.');
+        Assert.areEqual(
+            target,
+            alias,
+            'Compiled graph should unwrap metadata Existing aliases through the owning module.'
+        );
+    }
+
+    @IsTest
+    static void should_throw_when_compiled_application_context_graph_has_no_provider() {
+        // Arrange: A context is compiled with a module that does not expose the requested token.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new ValueModule());
+        context.compile();
+
+        // Act & Assert
+        try {
+            context.getModuleRef(ValueModule.class).get('missingCompiledProvider');
+            Assert.fail('Expected UnknownProviderException for a token missing from the compiled graph.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('missingCompiledProvider'),
+                'Compiled graph lookup should reject unknown provider tokens.'
             );
         }
     }
