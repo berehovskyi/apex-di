@@ -77,6 +77,7 @@ public virtual inherited sharing class Di {
     private static final String ARGS_NOT_SUPPORTED_MESSAGE = 'Arguments are only supported for FactoryProvider.';
     private static final String GET_ARGS_NOT_SUPPORTED_MESSAGE = 'Runtime arguments are not supported by get(). Use resolve() when passing arguments.';
     private static final String NOT_INJECTABLE_MESSAGE = 'The instance does not implement the Di.Injectable interface.';
+    private static final String NULL_METADATA_SOURCE_MESSAGE = 'Cannot create an application context with a null metadata source.';
 
     private static final ApplicationContext DEFAULT_CONTEXT = new ApplicationContext();
 
@@ -93,6 +94,10 @@ public virtual inherited sharing class Di {
 
     public static ApplicationContext createContext() {
         return new ApplicationContext();
+    }
+
+    public static ApplicationContext createContext(final MetadataSource metadataSource) {
+        return new ApplicationContext(metadataSource);
     }
 
     public static ModuleRef getModuleRef(final Module module) {
@@ -145,6 +150,56 @@ public virtual inherited sharing class Di {
         DEFAULT_CONTEXT.mockProviders(providerByDeveloperName);
     }
 
+    public interface MetadataSource {
+        Iterable<GlobalModuleDefinition> getGlobalModules();
+        Map<String, ProviderDefinition> getProviders();
+    }
+
+    public inherited sharing class CustomMetadataSource implements MetadataSource {
+        public Iterable<GlobalModuleDefinition> getGlobalModules() {
+            return normalizeGlobalModuleDefinitions(DI_GlobalModule__mdt.getAll().values());
+        }
+
+        public Map<String, ProviderDefinition> getProviders() {
+            return normalizeProviderDefinitions(DI_Provider__mdt.getAll());
+        }
+    }
+
+    public class GlobalModuleDefinition {
+        public final String moduleClass;
+        public final Boolean isActive;
+
+        public GlobalModuleDefinition(final String moduleClass, final Boolean isActive) {
+            this.moduleClass = moduleClass;
+            this.isActive = isActive;
+        }
+    }
+
+    public class ProviderDefinition {
+        public final String developerName;
+        public final String type;
+        public final String value;
+        public final String args;
+        public final String scope;
+        public final Boolean isActive;
+
+        public ProviderDefinition(
+            final String developerName,
+            final String type,
+            final String value,
+            final String args,
+            final String scope,
+            final Boolean isActive
+        ) {
+            this.developerName = developerName;
+            this.type = type;
+            this.value = value;
+            this.args = args;
+            this.scope = scope;
+            this.isActive = isActive;
+        }
+    }
+
     public virtual class ApplicationContext {
         private final Map<String, ModuleRef> moduleRegistry = new Map<String, ModuleRef>();
         private final Map<String, ModuleRef> globalModuleRegistry = new Map<String, ModuleRef>();
@@ -159,9 +214,17 @@ public virtual inherited sharing class Di {
         private Boolean hasGlobalLoadFailed = false;
         private Boolean isCompiled = false;
         private Boolean isLoadingGlobalModules = false;
-        private Iterable<DI_GlobalModule__mdt> mockGlobalModules;
-        private Map<String, DI_Provider__mdt> mockProviders;
-        private Map<String, DI_Provider__mdt> providerDefinitionByDeveloperName;
+        private MetadataSource metadataSource;
+        private Map<String, ProviderDefinition> providerDefinitionByDeveloperName;
+
+        public ApplicationContext() {
+            this(new CustomMetadataSource());
+        }
+
+        public ApplicationContext(final MetadataSource metadataSource) {
+            isTrue(metadataSource != null, new InvalidModuleException(NULL_METADATA_SOURCE_MESSAGE));
+            this.metadataSource = metadataSource;
+        }
 
         private final Map<String, ModuleRef> globalRegistry {
             get {
@@ -331,17 +394,20 @@ public virtual inherited sharing class Di {
             globalModuleRegistry.clear();
             globalProviderBindings.clear();
             globalBindingIndexRevision = graphRevision;
-            mockGlobalModules = null;
+            if (metadataSource instanceof MetadataOverrideSource) {
+                metadataSource = ((MetadataOverrideSource) metadataSource).delegate;
+            }
             hasGlobalLoadBeenAttempted = false;
             hasGlobalLoadFailed = false;
-            mockProviders = null;
             providerDefinitionByDeveloperName = null;
         }
 
         @TestVisible
         private void mockGlobalModules(final Iterable<DI_GlobalModule__mdt> mockModules) {
             markGraphChanged();
-            mockGlobalModules = mockModules;
+            getMetadataOverrideSource().globalModules = mockModules == null
+                ? null
+                : normalizeGlobalModuleDefinitions(mockModules);
             hasGlobalLoadBeenAttempted = false;
             hasGlobalLoadFailed = false;
         }
@@ -350,7 +416,16 @@ public virtual inherited sharing class Di {
         private void mockProviders(final Map<String, DI_Provider__mdt> providerByDeveloperName) {
             markGraphChanged();
             providerDefinitionByDeveloperName = null;
-            mockProviders = providerByDeveloperName;
+            getMetadataOverrideSource().providers = providerByDeveloperName == null
+                ? null
+                : normalizeProviderDefinitions(providerByDeveloperName);
+        }
+
+        private MetadataOverrideSource getMetadataOverrideSource() {
+            if (!(metadataSource instanceof MetadataOverrideSource)) {
+                metadataSource = new MetadataOverrideSource(metadataSource);
+            }
+            return (MetadataOverrideSource) metadataSource;
         }
 
         protected Module resolveImport(final ModuleImport moduleImport) {
@@ -523,11 +598,11 @@ public virtual inherited sharing class Di {
             Boolean previousLoadAttempted = hasGlobalLoadBeenAttempted;
             isLoadingGlobalModules = true;
             try {
-                for (DI_GlobalModule__mdt moduleDef : getGlobalModuleDefinitions()) {
-                    if (!moduleDef.IsActive__c) {
+                for (GlobalModuleDefinition moduleDef : getGlobalModuleDefinitions()) {
+                    if (moduleDef.isActive != true) {
                         continue;
                     }
-                    Module module = create(moduleDef.ModuleClass__c);
+                    Module module = create(moduleDef.moduleClass);
                     isTrue(
                         module.isGlobal(),
                         new InvalidModuleException(
@@ -551,15 +626,16 @@ public virtual inherited sharing class Di {
             }
         }
 
-        private Iterable<DI_GlobalModule__mdt> getGlobalModuleDefinitions() {
-            return shouldUseMock(mockGlobalModules) ? mockGlobalModules : DI_GlobalModule__mdt.getAll().values();
+        private Iterable<GlobalModuleDefinition> getGlobalModuleDefinitions() {
+            return metadataSource.getGlobalModules() ?? new List<GlobalModuleDefinition>();
         }
 
-        protected Map<String, DI_Provider__mdt> getProviderDefinitions() {
+        protected Map<String, ProviderDefinition> getProviderDefinitions() {
             if (providerDefinitionByDeveloperName == null) {
-                providerDefinitionByDeveloperName = shouldUseMock(mockProviders)
-                    ? mockProviders
-                    : DI_Provider__mdt.getAll();
+                Map<String, ProviderDefinition> definitions = metadataSource.getProviders();
+                providerDefinitionByDeveloperName = definitions == null
+                    ? new Map<String, ProviderDefinition>()
+                    : new Map<String, ProviderDefinition>(definitions);
             }
             return providerDefinitionByDeveloperName;
         }
@@ -722,8 +798,35 @@ public virtual inherited sharing class Di {
         return (Factory) raw;
     }
 
-    private static Boolean shouldUseMock(final Object mock) {
-        return Test.isRunningTest() && mock != null;
+    private static List<GlobalModuleDefinition> normalizeGlobalModuleDefinitions(
+        final Iterable<DI_GlobalModule__mdt> metadata
+    ) {
+        List<GlobalModuleDefinition> definitions = new List<GlobalModuleDefinition>();
+        for (DI_GlobalModule__mdt row : metadata) {
+            definitions.add(new GlobalModuleDefinition(row.ModuleClass__c, row.IsActive__c));
+        }
+        return definitions;
+    }
+
+    private static Map<String, ProviderDefinition> normalizeProviderDefinitions(
+        final Map<String, DI_Provider__mdt> metadataByDeveloperName
+    ) {
+        Map<String, ProviderDefinition> definitions = new Map<String, ProviderDefinition>();
+        for (String developerName : metadataByDeveloperName.keySet()) {
+            DI_Provider__mdt row = metadataByDeveloperName.get(developerName);
+            definitions.put(
+                developerName,
+                new ProviderDefinition(
+                    row.DeveloperName ?? developerName,
+                    row.Type__c,
+                    row.Value__c,
+                    row.Args__c,
+                    row.Scope__c,
+                    row.IsActive__c
+                )
+            );
+        }
+        return definitions;
     }
 
     private static void isTrue(final Boolean condition, final Exception exc) {
@@ -748,6 +851,24 @@ public virtual inherited sharing class Di {
 
         private ModuleRef getOwner() {
             return owner;
+        }
+    }
+
+    private class MetadataOverrideSource implements MetadataSource {
+        private final MetadataSource delegate;
+        private Iterable<GlobalModuleDefinition> globalModules;
+        private Map<String, ProviderDefinition> providers;
+
+        private MetadataOverrideSource(final MetadataSource delegate) {
+            this.delegate = delegate;
+        }
+
+        public Iterable<GlobalModuleDefinition> getGlobalModules() {
+            return globalModules ?? delegate.getGlobalModules();
+        }
+
+        public Map<String, ProviderDefinition> getProviders() {
+            return providers ?? delegate.getProviders();
         }
     }
 
@@ -1281,10 +1402,10 @@ public virtual inherited sharing class Di {
         }
 
         protected Scope getScope(final ApplicationContext context) {
-            Map<String, DI_Provider__mdt> providerDefinitionByDeveloperName = context.getProviderDefinitions();
+            Map<String, ProviderDefinition> providerDefinitionByDeveloperName = context.getProviderDefinitions();
             if (providerDefinitionByDeveloperName.containsKey(developerName)) {
-                DI_Provider__mdt definition = providerDefinitionByDeveloperName.get(developerName);
-                if (!String.isBlank(definition?.Scope__c)) {
+                ProviderDefinition definition = providerDefinitionByDeveloperName.get(developerName);
+                if (!String.isBlank(definition?.scope)) {
                     return parseMetadataScope(definition);
                 }
             }
@@ -1296,12 +1417,12 @@ public virtual inherited sharing class Di {
         }
 
         protected String getExisting(final ApplicationContext context) {
-            DI_Provider__mdt definition = getDefinition(context);
-            return definition.Type__c == 'Existing' ? definition.Value__c : null;
+            ProviderDefinition definition = getDefinition(context);
+            return definition.type == 'Existing' ? definition.value : null;
         }
 
-        private DI_Provider__mdt getDefinition(final ApplicationContext context) {
-            DI_Provider__mdt definition = context.getProviderDefinitions().get(developerName);
+        private ProviderDefinition getDefinition(final ApplicationContext context) {
+            ProviderDefinition definition = context.getProviderDefinitions().get(developerName);
             isTrue(
                 definition != null,
                 new InvalidProviderException(
@@ -1309,7 +1430,7 @@ public virtual inherited sharing class Di {
                 )
             );
             isTrue(
-                definition.IsActive__c,
+                definition.isActive,
                 new InvalidProviderException(
                     String.format(INACTIVE_METADATA_PROVIDER_MESSAGE, new List<String>{ token, developerName })
                 )
@@ -1317,26 +1438,26 @@ public virtual inherited sharing class Di {
             return definition;
         }
 
-        private Scope parseMetadataScope(final DI_Provider__mdt definition) {
+        private Scope parseMetadataScope(final ProviderDefinition definition) {
             try {
-                return Scope.valueOf(definition.Scope__c);
+                return Scope.valueOf(definition.scope);
             } catch (Exception exc) {
                 throw new InvalidProviderException(
                     String.format(
                         INVALID_METADATA_SCOPE_MESSAGE,
-                        new List<String>{ definition.Scope__c, token, developerName }
+                        new List<String>{ definition.scope, token, developerName }
                     )
                 );
             }
         }
 
         public override Object resolve(final Container container, final Object args) {
-            DI_Provider__mdt definition = getDefinition(container.context);
-            Scope scopeType = !String.isBlank(definition.Scope__c) ? parseMetadataScope(definition) : this.scopeType;
+            ProviderDefinition definition = getDefinition(container.context);
+            Scope scopeType = !String.isBlank(definition.scope) ? parseMetadataScope(definition) : this.scopeType;
             // Runtime args have the highest priority
-            Object factoryArgs = args ?? definition.Args__c;
-            String typeName = definition.Type__c;
-            String value = definition.Value__c;
+            Object factoryArgs = args ?? definition.args;
+            String typeName = definition.type;
+            String value = definition.value;
             Provider provider;
             switch on typeName {
                 when 'Class' {

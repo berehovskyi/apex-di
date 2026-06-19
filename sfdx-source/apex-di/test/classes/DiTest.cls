@@ -919,6 +919,124 @@ private class DiTest {
     // Metadata Provider Tests
     //=========================================================================
     @IsTest
+    static void should_resolve_provider_and_global_module_from_injected_metadata_source() {
+        // Arrange: One source supplies normalized provider and global-module definitions.
+        Di.MetadataSource metadataSource = new InjectedMetadataSource(
+            new List<Di.GlobalModuleDefinition>{ new Di.GlobalModuleDefinition(CmtGlobalModule.class.getName(), true) },
+            new Map<String, Di.ProviderDefinition>{
+                'StringValueProvider' => new Di.ProviderDefinition(
+                    'StringValueProvider',
+                    'Value',
+                    'injected metadata',
+                    null,
+                    null,
+                    true
+                )
+            }
+        );
+        Di.ApplicationContext context = Di.createContext(metadataSource);
+        Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
+
+        // Act & Assert: Runtime metadata behavior is sourced entirely through the injected adapter.
+        Assert.areEqual('injected metadata', ref.get('StringValue'));
+        Assert.areEqual('helloFromCmt', ref.get('cmtGlobalVal'));
+    }
+
+    @IsTest
+    static void should_delegate_cleared_metadata_overrides_to_injected_source() {
+        // Arrange: Test overrides temporarily hide definitions supplied by the injected source.
+        Di.ApplicationContext context = Di.createContext(
+            new InjectedMetadataSource(
+                new List<Di.GlobalModuleDefinition>{
+                    new Di.GlobalModuleDefinition(CmtGlobalModule.class.getName(), true)
+                },
+                new Map<String, Di.ProviderDefinition>{
+                    'StringValueProvider' => new Di.ProviderDefinition(
+                        'StringValueProvider',
+                        'Value',
+                        'delegated metadata',
+                        null,
+                        null,
+                        true
+                    )
+                }
+            )
+        );
+        context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        context.mockProviders(new Map<String, DI_Provider__mdt>());
+
+        // Act: Null test overrides restore delegation to the configured metadata source.
+        context.mockGlobalModules(null);
+        context.mockProviders(null);
+        Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
+
+        // Assert
+        Assert.areEqual('delegated metadata', ref.get('StringValue'));
+        Assert.areEqual('helloFromCmt', ref.get('cmtGlobalVal'));
+    }
+
+    @IsTest
+    static void should_snapshot_injected_provider_definitions_per_context() {
+        // Arrange: The source exposes a caller-owned mutable map.
+        Map<String, Di.ProviderDefinition> definitions = new Map<String, Di.ProviderDefinition>{
+            'StringValueProvider' => new Di.ProviderDefinition(
+                'StringValueProvider',
+                'Value',
+                'snapshot',
+                null,
+                null,
+                true
+            )
+        };
+        Di.ApplicationContext context = Di.createContext(
+            new InjectedMetadataSource(new List<Di.GlobalModuleDefinition>(), definitions)
+        );
+        Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
+        Assert.areEqual('snapshot', ref.resolve('StringValue'));
+
+        // Act: Mutate the caller-owned map after the context has loaded its definition snapshot.
+        definitions.put(
+            'StringValueProvider',
+            new Di.ProviderDefinition('StringValueProvider', 'Value', 'mutated', null, null, true)
+        );
+
+        // Assert: Context behavior remains deterministic until its metadata state is explicitly reset.
+        Assert.areEqual('snapshot', ref.resolve('StringValue'));
+    }
+
+    @IsTest
+    static void should_treat_null_metadata_source_collections_as_empty() {
+        // Arrange: A custom source deliberately returns null collections.
+        Di.ApplicationContext context = Di.createContext(new InjectedMetadataSource(null, null));
+
+        // Act & Assert: Null provider definitions behave as an empty provider-definition map.
+        try {
+            context.getModuleRef(MetadataModule.class).get('StringValue');
+            Assert.fail('Expected InvalidProviderException for a missing metadata provider definition.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('was not found'));
+        }
+
+        // Act & Assert: Null global definitions behave as an empty global-module collection.
+        try {
+            context.getModuleRef(EmptyModule.class).get('missingFromNullMetadataSource');
+            Assert.fail('Expected UnknownProviderException when the metadata source contains no global modules.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('missingFromNullMetadataSource'));
+        }
+    }
+
+    @IsTest
+    static void should_reject_null_metadata_source() {
+        try {
+            Di.createContext((Di.MetadataSource) null);
+            Assert.fail('Expected InvalidModuleException for a null metadata source.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('null metadata source'));
+        }
+    }
+
+    @IsTest
     static void should_resolve_class_provider_from_mocked_metadata() {
         // Arrange: Define a module that uses the new .useMetadata() method.
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
@@ -4116,6 +4234,26 @@ private class DiTest {
     }
 
     public class ArgsValidationObject {
+    }
+    public class InjectedMetadataSource implements Di.MetadataSource {
+        private final Iterable<Di.GlobalModuleDefinition> globalModules;
+        private final Map<String, Di.ProviderDefinition> providers;
+
+        public InjectedMetadataSource(
+            final Iterable<Di.GlobalModuleDefinition> globalModules,
+            final Map<String, Di.ProviderDefinition> providers
+        ) {
+            this.globalModules = globalModules;
+            this.providers = providers;
+        }
+
+        public Iterable<Di.GlobalModuleDefinition> getGlobalModules() {
+            return globalModules;
+        }
+
+        public Map<String, Di.ProviderDefinition> getProviders() {
+            return providers;
+        }
     }
     public class MetadataModule extends Di.Module {
         public override Set<Di.Provider> providers() {
