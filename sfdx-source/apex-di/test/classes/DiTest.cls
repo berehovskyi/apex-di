@@ -2586,6 +2586,66 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_update_global_export_when_global_provider_is_replaced() {
+        // Arrange: A global module exports a provider, and a consumer resolves it through the global fallback.
+        Di.DynamicModule dynGlobal = new Di.DynamicModule('ReplaceableGlobalDynamic').setGlobal();
+        dynGlobal.addProvider(dynGlobal.provide('globalReplaceValue').useValue('initial'))
+            .addExport('globalReplaceValue');
+        Di.ModuleRef globalRef = Di.addModule(dynGlobal);
+        Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
+        Assert.areEqual('initial', consumerRef.get('globalReplaceValue'), 'Pre-condition: global export is visible.');
+
+        // Act: Replace the provider on the owning global module.
+        globalRef.replace(dynGlobal.provide('globalReplaceValue').useValue('updated'));
+
+        // Assert: Global fallback should resolve the current owner provider, not a stale published binding.
+        Assert.areEqual(
+            'updated',
+            consumerRef.get('globalReplaceValue'),
+            'Global fallback should behave like an implicit import and observe provider replacement.'
+        );
+    }
+
+    @IsTest
+    static void should_reuse_global_binding_index_between_graph_mutations() {
+        // Arrange: A global re-export exposes a traversal counter for binding-index construction.
+        GlobalBindingIndexCountingModule globalModule = new GlobalBindingIndexCountingModule();
+        Di.addModule(globalModule);
+        Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
+
+        // Act: Resolve the same global binding twice without mutating the graph.
+        Assert.areEqual('shared', consumerRef.get('sharedGlobalReexportVal'));
+        Integer traversalsAfterFirstLookup = globalModule.bindingTraversalCount;
+        Assert.areEqual('shared', consumerRef.get('sharedGlobalReexportVal'));
+
+        // Assert: A current global binding index should be reused instead of rebuilding per lookup.
+        Assert.areEqual(
+            traversalsAfterFirstLookup,
+            globalModule.bindingTraversalCount,
+            'Repeated global lookups should reuse the current context-owned binding index.'
+        );
+
+        // Act: Mutate the local owner behind the global re-export and resolve again.
+        Integer traversalsBeforeMutation = globalModule.bindingTraversalCount;
+        Di.getModuleRef(SharedGlobalReexportCommonModule.class)
+            .replace(globalModule.provide('sharedGlobalReexportVal').useValue('updated'));
+        Assert.areEqual('updated', consumerRef.get('sharedGlobalReexportVal'));
+        Integer traversalsAfterMutation = globalModule.bindingTraversalCount;
+        Assert.isTrue(
+            traversalsAfterMutation > traversalsBeforeMutation,
+            'A graph mutation should invalidate and rebuild the global binding index.'
+        );
+
+        // Assert: The rebuilt index is also reused until another graph mutation occurs.
+        Assert.areEqual('updated', consumerRef.get('sharedGlobalReexportVal'));
+        Assert.areEqual(
+            traversalsAfterMutation,
+            globalModule.bindingTraversalCount,
+            'The rebuilt global binding index should remain current until the graph changes again.'
+        );
+    }
+
+    @IsTest
     static void should_update_container_when_dynamic_module_is_refreshed() {
         // Arrange: A dynamic module is registered, initially without a specific provider.
         Di.DynamicModule dyn = new Di.DynamicModule('RefreshableModule');
@@ -2954,6 +3014,40 @@ private class DiTest {
 
         // Assert: The global provider now returns the value from the new module.
         Assert.areEqual('new-value', Di.getModuleRef(EmptyModule.class).get('cmtGlobalVal'));
+    }
+
+    @IsTest
+    static void should_rollback_global_module_replacement_when_exports_conflict() {
+        // Arrange: Two global modules own distinct exports.
+        Di.DynamicModule original = new Di.DynamicModule('ReplacementRollbackGlobal').setGlobal();
+        original.addProvider(original.provide('replacementRollbackValue').useValue('original'))
+            .addExport('replacementRollbackValue');
+        Di.addModule(original);
+        Di.DynamicModule conflictOwner = new Di.DynamicModule('ReplacementConflictGlobal').setGlobal();
+        conflictOwner.addProvider(conflictOwner.provide('replacementConflictValue').useValue('owner'))
+            .addExport('replacementConflictValue');
+        Di.addModule(conflictOwner);
+
+        // Act: A same-token replacement attempts to claim the other global module's export.
+        Di.DynamicModule replacement = new Di.DynamicModule(original.getToken()).setGlobal();
+        replacement.addProvider(replacement.provide('replacementRollbackValue').useValue('replacement'))
+            .addProvider(replacement.provide('replacementConflictValue').useValue('conflict'))
+            .addExport('replacementRollbackValue')
+            .addExport('replacementConflictValue');
+        try {
+            Di.replaceModule(original.getToken(), replacement);
+            Assert.fail('Expected InvalidProviderException for a conflicting global replacement.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('replacementConflictValue'),
+                'Exception should identify the conflicting global export.'
+            );
+        }
+
+        // Assert: The rejected replacement leaves both original global bindings intact.
+        Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
+        Assert.areEqual('original', consumerRef.get('replacementRollbackValue'));
+        Assert.areEqual('owner', consumerRef.get('replacementConflictValue'));
     }
 
     @IsTest
@@ -3917,6 +4011,16 @@ private class DiTest {
             return true;
         }
         public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(SharedGlobalReexportCommonModule.class) };
+        }
+    }
+    public class GlobalBindingIndexCountingModule extends EmptyModule {
+        public Integer bindingTraversalCount = 0;
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<Di.ModuleImport> reexports() {
+            bindingTraversalCount++;
             return new Set<Di.ModuleImport>{ Di.import(SharedGlobalReexportCommonModule.class) };
         }
     }

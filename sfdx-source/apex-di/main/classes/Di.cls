@@ -148,12 +148,15 @@ public virtual inherited sharing class Di {
     public virtual class ApplicationContext {
         private final Map<String, ModuleRef> moduleRegistry = new Map<String, ModuleRef>();
         private final Map<String, ModuleRef> globalModuleRegistry = new Map<String, ModuleRef>();
-        private final Map<String, ProviderBinding> globalProviders = new Map<String, ProviderBinding>();
+        private final Map<String, ProviderBinding> globalProviderBindings = new Map<String, ProviderBinding>();
         private final Map<String, Map<String, ProviderBinding>> visibleProvidersByModuleKey = new Map<String, Map<String, ProviderBinding>>();
         private final List<String> moduleRegistrationPath = new List<String>();
 
         @TestVisible
         private Boolean hasGlobalLoadBeenAttempted = false;
+        private Integer graphRevision = 0;
+        private Integer globalBindingIndexRevision = -1;
+        private Boolean hasGlobalLoadFailed = false;
         private Boolean isCompiled = false;
         private Boolean isLoadingGlobalModules = false;
         private Iterable<DI_GlobalModule__mdt> mockGlobalModules;
@@ -203,13 +206,10 @@ public virtual inherited sharing class Di {
 
         public virtual ModuleRef addModule(final Module module) {
             isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
-            invalidateCompiledGraph();
+            markGraphChanged();
 
             String token = module.getToken();
             Map<String, ModuleRef> registry = module.isGlobal() ? globalRegistry : moduleRegistry;
-            Map<String, ProviderBinding> previousGlobalProviders = module.isGlobal()
-                ? new Map<String, ProviderBinding>(globalProviders)
-                : null;
             isTrue(
                 !registry.containsKey(token),
                 new InvalidModuleException(String.format(MODULE_ALREADY_REGISTERED_MESSAGE, new List<String>{ token }))
@@ -220,18 +220,15 @@ public virtual inherited sharing class Di {
             try {
                 module.register(this);
                 if (module.isGlobal()) {
-                    addGlobalProviders(module);
+                    validateGlobalProviderBindings();
                 }
                 return ref;
             } catch (Exception exc) {
                 if (registry.get(token) === ref) {
                     registry.remove(token);
                 }
-                if (module.isGlobal()) {
-                    globalProviders.clear();
-                    globalProviders.putAll(previousGlobalProviders);
-                }
                 module.clearContext(this);
+                markGraphChanged();
                 throw exc;
             }
         }
@@ -246,8 +243,10 @@ public virtual inherited sharing class Di {
                 )
             );
 
-            invalidateCompiledGraph();
-            Module oldModule = getModuleRef(token).getModule();
+            markGraphChanged();
+            ModuleRef oldRef = getModuleRef(token);
+            Module oldModule = oldRef.getModule();
+            String oldRegistryToken = oldRef.registryToken;
             isTrue(
                 oldModule.isGlobal() == newModule.isGlobal(),
                 new InvalidModuleException(
@@ -267,11 +266,24 @@ public virtual inherited sharing class Di {
             newRef.registryToken = token;
             newModule.register(this);
             if (oldModule.isGlobal()) {
-                removeGlobalProviders(oldModule.exports);
+                if (!oldRegistryToken.equals(token)) {
+                    registry.remove(oldRegistryToken);
+                }
                 registry.put(token, newRef);
-                addGlobalProviders(newModule);
-                clearAllModuleCaches();
+                try {
+                    validateGlobalProviderBindings();
+                    clearAllModuleCaches();
+                } catch (Exception exc) {
+                    registry.remove(token);
+                    registry.put(oldRegistryToken, oldRef);
+                    newModule.clearContext(this);
+                    markGraphChanged();
+                    throw exc;
+                }
             } else {
+                if (!oldRegistryToken.equals(token)) {
+                    registry.remove(oldRegistryToken);
+                }
                 registry.put(token, newRef);
                 clearAllModuleCaches();
             }
@@ -304,6 +316,7 @@ public virtual inherited sharing class Di {
             for (ModuleRef ref : snapshotModuleRefs(globalModuleRegistry)) {
                 compileModule(ref.getModule(), compiledProvidersByModuleKey, new Set<String>());
             }
+            addImplicitGlobalProviders(compiledProvidersByModuleKey);
 
             visibleProvidersByModuleKey.putAll(compiledProvidersByModuleKey);
             isCompiled = true;
@@ -311,28 +324,31 @@ public virtual inherited sharing class Di {
         }
 
         public virtual void clear() {
-            invalidateCompiledGraph();
+            markGraphChanged();
             clearModuleContexts(moduleRegistry);
             clearModuleContexts(globalModuleRegistry);
             moduleRegistry.clear();
             globalModuleRegistry.clear();
-            globalProviders.clear();
+            globalProviderBindings.clear();
+            globalBindingIndexRevision = graphRevision;
             mockGlobalModules = null;
             hasGlobalLoadBeenAttempted = false;
+            hasGlobalLoadFailed = false;
             mockProviders = null;
             providerDefinitionByDeveloperName = null;
         }
 
         @TestVisible
         private void mockGlobalModules(final Iterable<DI_GlobalModule__mdt> mockModules) {
-            invalidateCompiledGraph();
+            markGraphChanged();
             mockGlobalModules = mockModules;
             hasGlobalLoadBeenAttempted = false;
+            hasGlobalLoadFailed = false;
         }
 
         @TestVisible
         private void mockProviders(final Map<String, DI_Provider__mdt> providerByDeveloperName) {
-            invalidateCompiledGraph();
+            markGraphChanged();
             providerDefinitionByDeveloperName = null;
             mockProviders = providerByDeveloperName;
         }
@@ -342,10 +358,6 @@ public virtual inherited sharing class Di {
                 return getModuleRef(moduleImport.cachedModule).getModule();
             }
             return getModuleRef(moduleImport.getToken()).getModule();
-        }
-
-        private ProviderBinding getGlobalProviderBinding(final String token) {
-            return globalProviders.get(token);
         }
 
         private ProviderBinding getCompiledProviderBinding(final Module module, final String token) {
@@ -385,6 +397,11 @@ public virtual inherited sharing class Di {
         private void invalidateCompiledGraph() {
             visibleProvidersByModuleKey.clear();
             isCompiled = false;
+        }
+
+        private void markGraphChanged() {
+            graphRevision++;
+            invalidateCompiledGraph();
         }
 
         private List<ModuleRef> snapshotModuleRefs(final Map<String, ModuleRef> registry) {
@@ -468,12 +485,6 @@ public virtual inherited sharing class Di {
                     }
                 }
 
-                for (String token : globalProviders.keySet()) {
-                    if (!visibleProviders.containsKey(token)) {
-                        visibleProviders.put(token, globalProviders.get(token));
-                    }
-                }
-
                 compiledProvidersByModuleKey.put(moduleKey, visibleProviders);
                 return visibleProviders;
             } finally {
@@ -481,9 +492,22 @@ public virtual inherited sharing class Di {
             }
         }
 
+        private void addImplicitGlobalProviders(
+            final Map<String, Map<String, ProviderBinding>> compiledProvidersByModuleKey
+        ) {
+            Map<String, ProviderBinding> globalBindings = getGlobalProviderBindings(false);
+            for (String moduleKey : compiledProvidersByModuleKey.keySet()) {
+                Map<String, ProviderBinding> visibleProviders = compiledProvidersByModuleKey.get(moduleKey);
+                for (String token : globalBindings.keySet()) {
+                    if (!visibleProviders.containsKey(token)) {
+                        visibleProviders.put(token, globalBindings.get(token));
+                    }
+                }
+            }
+        }
+
         private void loadGlobalModules() {
             Map<String, ModuleRef> previousGlobalRegistry = new Map<String, ModuleRef>(globalModuleRegistry);
-            Map<String, ProviderBinding> previousGlobalProviders = new Map<String, ProviderBinding>(globalProviders);
             Boolean previousLoadAttempted = hasGlobalLoadBeenAttempted;
             isLoadingGlobalModules = true;
             try {
@@ -502,12 +526,13 @@ public virtual inherited sharing class Di {
                     addModule(module);
                 }
                 hasGlobalLoadBeenAttempted = true;
+                hasGlobalLoadFailed = false;
             } catch (Exception exc) {
                 globalModuleRegistry.clear();
                 globalModuleRegistry.putAll(previousGlobalRegistry);
-                globalProviders.clear();
-                globalProviders.putAll(previousGlobalProviders);
                 hasGlobalLoadBeenAttempted = previousLoadAttempted;
+                hasGlobalLoadFailed = true;
+                markGraphChanged();
                 throw exc;
             } finally {
                 isLoadingGlobalModules = false;
@@ -527,40 +552,66 @@ public virtual inherited sharing class Di {
             return providerDefinitionByDeveloperName;
         }
 
-        protected void addGlobalProviders(Module module) {
-            for (String token : module.exports ?? new Set<String>()) {
-                isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
-
-                ProviderBinding provider = module.getProviderBinding(token);
-                isTrue(
-                    provider != null,
-                    new UnknownExportException(
-                        String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, module.getToken() })
-                    )
-                );
-
-                ProviderBinding existingProvider = globalProviders.get(token);
-                String existingModuleToken = existingProvider == null
-                    ? null
-                    : existingProvider.getOwner().getModule().getToken();
-                isTrue(
-                    existingProvider == null || existingProvider.getOwner() === provider.getOwner(),
-                    new InvalidProviderException(
-                        String.format(
-                            DUPLICATE_GLOBAL_PROVIDER_MESSAGE,
-                            new List<String>{ token, module.getToken(), existingModuleToken }
-                        )
-                    )
-                );
-
-                globalProviders.put(token, provider);
-            }
+        private void validateGlobalProviderBindings() {
+            getGlobalProviderBindings(false);
         }
 
-        protected void removeGlobalProviders(Set<String> exportTokens) {
-            for (String token : exportTokens ?? new Set<String>()) {
-                globalProviders.remove(token);
+        private ProviderBinding getImplicitGlobalProviderBinding(final String token) {
+            return getGlobalProviderBindings(!hasGlobalLoadFailed).get(token);
+        }
+
+        private Map<String, ProviderBinding> getGlobalProviderBindings(final Boolean loadGlobals) {
+            if (loadGlobals) {
+                globalRegistry.size();
             }
+            if (globalBindingIndexRevision == graphRevision) {
+                return globalProviderBindings;
+            }
+
+            Map<String, ProviderBinding> candidateBindings = new Map<String, ProviderBinding>();
+            for (ModuleRef ref : globalModuleRegistry.values()) {
+                Module module = ref.getModule();
+                for (String token : module.exports ?? new Set<String>()) {
+                    addGlobalProviderBinding(candidateBindings, module, token);
+                }
+            }
+
+            globalProviderBindings.clear();
+            globalProviderBindings.putAll(candidateBindings);
+            globalBindingIndexRevision = graphRevision;
+            return globalProviderBindings;
+        }
+
+        private void addGlobalProviderBinding(
+            final Map<String, ProviderBinding> globalBindings,
+            final Module module,
+            final String token
+        ) {
+            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+
+            ProviderBinding provider = module.getProviderBinding(token, false);
+            isTrue(
+                provider != null,
+                new UnknownExportException(
+                    String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, module.getToken() })
+                )
+            );
+
+            ProviderBinding existingProvider = globalBindings.get(token);
+            String existingModuleToken = existingProvider == null
+                ? null
+                : existingProvider.getOwner().getModule().getToken();
+            isTrue(
+                existingProvider == null || existingProvider.getOwner() === provider.getOwner(),
+                new InvalidProviderException(
+                    String.format(
+                        DUPLICATE_GLOBAL_PROVIDER_MESSAGE,
+                        new List<String>{ token, module.getToken(), existingModuleToken }
+                    )
+                )
+            );
+
+            globalBindings.put(token, provider);
         }
 
         protected void clearAllModuleCaches() {
@@ -775,6 +826,10 @@ public virtual inherited sharing class Di {
         }
 
         private ProviderBinding getProviderBinding(final String token) {
+            return getProviderBinding(token, true);
+        }
+
+        private ProviderBinding getProviderBinding(final String token, final Boolean includeGlobals) {
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             ProviderBinding compiledProvider = getContext().getCompiledProviderBinding(this, token);
@@ -832,10 +887,12 @@ public virtual inherited sharing class Di {
                 return selectedProvider;
             }
 
-            // Finally check global providers
-            ProviderBinding globalProvider = getContext().getGlobalProviderBinding(token);
-            if (globalProvider != null) {
-                return globalProvider;
+            // Finally check implicit global module exports.
+            if (includeGlobals) {
+                ProviderBinding globalProvider = getContext().getImplicitGlobalProviderBinding(token);
+                if (globalProvider != null) {
+                    return globalProvider;
+                }
             }
 
             throw new UnknownProviderException(
@@ -1580,7 +1637,7 @@ public virtual inherited sharing class Di {
             isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
 
             refreshIfModuleChanged();
-            context.invalidateCompiledGraph();
+            context.markGraphChanged();
             module.replace(newProvider);
             cache.remove(token);
         }
@@ -1591,12 +1648,10 @@ public virtual inherited sharing class Di {
 
         public virtual void refresh() {
             refreshIfModuleChanged();
-            context.invalidateCompiledGraph();
-            Set<String> oldExports = new Set<String>(module.exports ?? new Set<String>());
+            context.markGraphChanged();
             module.register(context);
             if (module.isGlobal()) {
-                context.removeGlobalProviders(oldExports);
-                context.addGlobalProviders(module);
+                context.validateGlobalProviderBindings();
                 context.clearAllModuleCaches();
                 return;
             }
