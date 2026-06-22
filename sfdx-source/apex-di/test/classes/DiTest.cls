@@ -362,6 +362,27 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_invalidate_live_scope_when_scoped_provider_is_replaced() {
+        // Arrange: A live scope has cached an instance from the current scoped provider definition.
+        ScopedModule module = new ScopedModule();
+        Di.ModuleRef moduleRef = Di.addModule(module);
+        Di.ScopeRef scope = moduleRef.createScope();
+        Object original = scope.get(ScopedService.class);
+
+        // Act: Replace the scoped provider while retaining the existing scope.
+        moduleRef.replace(module.provide(ScopedService.class).useClass(ScopedService.class).scope(Di.Scope.SCOPED));
+        Object replacement = scope.get(ScopedService.class);
+
+        // Assert: The live scope discards the stale instance, then caches the replacement instance.
+        Assert.areNotEqual(original, replacement, 'Provider replacement should invalidate existing scope caches.');
+        Assert.areEqual(
+            replacement,
+            scope.get(ScopedService.class),
+            'The rebuilt scoped instance should remain cached within the live scope.'
+        );
+    }
+
+    @IsTest
     static void should_update_scope_when_module_is_replaced() {
         // Arrange
         Di.clear();
@@ -1751,6 +1772,26 @@ private class DiTest {
             isolatedInstance,
             'A different ScopeContext should receive an isolated scoped provider instance.'
         );
+    }
+
+    @IsTest
+    static void should_reject_scope_context_shared_across_application_contexts() {
+        // Arrange: One logical scope is already bound to a module in the left application context.
+        Di.ScopeContext scopeContext = new Di.ScopeContext();
+        Di.ApplicationContext leftContext = newTestContext();
+        Di.ApplicationContext rightContext = newTestContext();
+        leftContext.getModuleRef(ScopedModule.class).createScope(scopeContext);
+
+        // Act & Assert: Reusing that cache in another isolated graph is rejected.
+        try {
+            rightContext.getModuleRef(ScopedModule.class).createScope(scopeContext);
+            Assert.fail('Expected InvalidScopeException for a cross-context ScopeContext.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('cannot be shared across application contexts'),
+                'Error should explain that ScopeContext ownership is application-context-local.'
+            );
+        }
     }
 
     @IsTest

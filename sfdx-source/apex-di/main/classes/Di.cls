@@ -60,6 +60,9 @@ public virtual inherited sharing class Di {
         'Scoped providers require an active scope cache.' +
         '\nUse createScope() method instead to create a ScopeRef.';
     private static final String NULL_SCOPE_CONTEXT_MESSAGE = 'Cannot create a scope with a null ScopeContext.';
+    private static final String SCOPE_CONTEXT_MISMATCH_MESSAGE =
+        'A ScopeContext cannot be shared across application contexts. ' +
+        'Create a separate ScopeContext for each application context.';
     private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
         'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
@@ -1950,9 +1953,35 @@ public virtual inherited sharing class Di {
 
     public virtual class ScopeContext {
         private final Map<String, Map<String, Object>> scopedCacheByOwner = new Map<String, Map<String, Object>>();
+        private ApplicationContext context;
+        private Integer graphRevision;
+        private Integer generation = 0;
 
         public virtual void clear() {
             scopedCacheByOwner.clear();
+            graphRevision = context?.graphRevision;
+            generation++;
+        }
+
+        private void bind(final ApplicationContext context) {
+            isTrue(
+                this.context == null || this.context === context,
+                new InvalidScopeException(SCOPE_CONTEXT_MISMATCH_MESSAGE)
+            );
+            if (this.context == null) {
+                this.context = context;
+                graphRevision = context.graphRevision;
+            }
+        }
+
+        private void synchronize() {
+            if (graphRevision != context.graphRevision) {
+                clear();
+            }
+        }
+
+        private void acceptCurrentRevision() {
+            graphRevision = context.graphRevision;
         }
 
         private Boolean contains(final Module ownerModule, final String providerToken) {
@@ -1990,20 +2019,48 @@ public virtual inherited sharing class Di {
     public virtual class ScopeRef extends Container {
         protected final ScopeContext scopeContext;
         protected final Map<String, ScopeRef> ownerScopes = new Map<String, ScopeRef>();
+        private Integer scopeGeneration;
 
         protected ScopeRef(final ModuleRef parent, final ScopeContext scopeContext) {
             super(parent.context, parent, parent.getModule());
             adoptRuntime(parent);
             this.scopeContext = scopeContext;
+            scopeContext.bind(context);
+            scopeGeneration = scopeContext.generation;
+        }
+
+        public override Object get(final String token, final Object args) {
+            Boolean isTopLevelResolution = !inCall;
+            if (isTopLevelResolution) {
+                synchronizeScopeContext();
+            }
+            try {
+                return super.get(token, args);
+            } finally {
+                if (isTopLevelResolution) {
+                    scopeContext.acceptCurrentRevision();
+                }
+            }
         }
 
         public override Object resolve(final String token, final Object args) {
-            return super.resolve(token, args);
+            Boolean isTopLevelResolution = !inCall;
+            if (isTopLevelResolution) {
+                synchronizeScopeContext();
+            }
+            try {
+                return super.resolve(token, args);
+            } finally {
+                if (isTopLevelResolution) {
+                    scopeContext.acceptCurrentRevision();
+                }
+            }
         }
 
         public virtual void clearCache() {
             scopeContext.clear();
             ownerScopes.clear();
+            scopeGeneration = scopeContext.generation;
         }
 
         protected virtual override Object getInstance(final Provider provider, final Object args) {
@@ -2063,6 +2120,14 @@ public virtual inherited sharing class Di {
                 return;
             }
             super.validateAndAddPath(token);
+        }
+
+        private void synchronizeScopeContext() {
+            scopeContext.synchronize();
+            if (scopeGeneration != scopeContext.generation) {
+                ownerScopes.clear();
+                scopeGeneration = scopeContext.generation;
+            }
         }
 
         private void refreshIfModuleChanged() {
