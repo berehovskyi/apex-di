@@ -423,12 +423,24 @@ private class DiTest {
 
     @IsTest
     static void should_create_value_provider_from_type() {
-        // Act
-        Di.ValueProvider provider = new Di.ValueProvider(TestService.class, 'hello');
+        // Act: Build a value provider through the public provider-builder boundary.
+        Di.Provider provider = new Di.DynamicModule('ValueProviderBuilder')
+            .provide(TestService.class)
+            .useValue('hello');
 
         // Assert
         Assert.areEqual('DiTest.TestService', provider.getToken(), 'Token should be the class name.');
         Assert.areEqual('hello', provider.resolve(null, null), 'Should resolve the value.');
+    }
+
+    @IsTest
+    static void should_create_standalone_value_provider() {
+        // Act: Built-in provider definitions can be created without a module or ProviderBuilder.
+        Di.ValueProvider provider = new Di.ValueProvider(TestService.class, 'hello');
+
+        // Assert: Standalone providers retain canonical tokens and remain directly executable.
+        Assert.areEqual(TestService.class.getName(), provider.getToken());
+        Assert.areEqual('hello', provider.resolve(null, null));
     }
 
     @IsTest
@@ -449,7 +461,7 @@ private class DiTest {
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
         // Act
-        Di.FactoryProvider provider = builder.useFactory(StringArgsFactory.class);
+        Di.Provider provider = builder.useFactory(StringArgsFactory.class);
 
         // Assert
         Assert.isNotNull(provider, 'Should return a valid provider instance.');
@@ -468,7 +480,7 @@ private class DiTest {
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
         // Act
-        Di.FactoryProvider provider = builder.useFactory(StringArgsFactory.class.getName());
+        Di.Provider provider = builder.useFactory(StringArgsFactory.class.getName());
 
         // Assert
         Assert.isNotNull(provider, 'Should return a valid provider instance.');
@@ -478,19 +490,16 @@ private class DiTest {
 
     @IsTest
     static void should_create_factory_provider_from_various_overloads() {
-        // Act & Assert
-        Assert.isNotNull(
-            new Di.FactoryProvider(TestService.class, new StringArgsFactory()),
-            'Should create from Type token and Factory instance.'
-        );
-        Assert.isNotNull(
-            new Di.FactoryProvider(TestService.class, StringArgsFactory.class.getName()),
-            'Should create from Type token and String factory type.'
-        );
-        Assert.isNotNull(
-            new Di.FactoryProvider(TestService.class, StringArgsFactory.class),
-            'Should create from Type token and Type factory type.'
-        );
+        // Arrange: Standalone providers accept Factory, String, and Type definitions with a canonical Type token.
+        Di.FactoryProvider instanceFactory = new Di.FactoryProvider(TestService.class, new StringArgsFactory());
+        Di.FactoryProvider stringFactory = new Di.FactoryProvider(TestService.class, StringArgsFactory.class.getName());
+        Di.FactoryProvider typeFactory = new Di.FactoryProvider(TestService.class, StringArgsFactory.class);
+
+        // Act & Assert: Every standalone overload produces an executable provider with the canonical Type token.
+        Assert.areEqual(TestService.class.getName(), instanceFactory.getToken());
+        Assert.areEqual('arg:instance', instanceFactory.resolve(null, 'instance'));
+        Assert.areEqual('arg:string', stringFactory.resolve(null, 'string'));
+        Assert.areEqual('arg:type', typeFactory.resolve(null, 'type'));
     }
 
     @IsTest
@@ -672,8 +681,8 @@ private class DiTest {
         // Assert: Two different instances of the correct implementation are returned.
         Assert.isTrue(instance1 instanceof TestServiceImpl, 'Resolved instance should be of the correct type.');
 
-        // Act: The provider is replaced with a new ValueProvider.
-        Di.Provider newProvider = new Di.ClassProvider(TestService.class, MockService.class);
+        // Act: The provider is replaced through the module's public builder.
+        Di.Provider newProvider = ref.getModule().provide(TestService.class).useClass(MockService.class);
         ref.replace(newProvider);
         Object instance2 = ref.resolve(TestService.class);
 
@@ -687,8 +696,8 @@ private class DiTest {
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
         Assert.areEqual('hello', ref.get('val'), 'Pre-condition: Initial value should be "hello".');
 
-        // Act: The provider is replaced with a new ValueProvider.
-        Di.Provider newProvider = new Di.ValueProvider('val', 'world');
+        // Act: The provider is replaced through the module's public builder.
+        Di.Provider newProvider = ref.getModule().provide('val').useValue('world');
         ref.replace(newProvider);
 
         // Assert: Getting the provider now returns the new value.
@@ -699,7 +708,7 @@ private class DiTest {
     static void should_throw_when_replacing_missing_provider() {
         // Arrange: A module is registered without the replacement token.
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
-        Di.Provider missingProvider = new Di.ValueProvider('missing', 'world');
+        Di.Provider missingProvider = ref.getModule().provide('missing').useValue('world');
 
         // Act & Assert: Replacing an absent provider should fail loudly.
         try {
@@ -730,40 +739,28 @@ private class DiTest {
 
     @IsTest
     static void should_create_class_provider_from_type() {
-        // Arrange: A provider is created using the Type constructor overload.
-        Di.ClassProvider provider1 = new Di.ClassProvider('TestService', TestServiceImpl.class);
-        Di.ClassProvider provider2 = new Di.ClassProvider(TestService.class, 'DiTest.TestServiceImpl');
+        // Arrange: Build class providers through String-token/Type-class and Type-token/String-class overloads.
+        Di.DynamicModule module = new Di.DynamicModule('ClassProviderBuilder');
+        Di.Provider provider1 = module.provide('TestService').useClass(TestServiceImpl.class);
+        Di.Provider provider2 = module.provide(TestService.class).useClass('DiTest.TestServiceImpl');
 
-        // Act: The type property of the provider is inspected.
-        String providerType1 = provider1.getType();
-        String providerType2 = provider2.getType();
-
-        // Assert: The type property correctly stores the string name of the class.
-        Assert.areEqual(
-            TestServiceImpl.class.getName(),
-            providerType1,
-            'ClassProvider should correctly store the type name.'
-        );
-        Assert.areEqual(
-            TestServiceImpl.class.getName(),
-            providerType2,
-            'ClassProvider should correctly store the type name.'
-        );
+        // Act & Assert: Both public builder paths normalize and instantiate the requested class.
+        Assert.isTrue(provider1.resolve(null, null) instanceof TestServiceImpl);
+        Assert.areEqual(TestService.class.getName(), provider2.getToken());
+        Assert.isTrue(provider2.resolve(null, null) instanceof TestServiceImpl);
     }
 
     @IsTest
     static void should_create_class_provider_from_various_overloads() {
-        // Act & Assert
-        Assert.areEqual(
-            'TestServiceImpl',
-            new Di.ClassProvider(TestService.class, 'TestServiceImpl').getType(),
-            'Should create from Type token and String type.'
-        );
-        Assert.areEqual(
-            'DiTest.TestServiceImpl',
-            new Di.ClassProvider(TestService.class, TestServiceImpl.class).getType(),
-            'Should create from Type token and Type type.'
-        );
+        // Arrange: Build both standalone class-input overloads from one canonical Type token.
+        Di.ClassProvider stringType = new Di.ClassProvider(TestService.class, TestServiceImpl.class.getName());
+        Di.ClassProvider apexType = new Di.ClassProvider(TestService.class, TestServiceImpl.class);
+
+        // Act & Assert: Both standalone providers expose their definitions and instantiate the requested class.
+        Assert.areEqual(TestServiceImpl.class.getName(), stringType.getType());
+        Assert.areEqual(TestServiceImpl.class.getName(), apexType.getType());
+        Assert.isTrue(stringType.resolve(null, null) instanceof TestServiceImpl);
+        Assert.isTrue(apexType.resolve(null, null) instanceof TestServiceImpl);
     }
 
     @IsTest
@@ -782,22 +779,26 @@ private class DiTest {
 
     @IsTest
     static void should_create_existing_provider_from_various_overloads() {
-        // Act & Assert
-        Assert.areEqual(
-            'DiTest.MockService',
-            new Di.ExistingProvider('TestService', MockService.class).getExisting(),
-            'Should create from String token and Type existing.'
-        );
-        Assert.areEqual(
-            'OtherService',
-            new Di.ExistingProvider(TestService.class, 'OtherService').getExisting(),
-            'Should create from Type token and String existing.'
-        );
-        Assert.areEqual(
-            'DiTest.MockService',
-            new Di.ExistingProvider(TestService.class, MockService.class).getExisting(),
-            'Should create from Type token and Type existing.'
-        );
+        // Arrange: Configure standalone aliases through String/Type constructor combinations.
+        Di.DynamicModule module = new Di.DynamicModule('ExistingProviderOverloads');
+        Di.ExistingProvider stringAlias = new Di.ExistingProvider('StringAlias', MockService.class);
+        Di.ExistingProvider typeStringAlias = new Di.ExistingProvider(TestService.class, 'OtherService');
+        Di.ExistingProvider typeAlias = new Di.ExistingProvider(TestServiceImpl.class, MockService.class);
+        module
+            .addProvider(module.provide(MockService.class).useClass(MockService.class))
+            .addProvider(module.provide('OtherService').useClass(MockService.class))
+            .addProvider(stringAlias)
+            .addProvider(typeStringAlias)
+            .addProvider(typeAlias);
+        Di.ModuleRef ref = Di.addModule(module);
+
+        // Act & Assert: Definitions remain inspectable and redirect through normal container resolution.
+        Assert.areEqual(MockService.class.getName(), stringAlias.getExisting());
+        Assert.areEqual('OtherService', typeStringAlias.getExisting());
+        Assert.areEqual(MockService.class.getName(), typeAlias.getExisting());
+        Assert.areEqual(ref.get(MockService.class), ref.get('StringAlias'));
+        Assert.areEqual(ref.get('OtherService'), ref.get(TestService.class));
+        Assert.areEqual(ref.get(MockService.class), ref.get(TestServiceImpl.class));
     }
 
     //=========================================================================
@@ -1151,7 +1152,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_read_metadata_provider_helpers_from_default_context() {
+    static void should_read_metadata_provider_scope_from_default_context() {
         // Arrange: Mock a metadata alias with explicit scope in the default context.
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
             DeveloperName = 'AliasProvider',
@@ -1163,7 +1164,7 @@ private class DiTest {
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProvider' => mockMdt });
         Di.CustomMetadataTypesProvider provider = new Di.CustomMetadataTypesProvider('AliasService', 'AliasProvider');
 
-        // Act & Assert: Direct provider helper calls use the default application context.
+        // Act & Assert: Standalone metadata providers expose their normalized definition through the default context.
         Assert.areEqual(Di.Scope.PROTOTYPE, provider.getScope(), 'Default context should supply metadata scope.');
         Assert.areEqual(
             'TargetService',
@@ -1246,10 +1247,7 @@ private class DiTest {
             IsActive__c = true
         );
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProtoProvider' => mockMdt });
-        Di.CustomMetadataTypesProvider provider = new Di.CustomMetadataTypesProvider(
-            'AliasService',
-            'AliasProtoProvider'
-        );
+        Di.Provider provider = ref.getModule().provide('AliasService').useMetadata('AliasProtoProvider');
 
         // Act & Assert: Direct provider resolution is invalid for aliases.
         try {
@@ -2934,9 +2932,10 @@ private class DiTest {
     @IsTest
     static void should_evaluate_provider_equality_based_on_token() {
         // Arrange: Create two different provider types with the same token, and one with a different token.
-        Di.Provider providerA1 = new Di.ValueProvider('tokenA', 'value');
-        Di.Provider providerA2 = new Di.ClassProvider('tokenA', 'SomeType');
-        Di.Provider providerB = new Di.ValueProvider('tokenB', 'value');
+        Di.DynamicModule module = new Di.DynamicModule('ProviderEquality');
+        Di.Provider providerA1 = module.provide('tokenA').useValue('value');
+        Di.Provider providerA2 = module.provide('tokenA').useClass('SomeType');
+        Di.Provider providerB = module.provide('tokenB').useValue('value');
 
         // Act & Assert: Check equality based on the token.
         Assert.isTrue(
