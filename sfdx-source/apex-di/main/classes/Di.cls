@@ -1823,11 +1823,7 @@ public virtual inherited sharing class Di {
     public virtual class ModuleRef extends Container {
         protected String registryToken;
 
-        public ModuleRef(final Module module) {
-            this(DEFAULT_CONTEXT, module);
-        }
-
-        protected ModuleRef(final ApplicationContext context, final Module module) {
+        private ModuleRef(final ApplicationContext context, final Module module) {
             super(context, null, module);
             registryToken = module.getToken();
         }

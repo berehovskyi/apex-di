@@ -49,15 +49,18 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_module_ref_directly_in_default_context() {
-        // Arrange: A module ref is constructed directly for the default application context.
+    static void should_create_module_ref_through_default_application_context() {
+        // Arrange: A module instance is registered through the default application context facade.
         SingleModule module = new SingleModule();
 
-        // Act
-        Di.ModuleRef ref = new Di.ModuleRef(module);
+        // Act: Request the context-owned runtime handle twice.
+        Di.ModuleRef ref = Di.getModuleRef(module);
+        Di.ModuleRef repeatedRef = Di.getModuleRef(module);
 
-        // Assert
-        Assert.areEqual(module, ref.getModule(), 'Direct ModuleRef construction should preserve the supplied module.');
+        // Assert: Registration commits the definition, preserves identity, and reuses one runtime.
+        Assert.areEqual(module, ref.getModule());
+        Assert.areEqual(ref, repeatedRef);
+        Assert.isTrue(ref.get('TestService') instanceof TestServiceImpl);
     }
 
     @IsTest
