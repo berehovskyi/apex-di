@@ -12,18 +12,9 @@ private class DiTest {
         Di.mockProviders(new Map<String, DI_Provider__mdt>());
     }
 
-    private static Di.ApplicationContext newTestContext() {
-        Di.ApplicationContext context = Di.createContext();
-        context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
-        context.mockProviders(new Map<String, DI_Provider__mdt>());
-        return context;
-    }
-
-    //=========================================================================
-    // Core Provider Tests (get, resolve, scopes)
-    //=========================================================================
+    // <editor-fold desc="Core Providers">
     @IsTest
-    static void should_return_same_instance_for_singleton_scope() {
+    static void should_return_same_instance_when_using_singleton_scope() {
         // Arrange: A module with a default (singleton) provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
 
@@ -49,7 +40,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_module_ref_through_default_application_context() {
+    static void should_create_module_ref_when_using_default_application_context() {
         // Arrange: A module instance is registered through the default application context facade.
         SingleModule module = new SingleModule();
 
@@ -64,21 +55,22 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_evict_from_cache_on_injection_failure() {
+    static void should_evict_from_cache_when_injection_fails() {
         // Arrange
         InjectionFailureModule module = new InjectionFailureModule();
         Di.addModule(module);
         Di.ModuleRef ref = Di.getModuleRef(InjectionFailureModule.class);
 
-        // Act 1: First attempt fails
+        // Act: First attempt fails
         try {
             ref.get('BrokenService');
             Assert.fail('Should have thrown exception');
         } catch (Di.DiException e) {
+            // Assert: Verify the expected outcome.
             Assert.areEqual('Injection Failed Intentional', e.getMessage());
         }
 
-        // Act 2: Second attempt should TRY AGAIN usually creating a new instance
+        // Act: Second attempt should TRY AGAIN usually creating a new instance
         try {
             ref.get('BrokenService');
             Assert.fail('Should have thrown exception on second attempt too');
@@ -95,7 +87,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_return_new_instance_for_prototype_scope() {
+    static void should_return_new_instance_when_using_prototype_scope() {
         // Arrange: A module with a prototype-scoped provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
 
@@ -142,12 +134,11 @@ private class DiTest {
             );
         }
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Core SCOPED Lifetime Tests
-    //=========================================================================
+    // <editor-fold desc="Scoped Lifetimes">
     @IsTest
-    static void should_return_same_instance_within_one_scope() {
+    static void should_return_same_instance_when_resolving_within_one_scope() {
         // Arrange: Register a module with a SCOPED provider.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedModule.class);
         Di.ScopeRef scope = rootContainer.createScope();
@@ -162,7 +153,7 @@ private class DiTest {
 
     @IsTest
     @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
-    static void should_return_different_instances_for_different_scopes() {
+    static void should_return_different_instances_when_using_different_scopes() {
         // Arrange: Register a module with a SCOPED provider.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedModule.class);
         Di.ScopeRef scope1 = rootContainer.createScope();
@@ -181,7 +172,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_not_cache_scoped_provider() {
+    static void should_not_cache_scoped_provider_when_using_resolve() {
         // Arrange
         Di.clear();
         Di.ModuleRef consumerCtn = Di.getModuleRef(ScopedModule.class);
@@ -222,11 +213,12 @@ private class DiTest {
         // Arrange: A root module ref has no active scope cache for SCOPED providers.
         Di.ModuleRef ref = Di.getModuleRef(ScopedModule.class);
 
-        // Act & Assert: Root get() should require callers to create an explicit scope.
+        // Act: Root get() should require callers to create an explicit scope.
         try {
             ref.get(ScopedService.class);
             Assert.fail('Expected InvalidScopeException when getting a scoped provider from the root module.');
         } catch (Di.InvalidScopeException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Use createScope() method instead'),
                 'Exception message should guide the user to create a scope.'
@@ -239,11 +231,12 @@ private class DiTest {
         // Arrange: A root module ref has no active scope cache for SCOPED providers.
         Di.ModuleRef ref = Di.getModuleRef(ScopedModule.class);
 
-        // Act & Assert: Root resolve() should also require callers to create an explicit scope.
+        // Act: Root resolve() should also require callers to create an explicit scope.
         try {
             ref.resolve(ScopedService.class);
             Assert.fail('Expected InvalidScopeException when resolving a scoped provider from the root module.');
         } catch (Di.InvalidScopeException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Use createScope() method instead'),
                 'Exception message should guide the user to create a scope.'
@@ -252,21 +245,22 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_evict_scoped_provider_from_cache_on_injection_failure() {
+    static void should_evict_scoped_provider_from_cache_when_injection_fails() {
         // Arrange
         ScopedInjectionFailureModule mod = new ScopedInjectionFailureModule();
         Di.ModuleRef ref = Di.addModule(mod);
         Di.ScopeRef scope = ref.createScope();
 
-        // Act 1: First attempt fails
+        // Act: First attempt fails
         try {
             scope.get('BrokenService');
             Assert.fail('Should have thrown DiException');
         } catch (Di.DiException e) {
+            // Assert: Verify the expected outcome.
             Assert.areEqual('Injection Failed Intentional', e.getMessage(), 'Should bubble up the injection exception');
         }
 
-        // Act 2: Second attempt should have evicted the broken instance and try again
+        // Act: Second attempt should have evicted the broken instance and try again
         try {
             scope.get('BrokenService');
             Assert.fail('Should have thrown DiException on retry');
@@ -281,7 +275,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_singleton_dependency_from_a_scope() {
+    static void should_resolve_singleton_dependency_when_requested_from_scope() {
         // Arrange: Register a module with a SCOPED provider that depends on a SINGLETON provider.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedWithSingletonDepModule.class);
         Di.ScopeRef scope1 = rootContainer.createScope();
@@ -312,11 +306,12 @@ private class DiTest {
         // Arrange: A singleton service attempts to capture a scoped dependency.
         Di.ScopeRef scope = Di.getModuleRef(SingletonWithScopedDepModule.class).createScope();
 
-        // Act & Assert: Even when requested from a ScopeRef, the singleton is built by the root module.
+        // Act: Even when requested from a ScopeRef, the singleton is built by the root module.
         try {
             scope.get(SingletonWithScopedDepService.class);
             Assert.fail('Expected InvalidScopeException when a singleton depends on a scoped provider.');
         } catch (Di.InvalidScopeException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Use createScope() method instead'),
                 'Exception message should identify the invalid scoped dependency access.'
@@ -325,7 +320,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_prototype_dependency_from_a_scope() {
+    static void should_resolve_prototype_dependency_when_requested_from_scope() {
         // Arrange: Register a module with a SCOPED provider that depends on a PROTOTYPE provider.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedWithPrototypeDepModule.class);
         Di.ScopeRef scope = rootContainer.createScope();
@@ -345,7 +340,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_clear_cache_for_a_specific_scope() {
+    static void should_clear_cache_when_clearing_specific_scope() {
         // Arrange: Register a module and create a scope.
         Di.ModuleRef rootContainer = Di.getModuleRef(ScopedModule.class);
         Di.ScopeRef scope = rootContainer.createScope();
@@ -392,26 +387,25 @@ private class DiTest {
         Di.ModuleRef moduleRef = Di.getModuleRef(ScopeRefIntegrityModule.class);
         Di.ScopeRef scope = moduleRef.createScope();
 
-        // Act & Assert 1: Initial resolution
+        // Act: Resolve from the initial module.
         String val1 = (String) scope.resolve('ScopedService');
+
+        // Assert: The initial module supplies the scoped value.
         Assert.areEqual('A', val1, 'Should return value from initial module');
 
-        // Act 2: Replace Module
+        // Act: Replace the module and resolve again from the same scope.
         Di.replaceModule(ScopeRefIntegrityModule.class, new ScopeRefIntegrityReplacementModule());
-
-        // Act & Assert 3: Resolve again from SAME scope
-        // This is the CRUX: The scope should now see the NEW module definition because we fixed ScopeRef
         String val2 = (String) scope.resolve('ScopedService');
 
+        // Assert: The existing scope observes the replacement without retaining the old value.
         Assert.areEqual('B', val2, 'Should return value from replacement module');
         Assert.areNotEqual(val1, val2, 'Should not return cached value from old module');
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Provider Types (Value, Factory, Class, Existing, Metadata)
-    //=========================================================================
+    // <editor-fold desc="Provider Types">
     @IsTest
-    static void should_return_configured_value_for_value_provider() {
+    static void should_return_configured_value_when_using_value_provider() {
         // Arrange: A module with a ValueProvider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
 
@@ -425,7 +419,8 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_value_provider_from_type() {
+    static void should_create_value_provider_when_token_is_type() {
+        // Arrange: Prepare the test scenario.
         // Act: Build a value provider through the public provider-builder boundary.
         Di.Provider provider = new Di.DynamicModule('ValueProviderBuilder')
             .provide(TestService.class)
@@ -437,7 +432,8 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_standalone_value_provider() {
+    static void should_create_standalone_value_provider_when_constructed_directly() {
+        // Arrange: Prepare the test scenario.
         // Act: Built-in provider definitions can be created without a module or ProviderBuilder.
         Di.ValueProvider provider = new Di.ValueProvider(TestService.class, 'hello');
 
@@ -447,7 +443,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_return_instance_from_factory_for_factory_provider() {
+    static void should_return_factory_instance_when_using_factory_provider() {
         // Arrange: A module with a FactoryProvider is registered.
         Di.ModuleRef ref = Di.getModuleRef(FactoryModule.class);
 
@@ -459,7 +455,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_factory_provider_from_type() {
+    static void should_create_factory_provider_when_factory_is_type() {
         // Arrange
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
@@ -478,7 +474,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_factory_provider_from_string() {
+    static void should_create_factory_provider_when_factory_is_string() {
         // Arrange
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
@@ -492,13 +488,14 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_factory_provider_from_various_overloads() {
+    static void should_create_factory_provider_when_using_standalone_overloads() {
         // Arrange: Standalone providers accept Factory, String, and Type definitions with a canonical Type token.
         Di.FactoryProvider instanceFactory = new Di.FactoryProvider(TestService.class, new StringArgsFactory());
         Di.FactoryProvider stringFactory = new Di.FactoryProvider(TestService.class, StringArgsFactory.class.getName());
         Di.FactoryProvider typeFactory = new Di.FactoryProvider(TestService.class, StringArgsFactory.class);
 
-        // Act & Assert: Every standalone overload produces an executable provider with the canonical Type token.
+        // Act: Every standalone overload produces an executable provider with the canonical Type token.
+        // Assert: Verify the expected outcome.
         Assert.areEqual(TestService.class.getName(), instanceFactory.getToken());
         Assert.areEqual('arg:instance', instanceFactory.resolve(null, 'instance'));
         Assert.areEqual('arg:string', stringFactory.resolve(null, 'string'));
@@ -506,15 +503,16 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_for_null_factory_string() {
+    static void should_throw_exception_when_factory_string_is_null() {
         // Arrange
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             builder.useFactory((String) null);
             Assert.fail('Expected InvalidProviderException was not thrown.');
         } catch (Di.InvalidClassException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Cannot instantiate class "null"'),
                 'Exception message should indicate null class name.'
@@ -523,15 +521,16 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_for_invalid_factory_string() {
+    static void should_throw_exception_when_factory_string_is_invalid() {
         // Arrange
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             builder.useFactory('Invalid.Class.Name');
             Assert.fail('Expected InvalidClassException was not thrown.');
         } catch (Di.InvalidClassException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Cannot instantiate class "Invalid.Class.Name"'),
                 'Exception message should indicate missing class.'
@@ -540,15 +539,16 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_for_null_factory_type() {
+    static void should_throw_exception_when_factory_type_is_null() {
         // Arrange
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             builder.useFactory((Type) null);
             Assert.fail('Expected InvalidClassException was not thrown.');
         } catch (Di.InvalidClassException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Cannot instantiate class'),
                 'Exception message should indicate invalid interface.'
@@ -557,16 +557,17 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_for_invalid_factory_type() {
+    static void should_throw_exception_when_factory_type_is_invalid() {
         // Arrange
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             // Using a class that exists but doesn't implement Di.Factory (e.g. TestServiceImpl or String)
             builder.useFactory(NotFactory.class);
             Assert.fail('Expected InvalidClassException was not thrown.');
         } catch (Di.InvalidClassException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('does not implement the Di.Factory interface'),
                 'Exception message should indicate invalid interface.'
@@ -575,16 +576,17 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_for_non_instantiable_factory_type() {
+    static void should_throw_exception_when_factory_type_is_not_instantiable() {
         // Arrange
         Di.ProviderBuilder builder = new Di.DynamicModule('TestFactory').provide('TestFactory');
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             // Di.Module is abstract, so it cannot be instantiated
             builder.useFactory(Di.Module.class);
             Assert.fail('Expected InvalidClassException was not thrown.');
         } catch (Di.InvalidClassException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Cannot instantiate class'),
                 'Exception message should indicate instantiation failure.'
@@ -593,7 +595,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_pass_arguments_to_factory_provider() {
+    static void should_pass_arguments_when_resolving_factory_provider() {
         // Arrange: A module with a FactoryProvider that accepts arguments is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsModule.class);
 
@@ -609,11 +611,12 @@ private class DiTest {
         // Arrange: A module with a factory provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
 
-        // Act & Assert: get() is the cached path and does not accept runtime arguments.
+        // Act: get() is the cached path and does not accept runtime arguments.
         try {
             ref.get(TestServiceImpl.class, new List<Object>{ 'Args' });
             Assert.fail('Expected InvalidProviderException when calling get(Type, args).');
         } catch (Di.InvalidProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Use resolve()'),
                 'Exception message should guide callers to resolve() for runtime arguments.'
@@ -622,7 +625,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_provider_by_type_with_arguments() {
+    static void should_resolve_provider_when_type_and_arguments_are_supplied() {
         // Arrange: A module with a factory provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(ArgsTypeModule.class);
 
@@ -636,7 +639,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_provider_by_type_without_arguments() {
+    static void should_resolve_provider_when_type_is_supplied_without_arguments() {
         // Arrange: A module with a standard provider is registered using a Type token.
         Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
 
@@ -650,22 +653,26 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_treat_string_tokens_as_exact_case_sensitive_keys() {
+    static void should_treat_string_tokens_as_exact_case_sensitive_keys_when_resolving() {
         // Arrange: A module with a Type-token provider is registered.
         Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
         String lowerCaseTypeToken = TestService.class.getName().toLowerCase();
 
+        // Act: Resolve through the canonical Type overload.
+        Object canonicalInstance = ref.get(TestService.class);
+
         // Assert: Type overloads use the canonical Apex type name.
         Assert.isTrue(
-            ref.get(TestService.class) instanceof TestServiceImpl,
+            canonicalInstance instanceof TestServiceImpl,
             'Type overloads should resolve through the canonical Type name.'
         );
 
-        // Act & Assert: String tokens are exact keys, even when they look like class names.
+        // Act: String tokens are exact keys, even when they look like class names.
         try {
             ref.get(lowerCaseTypeToken);
             Assert.fail('Expected UnknownProviderException for a differently cased string token.');
         } catch (Di.UnknownProviderException ex) {
+            // Assert: Differently cased string tokens remain unresolved.
             Assert.isTrue(
                 ex.getMessage().contains('Could not find "' + lowerCaseTypeToken + '" provider'),
                 'String tokens should remain exact and case-sensitive.'
@@ -674,7 +681,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_replace_existing_class_provider() {
+    static void should_replace_existing_class_provider_when_replacement_uses_type() {
         // Arrange: A module with a standard provider is registered using a Type token.
         Di.ModuleRef ref = Di.getModuleRef(TypeModule.class);
 
@@ -694,7 +701,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_replace_existing_provider() {
+    static void should_replace_existing_provider_when_token_is_registered() {
         // Arrange: A module is registered with an initial provider.
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
         Assert.areEqual('hello', ref.get('val'), 'Pre-condition: Initial value should be "hello".');
@@ -713,7 +720,7 @@ private class DiTest {
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
         Di.Provider missingProvider = ref.getModule().provide('missing').useValue('world');
 
-        // Act & Assert: Replacing an absent provider should fail loudly.
+        // Act: Replacing an absent provider should fail loudly.
         try {
             ref.replace(missingProvider);
             Assert.fail('Expected UnknownProviderException when replacing a missing provider.');
@@ -729,7 +736,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_instantiate_class_by_string_name() {
+    static void should_instantiate_class_when_valid_string_name_is_supplied() {
         // Arrange: A module provides a class using its string name.
         Di.ModuleRef ref = Di.getModuleRef(StringTypeModule.class);
 
@@ -741,25 +748,27 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_class_provider_from_type() {
+    static void should_create_class_provider_when_definition_is_type() {
         // Arrange: Build class providers through String-token/Type-class and Type-token/String-class overloads.
         Di.DynamicModule module = new Di.DynamicModule('ClassProviderBuilder');
         Di.Provider provider1 = module.provide('TestService').useClass(TestServiceImpl.class);
         Di.Provider provider2 = module.provide(TestService.class).useClass('DiTest.TestServiceImpl');
 
-        // Act & Assert: Both public builder paths normalize and instantiate the requested class.
+        // Act: Both public builder paths normalize and instantiate the requested class.
+        // Assert: Verify the expected outcome.
         Assert.isTrue(provider1.resolve(null, null) instanceof TestServiceImpl);
         Assert.areEqual(TestService.class.getName(), provider2.getToken());
         Assert.isTrue(provider2.resolve(null, null) instanceof TestServiceImpl);
     }
 
     @IsTest
-    static void should_create_class_provider_from_various_overloads() {
+    static void should_create_class_provider_when_using_standalone_overloads() {
         // Arrange: Build both standalone class-input overloads from one canonical Type token.
         Di.ClassProvider stringType = new Di.ClassProvider(TestService.class, TestServiceImpl.class.getName());
         Di.ClassProvider apexType = new Di.ClassProvider(TestService.class, TestServiceImpl.class);
 
-        // Act & Assert: Both standalone providers expose their definitions and instantiate the requested class.
+        // Act: Both standalone providers expose their definitions and instantiate the requested class.
+        // Assert: Verify the expected outcome.
         Assert.areEqual(TestServiceImpl.class.getName(), stringType.getType());
         Assert.areEqual(TestServiceImpl.class.getName(), apexType.getType());
         Assert.isTrue(stringType.resolve(null, null) instanceof TestServiceImpl);
@@ -767,7 +776,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_provider_using_existing_alias() {
+    static void should_resolve_provider_when_using_existing_alias() {
         // Arrange: A module is registered with a provider aliased by another token.
         Di.ModuleRef ref = Di.getModuleRef(ExistingProviderModule.class);
 
@@ -781,7 +790,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_create_existing_provider_from_various_overloads() {
+    static void should_create_existing_provider_when_using_standalone_overloads() {
         // Arrange: Configure standalone aliases through String/Type constructor combinations.
         Di.DynamicModule module = new Di.DynamicModule('ExistingProviderOverloads');
         Di.ExistingProvider stringAlias = new Di.ExistingProvider('StringAlias', MockService.class);
@@ -795,7 +804,8 @@ private class DiTest {
             .addProvider(typeAlias);
         Di.ModuleRef ref = Di.addModule(module);
 
-        // Act & Assert: Definitions remain inspectable and redirect through normal container resolution.
+        // Act: Definitions remain inspectable and redirect through normal container resolution.
+        // Assert: Verify the expected outcome.
         Assert.areEqual(MockService.class.getName(), stringAlias.getExisting());
         Assert.areEqual('OtherService', typeStringAlias.getExisting());
         Assert.areEqual(MockService.class.getName(), typeAlias.getExisting());
@@ -803,20 +813,20 @@ private class DiTest {
         Assert.areEqual(ref.get('OtherService'), ref.get(TestService.class));
         Assert.areEqual(ref.get(MockService.class), ref.get(TestServiceImpl.class));
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Circular Dependencies
-    //=========================================================================
+    // <editor-fold desc="Circular Dependencies">
     @IsTest
-    static void should_throw_exception_for_circular_existing_alias() {
+    static void should_throw_exception_when_existing_alias_is_circular() {
         // Arrange: A module is registered with a circular alias dependency (A -> B -> A).
         Di.ModuleRef ref = Di.getModuleRef(CircularExistingProviderModule.class);
 
-        // Act & Assert: An attempt to get either provider should throw a CircularDependencyException.
+        // Act: An attempt to get either provider should throw a CircularDependencyException.
         try {
             ref.get('AliasA');
             Assert.fail('Expected CircularDependencyException was not thrown.');
         } catch (Di.CircularDependencyException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Circular dependency detected'),
                 'Exception message should indicate a cycle.'
@@ -825,11 +835,11 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_correctly_detect_alias_based_circular_dependency() {
+    static void should_detect_circular_dependency_when_aliases_form_cycle() {
         // Arrange: Get the container for the alias-based cycle.
         Di.ModuleRef container = Di.getModuleRef(AliasCircularAModule.class);
 
-        // Act & Assert: The framework should correctly detect this cycle.
+        // Act: The framework should correctly detect this cycle.
         try {
             container.get('AliasA');
             Assert.fail('Expected a Di.CircularDependencyException but no exception was thrown.');
@@ -847,15 +857,16 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_detect_factory_based_circular_dependency() {
+    static void should_detect_circular_dependency_when_factories_form_cycle() {
         // Arrange: Get the container for the factory-based cycle.
         Di.ModuleRef container = Di.getModuleRef(FactoryCircularAModule.class);
 
-        // Act & Assert: Attempt to resolve the circular dependency.
+        // Act: Attempt to resolve the circular dependency.
         try {
             container.get(ServiceA.class);
             Assert.fail('Expected a Di.CircularDependencyException but no exception was thrown.');
         } catch (Di.CircularDependencyException e) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 e.getMessage().contains('Circular dependency detected for provider "DiTest.ServiceA"'),
                 'The exception message should correctly identify the circular dependency.'
@@ -872,7 +883,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_prototype_provider_using_existing_alias() {
+    static void should_resolve_prototype_provider_when_using_existing_alias() {
         // Arrange: A module is registered with a PROTOTYPE provider aliased by another token.
         Di.ModuleRef ref = Di.getModuleRef(ExistingPrototypeProviderModule.class);
 
@@ -894,12 +905,13 @@ private class DiTest {
         // PROTOTYPE provider ('AliasService').
         Di.ModuleRef ref = Di.getModuleRef(ExistingPrototypeProviderModule.class);
 
-        // Act & Assert: An attempt to get() the prototype-scoped alias should fail,
+        // Act: An attempt to get() the prototype-scoped alias should fail,
         // because get() is not allowed on prototype scopes.
         try {
             ref.get('AliasService');
             Assert.fail('Expected InvalidScopeException was not thrown. This confirms the bug.');
         } catch (Di.InvalidScopeException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Use resolve() method instead'),
                 'Exception message should guide the user to use resolve().'
@@ -910,7 +922,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_circular_dependency_without_forward_ref() {
+    static void should_resolve_circular_dependency_when_forward_ref_is_absent() {
         // Arrange: Get the container for the module containing the circular dependency.
         Di.ModuleRef container = Di.getModuleRef(ForwardRefModule.class);
         Exception caughtException;
@@ -939,12 +951,11 @@ private class DiTest {
             'The circular dependency should resolve to the same root instance.'
         );
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Metadata Provider Tests
-    //=========================================================================
+    // <editor-fold desc="Metadata Providers">
     @IsTest
-    static void should_resolve_provider_and_global_module_from_injected_metadata_source() {
+    static void should_resolve_provider_and_global_module_when_metadata_source_is_injected() {
         // Arrange: One source supplies normalized provider and global-module definitions.
         Di.MetadataSource metadataSource = new InjectedMetadataSource(
             new List<Di.GlobalModuleDefinition>{ new Di.GlobalModuleDefinition(CmtGlobalModule.class.getName(), true) },
@@ -962,13 +973,14 @@ private class DiTest {
         Di.ApplicationContext context = Di.createContext(metadataSource);
         Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
 
-        // Act & Assert: Runtime metadata behavior is sourced entirely through the injected adapter.
+        // Act: Runtime metadata behavior is sourced entirely through the injected adapter.
+        // Assert: Verify the expected outcome.
         Assert.areEqual('injected metadata', ref.get('StringValue'));
         Assert.areEqual('helloFromCmt', ref.get('cmtGlobalVal'));
     }
 
     @IsTest
-    static void should_delegate_cleared_metadata_overrides_to_injected_source() {
+    static void should_delegate_to_injected_source_when_metadata_overrides_are_cleared() {
         // Arrange: Test overrides temporarily hide definitions supplied by the injected source.
         Di.ApplicationContext context = Di.createContext(
             new InjectedMetadataSource(
@@ -1001,7 +1013,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_snapshot_injected_provider_definitions_per_context() {
+    static void should_snapshot_provider_definitions_when_metadata_source_is_injected() {
         // Arrange: The source exposes a caller-owned mutable map.
         Map<String, Di.ProviderDefinition> definitions = new Map<String, Di.ProviderDefinition>{
             'StringValueProvider' => new Di.ProviderDefinition(
@@ -1030,19 +1042,20 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_treat_null_metadata_source_collections_as_empty() {
+    static void should_treat_collections_as_empty_when_metadata_source_returns_null() {
         // Arrange: A custom source deliberately returns null collections.
         Di.ApplicationContext context = Di.createContext(new InjectedMetadataSource(null, null));
 
-        // Act & Assert: Null provider definitions behave as an empty provider-definition map.
+        // Act: Null provider definitions behave as an empty provider-definition map.
         try {
             context.getModuleRef(MetadataModule.class).get('StringValue');
             Assert.fail('Expected InvalidProviderException for a missing metadata provider definition.');
         } catch (Di.InvalidProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(ex.getMessage().contains('was not found'));
         }
 
-        // Act & Assert: Null global definitions behave as an empty global-module collection.
+        // Act: Null global definitions behave as an empty global-module collection.
         try {
             context.getModuleRef(EmptyModule.class).get('missingFromNullMetadataSource');
             Assert.fail('Expected UnknownProviderException when the metadata source contains no global modules.');
@@ -1052,17 +1065,20 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_null_metadata_source() {
+    static void should_reject_context_when_metadata_source_is_null() {
+        // Arrange: Prepare the test scenario.
+        // Act: Execute the behavior under test.
         try {
             Di.createContext((Di.MetadataSource) null);
             Assert.fail('Expected InvalidModuleException for a null metadata source.');
         } catch (Di.InvalidModuleException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(ex.getMessage().contains('null metadata source'));
         }
     }
 
     @IsTest
-    static void should_resolve_class_provider_from_mocked_metadata() {
+    static void should_resolve_class_provider_when_metadata_is_mocked() {
         // Arrange: Define a module that uses the new .useMetadata() method.
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
 
@@ -1087,7 +1103,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_value_provider_from_metadata() {
+    static void should_resolve_value_provider_when_metadata_defines_value() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
@@ -1110,7 +1126,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_factory_provider_from_metadata_with_args() {
+    static void should_resolve_factory_provider_when_metadata_and_arguments_are_supplied() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
@@ -1134,7 +1150,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_existing_provider_from_metadata() {
+    static void should_resolve_existing_provider_when_metadata_defines_alias() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataExistingModule.class);
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
@@ -1155,7 +1171,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_read_metadata_provider_scope_from_default_context() {
+    static void should_read_metadata_scope_when_using_default_context() {
         // Arrange: Mock a metadata alias with explicit scope in the default context.
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
             DeveloperName = 'AliasProvider',
@@ -1167,7 +1183,8 @@ private class DiTest {
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProvider' => mockMdt });
         Di.CustomMetadataTypesProvider provider = new Di.CustomMetadataTypesProvider('AliasService', 'AliasProvider');
 
-        // Act & Assert: Standalone metadata providers expose their normalized definition through the default context.
+        // Act: Standalone metadata providers expose their normalized definition through the default context.
+        // Assert: Verify the expected outcome.
         Assert.areEqual(Di.Scope.PROTOTYPE, provider.getScope(), 'Default context should supply metadata scope.');
         Assert.areEqual(
             'TargetService',
@@ -1177,17 +1194,18 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_read_unmocked_metadata_provider_source_from_application_context() {
+    static void should_read_unmocked_metadata_when_using_application_context() {
         // Arrange: Use a context without provider mocks, so it falls through to DI_Provider__mdt.getAll().
         Di.ApplicationContext context = Di.createContext();
         context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
         Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
 
-        // Act & Assert: No packaged metadata records exist for this test token, so the framework error is raised.
+        // Act: No packaged metadata records exist for this test token, so the framework error is raised.
         try {
             ref.get(IMetadataService.class);
             Assert.fail('Expected InvalidProviderException for missing unmocked metadata provider.');
         } catch (Di.InvalidProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('ConfigurableService'),
                 'Exception should identify the missing metadata provider developer name.'
@@ -1196,7 +1214,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_respect_prototype_scope_in_existing_provider() {
+    static void should_respect_prototype_scope_when_metadata_defines_existing_provider() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataProtoAliasModule.class);
 
@@ -1208,10 +1226,12 @@ private class DiTest {
         );
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProtoProvider' => mockMdt });
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         Object inst1 = ref.resolve('AliasService');
         Object inst2 = ref.resolve('AliasService');
 
+        // Act: Execute the behavior under test.
+        // Assert: Verify the expected outcome.
         Assert.areNotEqual(inst1, inst2, 'Existing provider pointing to Prototype should return new instances.');
     }
 
@@ -1227,11 +1247,12 @@ private class DiTest {
         );
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProtoProvider' => mockMdt });
 
-        // Act & Assert: get() should inherit the target provider's prototype guard.
+        // Act: get() should inherit the target provider's prototype guard.
         try {
             ref.get('AliasService');
             Assert.fail('Expected InvalidScopeException for metadata alias to prototype provider.');
         } catch (Di.InvalidScopeException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Use resolve() method instead'),
                 'Exception message should guide the user to use resolve().'
@@ -1252,11 +1273,12 @@ private class DiTest {
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'AliasProtoProvider' => mockMdt });
         Di.Provider provider = ref.getModule().provide('AliasService').useMetadata('AliasProtoProvider');
 
-        // Act & Assert: Direct provider resolution is invalid for aliases.
+        // Act: Direct provider resolution is invalid for aliases.
         try {
             provider.resolve(ref, null);
             Assert.fail('Expected InvalidProviderException when directly resolving a metadata Existing provider.');
         } catch (Di.InvalidProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('This operation is not supported'),
                 'Exception message should indicate that alias providers are not directly executable.'
@@ -1265,7 +1287,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_for_invalid_provider_type_in_metadata() {
+    static void should_throw_exception_when_metadata_provider_type_is_invalid() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
@@ -1276,11 +1298,12 @@ private class DiTest {
         );
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'InvalidProvider' => mockMdt });
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             ref.get('InvalidValue');
             Assert.fail('Expected InvalidProviderException was not thrown for invalid metadata type.');
         } catch (Di.InvalidProviderException e) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 e.getMessage().contains('Invalid provider configuration'),
                 'Exception message should indicate an invalid configuration.'
@@ -1289,7 +1312,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reset_metadata_cache_on_clear() {
+    static void should_reset_metadata_cache_when_context_is_cleared() {
         // Arrange: Prepare two different mock metadata configurations for the same token.
         DI_Provider__mdt mockMdt1 = new DI_Provider__mdt(
             DeveloperName = 'ConfigurableService',
@@ -1306,14 +1329,14 @@ private class DiTest {
 
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
 
-        // Act 1: Load the first mock and resolve it. This should populate the static cache in Di.cls.
+        // Act: Load the first mock and resolve it. This should populate the static cache in Di.cls.
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt1 });
         Object result1 = ref.resolve(IMetadataService.class);
 
-        // Act 2: Clear the framework state. This SHOULD clear the static cache.
+        // Act: Clear the framework state. This SHOULD clear the static cache.
         Di.clear();
 
-        // Act 3: Load the second mock and resolve it.
+        // Act: Load the second mock and resolve it.
         // If the cache was not cleared, this will return 'FirstValue' again.
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt2 });
         // We must re-get the module ref because clear() wiped the module registry
@@ -1330,7 +1353,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_respect_scope_defined_in_metadata() {
+    static void should_respect_scope_when_defined_in_metadata() {
         // Arrange: Mock a metadata provider with SCOPED scope.
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
             DeveloperName = 'ConfigurableService',
@@ -1359,7 +1382,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_respect_prototype_scope_in_metadata() {
+    static void should_respect_prototype_scope_when_defined_in_metadata() {
         // Arrange: Mock a metadata provider with PROTOTYPE scope.
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
             DeveloperName = 'ConfigurableService',
@@ -1385,7 +1408,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_invalid_provider_exception_for_invalid_metadata_scope_on_get() {
+    static void should_throw_invalid_provider_exception_when_get_uses_invalid_metadata_scope() {
         // Arrange: Mock a metadata provider with an invalid scope string.
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
             DeveloperName = 'ConfigurableService',
@@ -1397,11 +1420,12 @@ private class DiTest {
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
 
-        // Act & Assert: get() should wrap invalid metadata scopes in a framework exception.
+        // Act: get() should wrap invalid metadata scopes in a framework exception.
         try {
             ref.get(IMetadataService.class);
             Assert.fail('Expected InvalidProviderException for invalid metadata scope.');
         } catch (Di.InvalidProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Invalid metadata scope "NOT_A_SCOPE"'),
                 'Exception message should identify the invalid metadata scope.'
@@ -1410,7 +1434,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_invalid_provider_exception_for_invalid_metadata_scope_on_resolve() {
+    static void should_throw_invalid_provider_exception_when_resolve_uses_invalid_metadata_scope() {
         // Arrange: Mock a metadata provider with an invalid scope string.
         DI_Provider__mdt mockMdt = new DI_Provider__mdt(
             DeveloperName = 'ConfigurableService',
@@ -1422,30 +1446,32 @@ private class DiTest {
         Di.mockProviders(new Map<String, DI_Provider__mdt>{ 'ConfigurableService' => mockMdt });
         Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
 
-        // Act & Assert: resolve() should wrap invalid metadata scopes in a framework exception.
+        // Act: resolve() should wrap invalid metadata scopes in a framework exception.
         try {
             ref.resolve(IMetadataService.class);
             Assert.fail('Expected InvalidProviderException for invalid metadata scope.');
         } catch (Di.InvalidProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Invalid metadata scope "NOT_A_SCOPE"'),
                 'Exception message should identify the invalid metadata scope.'
             );
         }
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Arguments & Caching
-    //=========================================================================
+    // <editor-fold desc="Arguments and Caching">
     @IsTest
-    static void should_resolve_with_args_without_using_singleton_cache() {
+    static void should_bypass_singleton_cache_when_resolving_with_arguments() {
         // Arrange
         Di.clear();
         Di.ModuleRef consumerCtn = Di.getModuleRef(ArgsValidationModule.class);
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         // 1. Resolve with Args "A"
         Object instanceA = consumerCtn.resolve('SingletonArgsFactory', 'A');
+        // Act: Execute the behavior under test.
+        // Assert: Verify the expected outcome.
         Assert.areEqual('A', instanceA, 'Should return args as instance');
 
         // 2. Resolve with Args "B"
@@ -1475,11 +1501,12 @@ private class DiTest {
         Di.clear();
         Di.ModuleRef consumerCtn = Di.getModuleRef(ArgsValidationModule.class);
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             consumerCtn.get('SingletonArgsFactory', 'someArgs');
             Assert.fail('Expected InvalidProviderException when calling get(String, args).');
         } catch (Di.InvalidProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Use resolve()'),
                 'Exception message should guide callers to resolve() for runtime arguments.'
@@ -1493,32 +1520,20 @@ private class DiTest {
         Di.clear();
         Di.ModuleRef consumerCtn = Di.getModuleRef(ArgsValidationModule.class);
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         Integer unsupportedArgsAssertions = 0;
         unsupportedArgsAssertions += assertResolveArgsUnsupported(consumerCtn, 'ClassProvider');
         unsupportedArgsAssertions += assertResolveArgsUnsupported(consumerCtn, 'ValueProvider');
         unsupportedArgsAssertions += assertResolveArgsUnsupported(consumerCtn, 'ExistingProvider');
+        // Act: Execute the behavior under test.
+        // Assert: Verify the expected outcome.
         Assert.areEqual(3, unsupportedArgsAssertions, 'All non-factory providers should reject runtime arguments.');
     }
+    // </editor-fold>
 
-    private static Integer assertResolveArgsUnsupported(final Di.ModuleRef ref, final String token) {
-        try {
-            ref.resolve(token, 'someArgs');
-            Assert.fail('Expected InvalidProviderException when resolving non-factory provider with arguments.');
-        } catch (Di.InvalidProviderException ex) {
-            Assert.isTrue(
-                ex.getMessage().contains('Arguments are only supported for FactoryProvider'),
-                'Exception message should explain that arguments are factory-only.'
-            );
-        }
-        return 1;
-    }
-
-    //=========================================================================
-    // Module System (Imports, Exports, Overrides)
-    //=========================================================================
+    // <editor-fold desc="Module System">
     @IsTest
-    static void should_resolve_provider_for_internal_use_from_imported_module() {
+    static void should_resolve_internal_provider_when_module_is_imported() {
         // Arrange: A module that imports another module is registered.
         Di.ModuleRef ref = Di.getModuleRef(InternalConsumerModule.class);
 
@@ -1530,7 +1545,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_allow_local_provider_to_override_imported_provider() {
+    static void should_allow_local_override_when_import_exports_same_token() {
         // Arrange: A module imports another module but also provides a provider with the same token.
         Di.ModuleRef ref = Di.getModuleRef(OverrideModule.class);
 
@@ -1544,7 +1559,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_ambiguous_imported_provider_tokens() {
+    static void should_reject_provider_when_imports_export_ambiguous_token() {
         // Arrange: A consumer imports two modules that export the same token from different owners.
         Di.ModuleRef ref = Di.getModuleRef(AmbiguousImportConsumerModule.class);
 
@@ -1566,7 +1581,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_allow_duplicate_import_reexports_from_same_owner() {
+    static void should_allow_duplicate_reexports_when_imports_share_owner() {
         // Arrange: Two imported modules re-export the same provider owned by a shared common module.
         Di.ModuleRef ref = Di.getModuleRef(SharedImportReexportConsumerModule.class);
 
@@ -1582,7 +1597,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reuse_visible_binding_index_between_graph_mutations() {
+    static void should_reuse_visible_binding_index_when_graph_is_unchanged() {
         // Arrange: A consumer exposes how often its import visibility is traversed.
         Di.ApplicationContext context = newTestContext();
         BindingIndexCountingConsumerModule consumer = new BindingIndexCountingConsumerModule();
@@ -1621,7 +1636,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_share_singleton_export_between_multiple_importing_modules() {
+    static void should_share_singleton_export_when_multiple_modules_import_owner() {
         // Arrange: Two modules import the same exported singleton provider from a shared module.
         Di.ModuleRef leftRef = Di.getModuleRef(SharedSingletonConsumerLeftModule.class);
         Di.ModuleRef rightRef = Di.getModuleRef(SharedSingletonConsumerRightModule.class);
@@ -1639,7 +1654,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_exported_provider_with_private_dependency_from_owner_module() {
+    static void should_resolve_private_dependency_when_exported_provider_uses_owner_context() {
         // Arrange: A consumer imports a module that exports a facade but keeps the facade dependency private.
         Di.ModuleRef consumerRef = Di.getModuleRef(PrivateFacadeConsumerModule.class);
 
@@ -1686,7 +1701,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_exported_provider_and_alias_through_owner_context() {
+    static void should_resolve_export_and_alias_when_owner_context_is_required() {
         // Arrange: Consumers import exported providers owned by other modules.
         Di.ModuleRef privateFacadeConsumerRef = Di.getModuleRef(PrivateFacadeConsumerModule.class);
         Di.ModuleRef aliasConsumerRef = Di.getModuleRef(ExportedAliasConsumerModule.class);
@@ -1710,15 +1725,16 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_not_resolve_exported_provider_with_consumer_only_dependency() {
+    static void should_not_resolve_exported_provider_when_dependency_is_consumer_only() {
         // Arrange: The owner exports a facade, while the consumer separately imports the facade dependency.
         Di.ModuleRef consumerRef = Di.getModuleRef(ConsumerOnlyDependencyConsumerModule.class);
 
-        // Act & Assert: Exported providers should not inherit the consumer module's import visibility.
+        // Act: Exported providers should not inherit the consumer module's import visibility.
         try {
             consumerRef.get(ExportedConsumerOnlyFacade.class);
             Assert.fail('Expected UnknownProviderException was not thrown.');
         } catch (Di.UnknownProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains(ConsumerOnlyDependencyService.class.getName()),
                 'The exported provider should not see dependencies imported only by its consumer.'
@@ -1727,7 +1743,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_scope_exported_provider_within_importing_scope() {
+    static void should_scope_exported_provider_when_resolved_from_importing_scope() {
         // Arrange: A scoped provider is exported from an imported owner module.
         Di.ScopeRef firstScope = Di.getModuleRef(ScopedExportConsumerModule.class).createScope();
         Di.ScopeRef secondScope = Di.getModuleRef(ScopedExportConsumerModule.class).createScope();
@@ -1751,7 +1767,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_share_scoped_provider_across_module_refs_with_same_scope_context() {
+    static void should_share_scoped_provider_when_module_refs_use_same_scope_context() {
         // Arrange: Two different consumers participate in the same logical unit of work.
         Di.ScopeContext scopeContext = new Di.ScopeContext();
         Di.ModuleRef leftRef = Di.getModuleRef(ScopedExportConsumerLeftModule.class);
@@ -1776,18 +1792,19 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_scope_context_shared_across_application_contexts() {
+    static void should_reject_scope_context_when_shared_across_application_contexts() {
         // Arrange: One logical scope is already bound to a module in the left application context.
         Di.ScopeContext scopeContext = new Di.ScopeContext();
         Di.ApplicationContext leftContext = newTestContext();
         Di.ApplicationContext rightContext = newTestContext();
         leftContext.getModuleRef(ScopedModule.class).createScope(scopeContext);
 
-        // Act & Assert: Reusing that cache in another isolated graph is rejected.
+        // Act: Reusing that cache in another isolated graph is rejected.
         try {
             rightContext.getModuleRef(ScopedModule.class).createScope(scopeContext);
             Assert.fail('Expected InvalidScopeException for a cross-context ScopeContext.');
         } catch (Di.InvalidScopeException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('cannot be shared across application contexts'),
                 'Error should explain that ScopeContext ownership is application-context-local.'
@@ -1796,7 +1813,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_handle_circular_imports_gracefully() {
+    static void should_handle_resolution_gracefully_when_imports_are_circular() {
         // Arrange: Modules with a circular dependency (A -> B -> C -> A) are defined.
         Exception unexpectedEx;
 
@@ -1820,11 +1837,12 @@ private class DiTest {
         Di.ApplicationContext context = newTestContext();
         context.addModule(new CircularA());
 
-        // Act & Assert: A circular module-import graph is rejected during compile.
+        // Act: A circular module-import graph is rejected during compile.
         try {
             context.compile();
             Assert.fail('Expected InvalidModuleException for circular module imports.');
         } catch (Di.InvalidModuleException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Circular module import detected'),
                 'Compile should reject circular module import graphs.'
@@ -1928,7 +1946,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_get_module_ref_by_instance() {
+    static void should_get_module_ref_when_module_instance_is_supplied() {
         // Arrange: A module instance is created but not yet registered.
         Di.Module mod = new ValueModule();
 
@@ -1941,7 +1959,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_return_existing_ref_for_registered_module_instance() {
+    static void should_return_existing_ref_when_module_instance_is_registered() {
         // Arrange: A local module and a global module are registered.
         Di.Module localMod = new ValueModule();
         Di.ModuleRef localRef1 = Di.addModule(localMod);
@@ -1958,16 +1976,17 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_distinct_module_instance_with_registered_token() {
+    static void should_reject_module_instance_when_token_is_already_registered() {
         // Arrange: One module instance has already claimed its token in the registry.
         ConfigurableModule registered = new ConfigurableModule('registered');
         Di.ModuleRef ref = Di.getModuleRef(registered);
 
-        // Act & Assert: A different instance with the same token must not silently reuse the registered ref.
+        // Act: A different instance with the same token must not silently reuse the registered ref.
         try {
             Di.getModuleRef(new ConfigurableModule('other'));
             Assert.fail('Expected InvalidModuleException for a distinct module instance with a registered token.');
         } catch (Di.InvalidModuleException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('already been registered'),
                 'Exception message should identify the duplicate module token.'
@@ -1978,13 +1997,14 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_evaluate_module_equality_based_on_token() {
+    static void should_evaluate_modules_as_equal_when_tokens_match() {
         // Arrange: Create two modules with the same token and one with a different token.
         Di.Module moduleA1 = new Di.DynamicModule('ModuleA');
         Di.Module moduleA2 = new Di.DynamicModule('ModuleA');
         Di.Module moduleB = new Di.DynamicModule('ModuleB');
 
-        // Act & Assert: Check equality and hash code consistency.
+        // Act: Check equality and hash code consistency.
+        // Assert: Verify the expected outcome.
         Assert.isTrue(moduleA1.equals(moduleA2), 'Modules with the same token should be equal.');
         Assert.areEqual(moduleA1.hashCode(), moduleA2.hashCode(), 'Hash codes for equal modules should be the same.');
         Assert.isFalse(moduleA1.equals(moduleB), 'Modules with different tokens should not be equal.');
@@ -1993,13 +2013,14 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_correctly_report_has_provider_import_and_export() {
+    static void should_report_graph_membership_when_provider_import_and_export_exist() {
         // Arrange: Get modules with different configurations to test each method.
         Di.Module modWithImport = Di.getModuleRef(InternalConsumerModule.class).getModule();
         Di.Module modWithProvider = Di.getModuleRef(SingleModule.class).getModule();
         Di.Module modWithExport = Di.getModuleRef(ValueModule.class).getModule();
 
-        // Act & Assert: Test hasProvider() for locally defined providers.
+        // Act: Test hasProvider() for locally defined providers.
+        // Assert: Verify the expected outcome.
         Assert.isTrue(modWithProvider.hasProvider('TestService'), 'Should report having a local provider.');
         Assert.isFalse(
             modWithImport.hasProvider('foo'),
@@ -2007,20 +2028,19 @@ private class DiTest {
         );
         Assert.isFalse(modWithProvider.hasProvider('non_existent'), 'Should report not having a provider.');
 
-        // Act & Assert: Test hasImport().
+        // Act: Test hasImport().
         Assert.isTrue(modWithImport.hasImport(BModule.class.getName()), 'Should report having an import.');
         Assert.isFalse(modWithProvider.hasImport(BModule.class.getName()), 'Should report not having an import.');
 
-        // Act & Assert: Test hasExport().
+        // Act: Test hasExport().
         Assert.isTrue(modWithExport.hasExport('val'), 'Should report having an export.');
         Assert.isFalse(modWithImport.hasExport('foo'), 'Should report not having an export.');
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Module Re-Exporting Tests
-    //=========================================================================
+    // <editor-fold desc="Module Re-exports">
     @IsTest
-    static void should_resolve_provider_from_reexported_module() {
+    static void should_resolve_provider_when_module_is_reexported() {
         // Arrange: ModuleA imports ModuleB, which imports and re-exports ModuleC.
         Di.ModuleRef ref = Di.getModuleRef(ReexportConsumerModule.class);
 
@@ -2032,15 +2052,16 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_not_resolve_provider_if_not_reexported() {
+    static void should_not_resolve_provider_when_module_is_not_reexported() {
         // Arrange: ModuleA imports ModuleB, which imports but does NOT re-export ModuleC.
         Di.ModuleRef ref = Di.getModuleRef(NonReexportConsumerModule.class);
 
-        // Act & Assert: An attempt to get a provider from ModuleC should fail.
+        // Act: An attempt to get a provider from ModuleC should fail.
         try {
             ref.get('serviceC');
             Assert.fail('Expected UnknownProviderException was not thrown.');
         } catch (Di.UnknownProviderException ex) {
+            // Assert: Verify the expected outcome.
             // This is expected because ModuleB encapsulates ModuleC's providers.
             Assert.isTrue(
                 ex.getMessage().contains('Could not find "serviceC" provider'),
@@ -2050,7 +2071,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reexport_from_dynamic_module() {
+    static void should_reexport_provider_when_dynamic_module_reexports_owner() {
         // Arrange: A dynamic module is configured to import and re-export another module.
         Di.addModule(new ServiceCModule());
         Di.DynamicModule dynamicReexporter = new Di.DynamicModule('DynamicReexporter');
@@ -2065,7 +2086,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_provider_through_transitive_reexport() {
+    static void should_resolve_provider_when_reexport_is_transitive() {
         // Arrange: A consumer imports a reexporter that reexports another reexporting module.
         Di.ModuleRef ref = Di.getModuleRef(TransitiveReexportConsumerModule.class);
 
@@ -2077,8 +2098,10 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_detect_circular_reexports_during_registration() {
+    static void should_detect_circular_reexports_when_module_is_registered() {
+        // Arrange: Prepare the test scenario.
         // Arrange / Act: A pair of modules reexport each other.
+        // Act: Execute the behavior under test.
         try {
             Di.getModuleRef(CircularReexportAModule.class);
             Assert.fail('Expected InvalidModuleException for circular module reexports.');
@@ -2090,12 +2113,11 @@ private class DiTest {
             );
         }
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Lazy vs. Eager Imports
-    //=========================================================================
+    // <editor-fold desc="Lazy and Compiled Graphs">
     @IsTest
-    static void should_delay_module_resolution_for_lazy_import() {
+    static void should_delay_module_resolution_when_import_is_lazy() {
         // Arrange: A consumer module lazily imports a module that does not exist yet.
         Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
 
@@ -2111,7 +2133,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_module_immediately_for_immediate_import() {
+    static void should_resolve_module_immediately_when_import_is_eager() {
         // Arrange: The dependency module is registered first.
         Di.addModule(new ValueModule());
 
@@ -2127,7 +2149,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_at_runtime_for_missing_lazy_import() {
+    static void should_throw_exception_when_lazy_import_is_missing_at_runtime() {
         // Arrange: A module lazily imports a non-existent module class.
         Di.ModuleRef ref = Di.getModuleRef(LazyErrorConsumerModule.class);
 
@@ -2150,11 +2172,12 @@ private class DiTest {
         Di.ApplicationContext context = newTestContext();
         context.addModule(new LazyErrorConsumerModule());
 
-        // Act & Assert: Compiling the context validates the whole graph before provider resolution.
+        // Act: Compiling the context validates the whole graph before provider resolution.
         try {
             context.compile();
             Assert.fail('Expected UnknownModuleException was not thrown.');
         } catch (Di.UnknownModuleException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Cannot find module "NonExistent.Module"'),
                 'Compile should validate lazy imports before runtime provider access.'
@@ -2163,7 +2186,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_provider_from_compiled_application_context_graph() {
+    static void should_resolve_provider_when_application_context_graph_is_compiled() {
         // Arrange: A context contains a consumer and its imported dependency.
         Di.ApplicationContext context = newTestContext();
         context.addModule(new ValueModule());
@@ -2178,7 +2201,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_preserve_local_override_in_compiled_application_context_graph() {
+    static void should_preserve_local_override_when_application_context_graph_is_compiled() {
         // Arrange: A context contains a module with a local provider that overrides an imported token.
         Di.ApplicationContext context = newTestContext();
         context.addModule(new OverrideModule());
@@ -2197,11 +2220,12 @@ private class DiTest {
         Di.ApplicationContext context = newTestContext();
         context.addModule(new AmbiguousImportConsumerModule());
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             context.compile();
             Assert.fail('Expected InvalidProviderException for ambiguous imported provider token.');
         } catch (Di.InvalidProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('ambiguousImportVal'),
                 'Compile should identify the ambiguous provider token.'
@@ -2214,7 +2238,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_global_provider_from_compiled_application_context_graph() {
+    static void should_resolve_global_provider_when_application_context_graph_is_compiled() {
         // Arrange: A context has a global metadata module and a local consumer.
         Di.ApplicationContext context = newTestContext();
         context.mockGlobalModules(
@@ -2237,7 +2261,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_autowire_exported_provider_with_owner_context_from_compiled_application_context_graph() {
+    static void should_autowire_exported_provider_when_compiled_graph_preserves_owner_context() {
         // Arrange: A compiled context contains a consumer of an exported facade with a private owner dependency.
         Di.ApplicationContext context = newTestContext();
         context.addModule(new PrivateFacadeConsumerModule());
@@ -2256,7 +2280,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_scope_exported_provider_from_compiled_application_context_graph() {
+    static void should_scope_exported_provider_when_application_context_graph_is_compiled() {
         // Arrange: A compiled context contains a consumer of an exported scoped provider.
         Di.ApplicationContext context = newTestContext();
         context.addModule(new ScopedExportConsumerModule());
@@ -2284,7 +2308,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_metadata_existing_alias_from_compiled_application_context_graph() {
+    static void should_resolve_metadata_alias_when_application_context_graph_is_compiled() {
         // Arrange: A compiled context contains a metadata Existing alias and its local target.
         Di.ApplicationContext context = newTestContext();
         context.mockProviders(
@@ -2321,11 +2345,12 @@ private class DiTest {
         context.addModule(new ValueModule());
         context.compile();
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             context.getModuleRef(ValueModule.class).get('missingCompiledProvider');
             Assert.fail('Expected UnknownProviderException for a token missing from the compiled graph.');
         } catch (Di.UnknownProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('missingCompiledProvider'),
                 'Compiled graph lookup should reject unknown provider tokens.'
@@ -2335,7 +2360,9 @@ private class DiTest {
 
     @IsTest
     static void should_throw_exception_when_registering_module_with_missing_immediate_import() {
+        // Arrange: Prepare the test scenario.
         // Arrange & Act: A module with an immediate import for a non-existent module is registered.
+        // Act: Execute the behavior under test.
         try {
             Di.getModuleRef(ImmediateMissingImportModule.class);
             Assert.fail('Expected UnknownModuleException was not thrown.');
@@ -2349,7 +2376,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_immediately_for_module_instance_import() {
+    static void should_resolve_immediately_when_module_instance_import_is_eager() {
         // Arrange: A module instance is created and used in an immediate import.
         Di.Module mod = new ValueModule();
         Di.ModuleImport moduleImport = Di.import(mod).immediately();
@@ -2362,7 +2389,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_not_reregister_cached_module_instance_import_on_each_resolve() {
+    static void should_not_reregister_module_when_cached_import_is_resolved_repeatedly() {
         // Arrange: A module instance import is created.
         Di.ApplicationContext context = newTestContext();
         RegisterCountingModule mod = new RegisterCountingModule();
@@ -2378,32 +2405,33 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_evaluate_module_import_equality_with_other_types() {
+    static void should_evaluate_module_import_as_unequal_when_other_type_is_compared() {
         // Arrange: A module import is created.
         Di.ModuleImport importA = Di.import('ModuleA');
 
-        // Act & Assert: Check equality against null and other object types.
+        // Act: Check equality against null and other object types.
+        // Assert: Verify the expected outcome.
         Assert.isFalse(importA.equals(null), 'ModuleImport should not be equal to null.');
         Assert.isFalse(importA.equals('some string'), 'ModuleImport should not be equal to a string.');
     }
 
     @IsTest
-    static void should_evaluate_module_import_equality_based_on_token() {
+    static void should_evaluate_module_imports_as_equal_when_tokens_match() {
         // Arrange: Create two imports with the same token and one with a different token.
         Di.ModuleImport importA1 = Di.import('ModuleA');
         Di.ModuleImport importA2 = Di.import(new Di.DynamicModule('ModuleA'));
         Di.ModuleImport importB = Di.import('ModuleB');
 
-        // Act & Assert: Check equality based on the resolved token.
+        // Act: Check equality based on the resolved token.
+        // Assert: Verify the expected outcome.
         Assert.isTrue(importA1.equals(importA2), 'ModuleImports with the same token should be equal.');
         Assert.isFalse(importA1.equals(importB), 'ModuleImports with different tokens should not be equal.');
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Global Modules
-    //=========================================================================
+    // <editor-fold desc="Global Modules">
     @IsTest
-    static void should_load_and_resolve_provider_from_cmt_global_module() {
+    static void should_load_and_resolve_provider_when_global_module_is_defined_in_metadata() {
         // Arrange: A mock CMT record is created to define a global module.
         Di.mockGlobalModules(
             new List<DI_GlobalModule__mdt>{
@@ -2420,7 +2448,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_share_global_singleton_between_multiple_consumers() {
+    static void should_share_global_singleton_when_multiple_consumers_resolve_it() {
         // Arrange: A global module owns and exports a singleton provider.
         Di.addModule(new GlobalSharedSingletonModule());
         Di.ModuleRef leftRef = Di.getModuleRef(GlobalSingletonConsumerLeftModule.class);
@@ -2439,7 +2467,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_duplicate_global_export_tokens() {
+    static void should_reject_global_export_when_token_has_different_owner() {
         // Arrange: One global module already publishes a token.
         Di.addModule(new DuplicateGlobalExportLeftModule());
         DuplicateGlobalExportRightModule rejectedModule = new DuplicateGlobalExportRightModule();
@@ -2473,7 +2501,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_allow_duplicate_global_reexports_from_same_owner() {
+    static void should_allow_global_reexports_when_bindings_share_owner() {
         // Arrange: Two global modules re-export the same provider owned by a shared common module.
         Di.addModule(new SharedGlobalReexportLeftModule());
 
@@ -2489,11 +2517,12 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_allow_long_global_module_class_names_in_metadata_field() {
+    static void should_allow_long_class_names_when_global_module_is_stored_in_metadata() {
         // Arrange: Namespaced and inner Apex class names can exceed short text limits.
         Integer moduleClassLength = DI_GlobalModule__mdt.ModuleClass__c.getDescribe().getLength();
 
-        // Act & Assert: The metadata field should support long fully-qualified class names.
+        // Act: The metadata field should support long fully-qualified class names.
+        // Assert: Verify the expected outcome.
         Assert.isTrue(
             moduleClassLength >= 255,
             'ModuleClass__c should allow long namespaced or inner module class names.'
@@ -2501,7 +2530,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_rollback_and_retry_global_metadata_load_after_failure() {
+    static void should_rollback_and_retry_when_global_metadata_load_fails() {
         // Arrange: A consumer exists before global metadata loading is triggered.
         Di.ModuleRef consumerRef = Di.addModule(new EmptyModule());
         Di.mockGlobalModules(
@@ -2546,7 +2575,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_prioritize_local_provider_over_global_provider() {
+    static void should_prioritize_local_provider_when_global_token_conflicts() {
         // Arrange: A global module is defined via mocked CMT, and a local module provides a conflicting token.
         Di.mockGlobalModules(
             new List<DI_GlobalModule__mdt>{
@@ -2586,7 +2615,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_return_existing_ref_for_registered_global_module_by_token() {
+    static void should_return_existing_ref_when_global_module_token_is_registered() {
         // Arrange: A global module is loaded via CMT mock, and its ref is retrieved once to ensure it's in the registry.
         Di.mockGlobalModules(
             new List<DI_GlobalModule__mdt>{
@@ -2603,7 +2632,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_distinct_cmdt_global_module_instance_with_registered_token() {
+    static void should_reject_distinct_global_instance_when_metadata_token_is_registered() {
         // Arrange: A global module is defined via CMT mock, but lookup passes a separate equivalent instance.
         Di.mockGlobalModules(
             new List<DI_GlobalModule__mdt>{
@@ -2611,13 +2640,14 @@ private class DiTest {
             }
         );
 
-        // Act & Assert: The graph-owned CMT instance should not be replaced or ignored by a distinct instance.
+        // Act: The graph-owned CMT instance should not be replaced or ignored by a distinct instance.
         try {
             Di.getModuleRef(new CmtGlobalModule());
             Assert.fail(
                 'Expected InvalidModuleException for a distinct global module instance with a registered token.'
             );
         } catch (Di.InvalidModuleException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('already been registered'),
                 'Exception message should identify the duplicate global module token.'
@@ -2626,7 +2656,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_expose_reexported_providers_globally() {
+    static void should_expose_provider_globally_when_global_module_reexports_it() {
         // Arrange: A global module re-exports the ValueModule's 'val' provider.
         // It does NOT explicitly list it in exports(), relying on re-export logic.
         Di.addModule(new GlobalReexportModule());
@@ -2640,7 +2670,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reset_loading_flag_on_clear() {
+    static void should_reset_global_loading_flag_when_context_is_cleared() {
         // Arrange: Mock and Load
         Di.mockGlobalModules(
             new List<DI_GlobalModule__mdt>{
@@ -2659,7 +2689,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_remove_reexported_providers_on_module_replacement() {
+    static void should_remove_reexported_providers_when_global_module_is_replaced() {
         // Arrange: Start with a global module that re-exports 'val'
         Di.addModule(new GlobalReexportModule());
 
@@ -2682,13 +2712,12 @@ private class DiTest {
             Assert.isNotNull(e, 'Expected UnknownProviderException');
         }
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Dynamic Module Tests
-    //=========================================================================
+    // <editor-fold desc="Dynamic Modules">
     @IsTest
     @SuppressWarnings('PMD.ApexUnitTestClassShouldHaveRunAs')
-    static void should_build_module_with_dynamic_providers_and_exports() {
+    static void should_build_module_when_dynamic_providers_and_exports_are_configured() {
         // Arrange: A dynamic module is configured with providers and exports.
         Di.DynamicModule dyn = new Di.DynamicModule('MyDynamicModule');
         dyn.addProvider(dyn.provide('dynamicVal').useValue('dynamic')).addExport('dynamicVal');
@@ -2702,7 +2731,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_build_module_with_dynamic_imports() {
+    static void should_build_module_when_dynamic_imports_are_configured() {
         // Arrange: A dynamic module is configured with an import.
         Di.DynamicModule dyn = new Di.DynamicModule('MyDynamicImporter');
         dyn.addImport(Di.import(ValueModule.class));
@@ -2717,7 +2746,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_use_cached_module_instance_for_import() {
+    static void should_use_cached_module_instance_when_dynamic_module_imports_instance() {
         // Arrange: Create a module instance and configure it with a specific value.
         ConfigurableModule configModule = new ConfigurableModule('configuredValue');
 
@@ -2744,7 +2773,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_register_dynamic_module_as_global() {
+    static void should_register_dynamic_module_when_marked_global() {
         // Arrange: A dynamic module is configured and marked as global.
         Di.DynamicModule dynGlobal = new Di.DynamicModule('MyDynamicGlobal');
         dynGlobal.setGlobal()
@@ -2841,7 +2870,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reuse_global_binding_index_between_graph_mutations() {
+    static void should_reuse_global_binding_index_when_graph_is_unchanged() {
         // Arrange: A global re-export exposes a traversal counter for binding-index construction.
         GlobalBindingIndexCountingModule globalModule = new GlobalBindingIndexCountingModule();
         Di.addModule(globalModule);
@@ -2933,14 +2962,15 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_evaluate_provider_equality_based_on_token() {
+    static void should_evaluate_providers_as_equal_when_tokens_match() {
         // Arrange: Create two different provider types with the same token, and one with a different token.
         Di.DynamicModule module = new Di.DynamicModule('ProviderEquality');
         Di.Provider providerA1 = module.provide('tokenA').useValue('value');
         Di.Provider providerA2 = module.provide('tokenA').useClass('SomeType');
         Di.Provider providerB = module.provide('tokenB').useValue('value');
 
-        // Act & Assert: Check equality based on the token.
+        // Act: Check equality based on the token.
+        // Assert: Verify the expected outcome.
         Assert.isTrue(
             providerA1.equals(providerA2),
             'Providers with the same token should be equal, regardless of type.'
@@ -2952,10 +2982,9 @@ private class DiTest {
         );
         Assert.isFalse(providerA1.equals(null), 'Provider should not be equal to null.');
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Edge Cases and Error Handling
-    //=========================================================================
+    // <editor-fold desc="Errors and Context Isolation">
     @IsTest
     static void should_throw_exception_when_instantiating_abstract_class() {
         // Arrange: A module attempts to provide an abstract class.
@@ -2975,7 +3004,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_call_inject_method_on_injectable_class() {
+    static void should_call_inject_when_provider_is_injectable() {
         // Arrange: A module provides a class that implements the Injectable interface.
         Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
 
@@ -2987,7 +3016,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_manually_inject_dependencies() {
+    static void should_inject_dependencies_when_container_inject_is_called() {
         // Arrange
         // We need a container. We can use any valid module ref.
         Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
@@ -3005,16 +3034,17 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_on_manual_injection_of_non_injectable() {
+    static void should_throw_exception_when_manual_injection_targets_non_injectable() {
         // Arrange
         Di.ModuleRef ref = Di.getModuleRef(InjectableModule.class);
         Object nonInjectable = new TestServiceImpl(); // Implements TestService, NOT Injectable
 
-        // Act & Assert
+        // Act: Execute the behavior under test.
         try {
             ref.inject(nonInjectable);
             Assert.fail('Expected InvalidClassException was not thrown.');
         } catch (Di.InvalidClassException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('implement the Di.Injectable interface'),
                 'Exception message should warn about missing interface.'
@@ -3023,7 +3053,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_clear_all_registries_and_caches() {
+    static void should_clear_registries_and_caches_when_di_is_cleared() {
         // Arrange: A local module is added and a global module is loaded and verified.
         Di.addModule(new ValueModule());
         Di.mockGlobalModules(
@@ -3055,7 +3085,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_isolate_local_modules_between_application_contexts() {
+    static void should_isolate_local_modules_when_application_contexts_are_distinct() {
         // Arrange: Two application contexts register the same module token independently.
         Di.ApplicationContext leftContext = newTestContext();
         Di.ApplicationContext rightContext = newTestContext();
@@ -3078,7 +3108,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_same_module_instance_registered_in_multiple_application_contexts() {
+    static void should_reject_module_instance_when_registered_in_multiple_contexts() {
         // Arrange: The same module instance is already owned by the left context.
         Di.ApplicationContext leftContext = newTestContext();
         Di.ApplicationContext rightContext = newTestContext();
@@ -3090,11 +3120,12 @@ private class DiTest {
             'Pre-condition: left context should own the consumer module.'
         );
 
-        // Act & Assert: A second context must not steal the module instance.
+        // Act: A second context must not steal the module instance.
         try {
             rightContext.addModule(consumer);
             Assert.fail('Expected InvalidModuleException for a module instance already bound to another context.');
         } catch (Di.InvalidModuleException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('already registered in another application context'),
                 'Error should explain the context ownership violation.'
@@ -3109,7 +3140,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_isolate_global_metadata_mocks_between_application_contexts() {
+    static void should_isolate_global_metadata_mocks_when_contexts_are_distinct() {
         // Arrange: Only the left context has a mocked global module.
         Di.ApplicationContext leftContext = newTestContext();
         Di.ApplicationContext rightContext = newTestContext();
@@ -3119,18 +3150,19 @@ private class DiTest {
             }
         );
 
-        // Act & Assert: The left context can resolve the mocked global provider.
+        // Act: The left context can resolve the mocked global provider.
         Assert.areEqual(
             'helloFromCmt',
             leftContext.getModuleRef(EmptyModule.class).get('cmtGlobalVal'),
             'Left context should load its mocked global module.'
         );
 
-        // Act & Assert: The right context remains isolated from the left context's mock.
+        // Act: The right context remains isolated from the left context's mock.
         try {
             rightContext.getModuleRef(EmptyModule.class).get('cmtGlobalVal');
             Assert.fail('Expected UnknownProviderException in the context without mocked globals.');
         } catch (Di.UnknownProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(
                 ex.getMessage().contains('Could not find "cmtGlobalVal" provider'),
                 'Right context should not see globals loaded by the left context.'
@@ -3139,7 +3171,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_resolve_imports_within_the_application_context() {
+    static void should_resolve_imports_when_application_context_owns_consumer() {
         // Arrange: The default context and an application context register different modules under ValueModule's token.
         Di.clear();
         Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
@@ -3165,7 +3197,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_replace_module_and_update_providers() {
+    static void should_update_providers_when_module_is_replaced() {
         // Arrange: An initial module is registered.
         Di.addModule(new SingleModule());
         Assert.isTrue(Di.getModuleRef(SingleModule.class).get('TestService') instanceof TestServiceImpl);
@@ -3197,7 +3229,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_share_replacement_runtime_between_held_and_registered_module_refs() {
+    static void should_share_replacement_runtime_when_old_ref_is_held() {
         // Arrange: Hold the original ref before replacing its module with another singleton provider definition.
         SingleModule module = new SingleModule();
         Di.ModuleRef heldRef = Di.addModule(module);
@@ -3259,7 +3291,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_module_replacement_with_mismatched_token() {
+    static void should_reject_module_replacement_when_token_is_mismatched() {
         // Arrange: A replacement module is configured with a token that does not match the target module.
         SingleModule module = new SingleModule();
         Di.ModuleRef ref = Di.addModule(module);
@@ -3302,7 +3334,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_replace_global_module_and_update_global_providers() {
+    static void should_update_global_providers_when_global_module_is_replaced() {
         // Arrange: A global module is loaded via CMT mock and its provider is verified.
         Di.mockGlobalModules(
             new List<DI_GlobalModule__mdt>{
@@ -3360,7 +3392,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_ignore_inactive_cmt_global_modules() {
+    static void should_ignore_global_module_when_metadata_is_inactive() {
         // Arrange: A global module is defined as inactive in a mocked CMT record.
         Di.mockGlobalModules(
             new List<DI_GlobalModule__mdt>{
@@ -3369,11 +3401,12 @@ private class DiTest {
         );
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
 
-        // Act & Assert: An attempt to get the provider from the inactive module throws an exception.
+        // Act: An attempt to get the provider from the inactive module throws an exception.
         try {
             consumerRef.get('cmtGlobalVal');
             Assert.fail('Expected provider from inactive global module to be unavailable.');
         } catch (Di.UnknownProviderException ex) {
+            // Assert: Verify the expected outcome.
             Assert.isTrue(ex.getMessage().contains('Could not find "cmtGlobalVal" provider'));
         }
     }
@@ -3381,11 +3414,12 @@ private class DiTest {
     @IsTest
     static void should_throw_exception_when_creating_abstract_module() {
         // Arrange: An abstract module class that cannot be instantiated.
-        // Act & Assert: Attempting to get a ref to this module should fail.
+        // Act: Attempting to get a ref to this module should fail.
         try {
             Di.getModuleRef(AbstractTestModule.class);
             Assert.fail('Expected InvalidModuleException was not thrown.');
         } catch (Di.InvalidModuleException e) {
+            // Assert: Verify the expected outcome.
             // This confirms the new try-catch block in Di.create() is working.
             Assert.isTrue(
                 e.getMessage().contains('has a public no-argument constructor'),
@@ -3401,11 +3435,12 @@ private class DiTest {
         Di.Module module = ref.getModule();
         Di.Provider provider = module.getProvider('MyAlias');
 
-        // Act & Assert: Directly calling resolve() on an ExistingProvider should be disallowed.
+        // Act: Directly calling resolve() on an ExistingProvider should be disallowed.
         try {
             provider.resolve(ref, null);
             Assert.fail('Expected InvalidProviderException was not thrown.');
         } catch (Di.InvalidProviderException e) {
+            // Assert: Verify the expected outcome.
             // This confirms the defensive exception in ExistingProvider.resolve() is working.
             Assert.isTrue(
                 e.getMessage().contains('This operation is not supported'),
@@ -3413,12 +3448,11 @@ private class DiTest {
             );
         }
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Integration Scenarios
-    //=========================================================================
+    // <editor-fold desc="Integration Scenarios">
     @IsTest
-    static void should_process_order_using_injected_services() {
+    static void should_process_order_when_services_are_injected() {
         // Arrange: Register the main OrderProcessingModule, which internally imports all its dependencies.
         // This simulates a real application where you only bootstrap the top-level module.
         Di.ModuleRef ref = Di.getModuleRef(OrderProcessingModule.class);
@@ -3435,7 +3469,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_dynamically_configure_and_refresh_a_feature_flag_module() {
+    static void should_refresh_feature_flag_when_dynamic_module_is_reconfigured() {
         // Arrange: A dynamic module for feature flags is registered, initially empty.
         Di.DynamicModule featureFlagsModule = new Di.DynamicModule('FeatureFlags');
         Di.ModuleRef featureFlagsRef = Di.addModule(featureFlagsModule);
@@ -3458,7 +3492,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_provide_short_alias_for_long_service_name() {
+    static void should_provide_short_alias_when_service_name_is_long() {
         // Arrange: The main application module is registered, which uses an alias internally.
         Di.ModuleRef ref = Di.getModuleRef(AppWithAliasModule.class);
         EmailService emailService = (EmailService) ref.get(EmailService.class);
@@ -3471,11 +3505,11 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_isolate_state_in_trigger_handler_simulation() {
+    static void should_isolate_state_when_trigger_handlers_use_distinct_scopes() {
         // Arrange: Register the module for our simulation.
         Di.ModuleRef rootContainer = Di.getModuleRef(RecordProcessorModule.class);
 
-        // Act & Assert for Record 1
+        // Act: Record 1
         // --- Start Unit of Work 1 ---
         Di.ScopeRef scope1 = rootContainer.createScope();
         RecordProcessor processor1 = (RecordProcessor) scope1.resolve(RecordProcessor.class);
@@ -3486,7 +3520,7 @@ private class DiTest {
         Assert.isTrue(logger1.getMessages()[0].contains('Record-001'), 'Logger 1 message should be for Record-001.');
         // --- End Unit of Work 1 ---
 
-        // Act & Assert for Record 2
+        // Act: Record 2
         // --- Start Unit of Work 2 ---
         Di.ScopeRef scope2 = rootContainer.createScope();
         RecordProcessor processor2 = (RecordProcessor) scope2.resolve(RecordProcessor.class);
@@ -3496,13 +3530,32 @@ private class DiTest {
         Assert.isTrue(logger2.getMessages()[0].contains('Record-002'), 'Logger 2 message should be for Record-002.');
         // --- End Unit of Work 2 ---
 
-        // Final Assert: Ensure the loggers were different instances.
+        // Assert: Ensure the loggers were different instances.
         Assert.areNotEqual(logger1, logger2, 'Loggers from different scopes should be different instances.');
     }
+    // </editor-fold>
 
-    //=========================================================================
-    // Test-Specific Inner Classes
-    //=========================================================================
+    // <editor-fold desc="Helpers">
+    private static Di.ApplicationContext newTestContext() {
+        Di.ApplicationContext context = Di.createContext();
+        context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        context.mockProviders(new Map<String, DI_Provider__mdt>());
+        return context;
+    }
+
+    private static Integer assertResolveArgsUnsupported(final Di.ModuleRef ref, final String token) {
+        try {
+            ref.resolve(token, 'someArgs');
+            Assert.fail('Expected InvalidProviderException when resolving non-factory provider with arguments.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('Arguments are only supported for FactoryProvider'),
+                'Exception message should explain that arguments are factory-only.'
+            );
+        }
+        return 1;
+    }
+
     // --- Service Interfaces and Implementations ---
     public interface TestService {
     }
@@ -4776,4 +4829,5 @@ private class DiTest {
             return new Set<Di.Provider>{ provide('BrokenService').useFactory(factory).scope(Di.Scope.SCOPED) };
         }
     }
+    // </editor-fold>
 }
