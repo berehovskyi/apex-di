@@ -23,6 +23,8 @@ The module **encapsulates providers by default**. This means you can only inject
 
 Exported providers are resolved in the context of the module that owns the provider, not the consuming module. The owner controls instantiation, singleton caching, scoped caching, and `Di.Injectable` autowiring visibility. This means an exported provider can inject private dependencies from its owner module, but it cannot see providers imported only by the consumer.
 
+Provider visibility follows a deterministic precedence: local providers override imported providers, imported providers override implicit global providers, and two visible imported providers with the same token are rejected when they have different owners. Re-exporting the same owner through multiple paths is allowed. Global modules likewise cannot publish the same token from different owners.
+
 ### Using Modules
 
 **1. Direct Resolution** - Typically used in controllers or entry points:
@@ -49,6 +51,16 @@ public class SalesModule extends Di.Module {
 }
 ```
 
+Imports are lazy by default. Mark an import with `.immediately()` when it must be registered with its owning module:
+
+```apex
+public override Set<Di.ModuleImport> imports() {
+    return new Set<Di.ModuleImport>{ Di.import(AccountsModule.class).immediately() };
+}
+```
+
+`.immediately()` only marks the import. Eager resolution occurs when the owning module is registered; calling it on a standalone `ModuleImport` does not mutate an application context.
+
 **3. Dependency Injection** - Implement `Di.Injectable` to receive the container:
 
 ```apex
@@ -60,6 +72,30 @@ public class OrderService implements Di.Injectable {
     }
 }
 ```
+
+`ModuleRef` instances are created by an application context during registration. They cannot be constructed standalone. Module instances also have strict identity: a different instance with an already-registered token, or the same instance registered in another application context, is rejected.
+
+### Application Contexts
+
+The static `Di` methods use one default `Di.ApplicationContext`. Create explicit contexts when multiple isolated module graphs or metadata sources must coexist in the same transaction:
+
+```apex
+Di.ApplicationContext context = Di.createContext();
+Di.ModuleRef ref = context.getModuleRef(SalesModule.class);
+OrderService service = (OrderService) ref.get(OrderService.class);
+```
+
+Each context owns its module registries, singleton runtimes, global bindings, metadata cache, and provider-discovery index. Imports declared with `Di.import(...)` are resolved in the context that owns the importing module.
+
+Provider discovery is incremental and memoized by default. Call `compile()` after registering the graph to eagerly resolve imports, validate visibility, and complete the provider index:
+
+```apex
+Di.ApplicationContext context = Di.createContext();
+Di.ModuleRef ref = context.getModuleRef(SalesModule.class);
+context.compile();
+```
+
+Compiled graphs require acyclic module imports. Graph mutations invalidate compiled and incremental bindings; resolution returns to lazy discovery until `compile()` is called again.
 
 ---
 
@@ -133,6 +169,8 @@ public class CoreModule extends Di.Module {
 }
 ```
 
+Re-exports are transitive and preserve the original provider owner. Circular re-export graphs and exports that do not resolve to a declared or re-exported provider are rejected during module registration.
+
 ---
 
 ## Global Modules
@@ -157,7 +195,9 @@ public class LoggingModule extends Di.Module {
 
 Global modules should be registered only once. In the above example, the `ILogger` provider will be ubiquitous, and modules that wish to inject the service will not need to import the `LoggingModule` in their `imports()`.
 
-You can also define global modules via Custom Metadata (`DI_GlobalModule__mdt`) with `ModuleClass__c` and `IsActive__c` fields. `ModuleClass__c` should contain the fully qualified Apex class name, such as `MyNamespace__LoggingModule` or `OuterClass.InnerModule`.
+Global exports act as implicit fallback imports and retain their owning module's visibility and caches. Their binding index is rebuilt atomically after a graph mutation and reused for constant-time lookups until the graph changes again.
+
+You can also define global modules via Custom Metadata (`DI_GlobalModule__mdt`) with `ModuleClass__c` and `IsActive__c` fields. `ModuleClass__c` should contain the fully qualified Apex class name, such as `MyNamespace.LoggingModule` or `OuterClass.InnerModule`.
 
 > **Hint**: Making everything global is not recommended as a design practice. While global modules can help reduce boilerplate, it's generally better to use the `imports()` to make a module's API available to other modules in a controlled and clear way.
 
@@ -183,7 +223,7 @@ dbModule.addProvider(dbModule.provide('ConnectionString').useValue('new-connecti
 ref.refresh();
 ```
 
-For global dynamic modules, `refresh()` republishes the module's current computed exports and clears module caches so consumers do not keep stale singleton instances.
+For global dynamic modules, `refresh()` commits the current module definition, invalidates provider-binding indexes, and clears module caches so consumers do not keep stale bindings or singleton instances.
 
 If you want to register a dynamic module in the global scope:
 
@@ -193,11 +233,23 @@ dbModule.setGlobal();
 
 > **Warning**: As mentioned above, making everything global is not a good design decision.
 
+Configure dynamic modules before registration. Call `refresh()` after changing a registered dynamic module, and call graph mutation APIs such as `replace()`, `refresh()`, or `addModule()` only between top-level resolutions, not from `Factory.newInstance()` or `Injectable.inject()`.
+
+Replacing a module requires the replacement to declare exactly the same token and remain in the same local or global registry. The framework rejects mismatched replacements before publishing them.
+
 ---
 
 ## Providers
 
 Providers tell the framework how to create your objects. They map a **token** (a string or Type) to a concrete implementation.
+
+Use the fluent builder inside modules, or instantiate the public provider classes directly for reuse, replacement, or focused tests:
+
+```apex
+Di.DynamicModule module = new Di.DynamicModule('TestModule');
+Di.Provider configured = module.provide(TestService.class).useClass(TestServiceImpl.class);
+Di.ValueProvider standalone = new Di.ValueProvider('Greeting', 'hello');
+```
 
 ### Token Identity
 
@@ -241,7 +293,7 @@ public class HttpClientFactory implements Di.Factory {
 provide(HttpClient.class).useFactory(new HttpClientFactory());
 ```
 
-> **Note**: Only factory providers support runtime arguments via `get(token, args)` or `resolve(token, args)`.
+> **Note**: Only factory providers support runtime arguments, and arguments must be passed through `resolve(token, args)`. `get(token, args)` always throws because `get()` is the cached retrieval path.
 
 ### useExisting
 
@@ -253,6 +305,8 @@ provide('Logger').useExisting(ILogger.class);
 
 If the target provider is `PROTOTYPE`, use `resolve()` instead of `get()`. Native and metadata-backed `Existing` aliases follow the same target-scope behavior.
 
+Aliases are redirects in the container graph. Resolve them through `get()` or `resolve()`; calling an `ExistingProvider`'s `resolve()` method directly is invalid.
+
 ### useMetadata
 
 Resolves a provider from `DI_Provider__mdt` custom metadata by `DeveloperName`.
@@ -262,6 +316,26 @@ provide('EmailService').useMetadata('EmailService_Config');
 ```
 
 Invalid metadata configuration is surfaced as framework exceptions. For example, an invalid `Scope__c` value raises `Di.InvalidProviderException` with the provider token and metadata record name.
+
+### Metadata Sources
+
+`Di.CustomMetadataSource` is the default adapter for `DI_GlobalModule__mdt` and `DI_Provider__mdt`. Supply a custom `Di.MetadataSource` to isolate an application from Custom Metadata or provide definitions from another source:
+
+```apex
+public class AppMetadataSource implements Di.MetadataSource {
+    public Iterable<Di.GlobalModuleDefinition> getGlobalModules() {
+        return new List<Di.GlobalModuleDefinition>();
+    }
+
+    public Map<String, Di.ProviderDefinition> getProviders() {
+        return new Map<String, Di.ProviderDefinition>();
+    }
+}
+
+Di.ApplicationContext context = Di.createContext(new AppMetadataSource());
+```
+
+The framework core consumes normalized `GlobalModuleDefinition` and `ProviderDefinition` values; only the default adapter reads raw Custom Metadata records.
 
 ---
 
@@ -305,11 +379,11 @@ Manual `inject()` is strict and throws if the supplied object does not implement
 
 Scopes control instance lifetime.
 
-| Scope       | Behavior                                                         |
-| ----------- | ---------------------------------------------------------------- |
-| `SINGLETON` | One instance per owning `ModuleRef` (default)                    |
-| `PROTOTYPE` | New instance on every `resolve()` call                           |
-| `SCOPED`    | One instance per active `ScopeRef` or owner scope (Unit of Work) |
+| Scope       | Behavior                                                 |
+| ----------- | -------------------------------------------------------- |
+| `SINGLETON` | One instance per owning module runtime (default)         |
+| `PROTOTYPE` | New instance on every `resolve()` call                   |
+| `SCOPED`    | One instance per active logical scope and provider owner |
 
 ```apex
 provide(UnitOfWork.class).useClass(UnitOfWork.class).scope(Di.Scope.SCOPED);
@@ -327,13 +401,23 @@ UnitOfWork uow2 = (UnitOfWork) scope.get(UnitOfWork.class);
 Assert.areEqual(uow1, uow2); // Same instance
 ```
 
-Use `createScope()` before resolving `SCOPED` providers with `get()`. Calling root `ModuleRef.get()` for a scoped provider raises `Di.InvalidScopeException`; root `resolve()` remains available for an uncached one-off instance.
+Use `createScope()` before resolving `SCOPED` providers. Both root `ModuleRef.get()` and root `ModuleRef.resolve()` reject scoped providers with `Di.InvalidScopeException`. Within a scope, `get()` caches the scoped instance and `resolve()` creates a fresh instance. A singleton must not depend on a scoped provider because singleton construction occurs at the root.
+
+Share one `ScopeContext` across module refs when they participate in the same logical unit of work:
+
+```apex
+Di.ScopeContext unitOfWork = new Di.ScopeContext();
+Di.ScopeRef salesScope = salesRef.createScope(unitOfWork);
+Di.ScopeRef accountsScope = accountsRef.createScope(unitOfWork);
+```
+
+A `ScopeContext` belongs to one `ApplicationContext`. It caches scoped instances by provider owner and token, detects graph revisions between top-level resolutions, and discards stale instances after graph mutations. `unitOfWork.clear()` explicitly resets the entire shared scope; clearing or refreshing any participant also resets that shared unit of work.
 
 ---
 
 ## Installation
 
-Copy `Di.cls` and optionally the `DI_Provider__mdt` and `DI_GlobalModule__mdt` custom metadata types into your Salesforce project.
+Deploy `sfdx-source/apex-di/main` as one metadata unit. `Di.cls` references the included `DI_Provider__mdt` and `DI_GlobalModule__mdt` types, so copying only the Apex class is not sufficient.
 
 Local tooling is npm-based:
 
@@ -349,7 +433,7 @@ Salesforce test commands require an authenticated/default org unless a `--target
 
 ## Testing
 
-Isolate tests from metadata by mocking global modules and providers.
+Prefer a fresh `ApplicationContext` with an injected `MetadataSource` for isolated tests. Tests that exercise the default Custom Metadata adapter can use the `@TestVisible` mock helpers:
 
 ```apex
 @IsTest
