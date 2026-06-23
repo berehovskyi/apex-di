@@ -63,6 +63,12 @@ public virtual inherited sharing class Di {
     private static final String SCOPE_CONTEXT_MISMATCH_MESSAGE =
         'A ScopeContext cannot be shared across application contexts. ' +
         'Create a separate ScopeContext for each application context.';
+    private static final String CLEARED_CONTEXT_REFERENCE_MESSAGE =
+        'Cannot use this container reference because its application context was cleared. ' +
+        'Request a new reference from the application context.';
+    private static final String UNREGISTERED_MODULE_CONTEXT_MESSAGE =
+        'Cannot access module providers because the module is not registered in an active application context ' +
+        'or its application context was cleared. Register the module before requesting its providers.';
     private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
         'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
@@ -414,7 +420,8 @@ public virtual inherited sharing class Di {
 
         // <editor-fold desc="Helpers">
         private ApplicationContext getContext() {
-            return context ?? DEFAULT_CONTEXT;
+            isTrue(context != null, new InvalidContextException(UNREGISTERED_MODULE_CONTEXT_MESSAGE));
+            return context;
         }
 
         private void setContext(final ApplicationContext context) {
@@ -592,11 +599,13 @@ public virtual inherited sharing class Di {
         protected Container parent;
         protected final List<String> resolutionPath = new List<String>();
         protected Boolean inCall = false;
+        private final Integer contextGeneration;
         private ModuleRuntime runtime;
 
         protected Container(final ApplicationContext context, final Container parent, final Module module) {
             this.context = context ?? DEFAULT_CONTEXT;
             this.parent = parent;
+            this.contextGeneration = this.context.lifecycleGeneration;
             this.runtime = new ModuleRuntime(module);
         }
 
@@ -653,11 +662,13 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Object inject(final Object instance) {
+            validateContextGeneration();
             isTrue(instance instanceof Injectable, new InvalidClassException(NOT_INJECTABLE_MESSAGE));
             return autowire(instance);
         }
 
         public Module getModule() {
+            validateContextGeneration();
             return runtime.module;
         }
         // </editor-fold>
@@ -665,6 +676,13 @@ public virtual inherited sharing class Di {
         protected abstract Object getInstance(final Provider provider, final Object args);
 
         protected abstract Boolean hasInCache(final String token);
+
+        protected void validateContextGeneration() {
+            isTrue(
+                contextGeneration == context.lifecycleGeneration,
+                new InvalidContextException(CLEARED_CONTEXT_REFERENCE_MESSAGE)
+            );
+        }
 
         protected virtual Object getInternal(final String token, final Object args) {
             validateAndAddPath(token);
@@ -937,6 +955,7 @@ public virtual inherited sharing class Di {
         private Boolean hasGlobalLoadFailed = false;
         private Boolean isCompiled = false;
         private Boolean isLoadingGlobalModules = false;
+        private Integer lifecycleGeneration = 0;
         private MetadataSource metadataSource;
         private Map<String, ProviderDefinition> providerDefinitionByDeveloperName;
 
@@ -1118,6 +1137,7 @@ public virtual inherited sharing class Di {
             markGraphChanged();
             clearModuleContexts(moduleRegistry);
             clearModuleContexts(globalModuleRegistry);
+            lifecycleGeneration++;
             moduleRegistry.clear();
             globalModuleRegistry.clear();
             globalProviderBindings.clear();
@@ -1838,6 +1858,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual void clearCache() {
+            validateContextGeneration();
             clearSingletons();
         }
         // </editor-fold>
@@ -1901,6 +1922,7 @@ public virtual inherited sharing class Di {
 
         // <editor-fold desc="Helpers">
         private void refreshIfModuleChanged() {
+            validateContextGeneration();
             ModuleRef currentRef = getCurrentRegisteredRef();
             if (currentRef != null && currentRef !== this && currentRef.getModule() !== getModule()) {
                 adoptRuntime(currentRef);
@@ -1995,6 +2017,7 @@ public virtual inherited sharing class Di {
 
         // <editor-fold desc="Scope API">
         public override Object get(final String token, final Object args) {
+            validateContextGeneration();
             Boolean isTopLevelResolution = !inCall;
             if (isTopLevelResolution) {
                 synchronizeScopeContext();
@@ -2009,6 +2032,7 @@ public virtual inherited sharing class Di {
         }
 
         public override Object resolve(final String token, final Object args) {
+            validateContextGeneration();
             Boolean isTopLevelResolution = !inCall;
             if (isTopLevelResolution) {
                 synchronizeScopeContext();
@@ -2023,6 +2047,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual void clearCache() {
+            validateContextGeneration();
             scopeContext.clear();
             ownerScopes.clear();
             scopeGeneration = scopeContext.generation;
@@ -2174,6 +2199,8 @@ public virtual inherited sharing class Di {
     public virtual class InvalidClassException extends DiException {
     }
     public virtual class InvalidScopeException extends DiException {
+    }
+    public virtual class InvalidContextException extends DiException {
     }
     public virtual class CircularDependencyException extends DiException {
     }

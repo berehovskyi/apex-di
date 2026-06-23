@@ -3085,6 +3085,81 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_reject_resolution_when_module_ref_belongs_to_cleared_context() {
+        // Arrange: A context has issued root and scoped handles for a registered module.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef staleRef = context.addModule(new ValueModule());
+        Di.ScopeRef staleScope = staleRef.createScope();
+        Assert.areEqual('hello', staleRef.get('val'), 'Pre-condition: root handle should resolve before clear.');
+        Assert.areEqual('hello', staleScope.get('val'), 'Pre-condition: scoped handle should resolve before clear.');
+
+        // Act: Clearing the context invalidates every handle it previously issued.
+        context.clear();
+
+        // Assert: Previously issued root and scoped handles reject resolution.
+        try {
+            staleRef.get('val');
+            Assert.fail('Expected stale ModuleRef resolution to be rejected after context clear.');
+        } catch (Di.DiException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('application context was cleared'),
+                'Error should explain that the ModuleRef belongs to a cleared context generation.'
+            );
+        }
+
+        try {
+            staleScope.get('val');
+            Assert.fail('Expected stale ScopeRef resolution to be rejected after context clear.');
+        } catch (Di.DiException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('application context was cleared'),
+                'Error should explain that the ScopeRef belongs to a cleared context generation.'
+            );
+        }
+
+        try {
+            staleRef.getModule();
+            Assert.fail('Expected stale ModuleRef module access to be rejected after context clear.');
+        } catch (Di.DiException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('application context was cleared'),
+                'Error should explain that the ModuleRef cannot expose a module from a cleared generation.'
+            );
+        }
+
+        // Assert: The ApplicationContext itself remains reusable and issues valid handles for its new generation.
+        Di.ModuleRef currentRef = context.addModule(new ValueModule());
+        Assert.areEqual('hello', currentRef.get('val'), 'A newly issued handle should resolve after context reuse.');
+    }
+
+    @IsTest
+    static void should_reject_provider_lookup_via_module_from_cleared_context() {
+        // Arrange: A caller retains the registered module instance independently of its ModuleRef.
+        Di.ApplicationContext context = newTestContext();
+        ValueModule module = new ValueModule();
+        context.addModule(module);
+        Assert.areEqual(
+            'val',
+            module.getProvider('val').getToken(),
+            'Pre-condition: registered module should resolve providers.'
+        );
+
+        // Act: Clearing the owner context makes the retained module instance stale until it is explicitly re-registered.
+        context.clear();
+
+        // Assert: Provider lookup cannot fall back to and mutate the default application context.
+        try {
+            module.getProvider('val');
+            Assert.fail('Expected provider lookup through a module from a cleared context to be rejected.');
+        } catch (Di.DiException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('application context was cleared'),
+                'Error should explain that the retained module belongs to a cleared context generation.'
+            );
+        }
+    }
+
+    @IsTest
     static void should_isolate_local_modules_when_application_contexts_are_distinct() {
         // Arrange: Two application contexts register the same module token independently.
         Di.ApplicationContext leftContext = newTestContext();
