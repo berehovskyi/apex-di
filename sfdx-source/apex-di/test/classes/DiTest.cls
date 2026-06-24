@@ -3347,6 +3347,31 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_clear_dependent_singleton_caches_when_local_module_is_refreshed() {
+        // Arrange: A consumer singleton is cached from an imported local module value.
+        Di.DynamicModule valueModule = new Di.DynamicModule(ValueModule.class.getName());
+        valueModule.addProvider(valueModule.provide('val').useValue('initial')).addExport('val');
+        Di.ModuleRef ownerRef = Di.addModule(valueModule);
+        Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
+        Assert.areEqual(
+            'depends on initial',
+            consumerRef.get('dependentVal'),
+            'Pre-condition: value should be cached.'
+        );
+
+        // Act: Refresh the local owner after changing its declared value.
+        valueModule.addProvider(valueModule.provide('val').useValue('refreshed')).addExport('val');
+        ownerRef.refresh();
+
+        // Assert: Dependent singleton caches are invalidated after local refresh.
+        Assert.areEqual(
+            'depends on refreshed',
+            consumerRef.get('dependentVal'),
+            'Dependent singleton providers should be rebuilt after local module refresh.'
+        );
+    }
+
+    @IsTest
     static void should_clear_dependent_singleton_caches_when_provider_is_replaced() {
         // Arrange: A consumer singleton captures an imported owner value.
         ValueModule valueModule = new ValueModule();

@@ -1846,10 +1846,8 @@ public virtual inherited sharing class Di {
                 currentModule.register(context);
                 if (currentModule.isGlobal()) {
                     context.validateGlobalProviderBindings();
-                    context.clearAllModuleCaches();
-                    return;
                 }
-                clearCache();
+                context.clearAllModuleCaches();
             } catch (Exception exc) {
                 currentModule.definition = previousDefinition;
                 context.markGraphChanged();
