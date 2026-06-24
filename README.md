@@ -228,7 +228,10 @@ For global dynamic modules, `refresh()` commits the current module definition, i
 If you want to register a dynamic module in the global scope:
 
 ```apex
-dbModule.setGlobal();
+Di.DynamicModule globalDbModule = new Di.DynamicModule('GlobalDatabaseModule').setGlobal();
+globalDbModule.addProvider(globalDbModule.provide('ConnectionString').useValue('jdbc:salesforce://...'));
+globalDbModule.addExport('ConnectionString');
+Di.addModule(globalDbModule);
 ```
 
 > **Warning**: As mentioned above, making everything global is not a good design decision.
@@ -388,6 +391,8 @@ Scopes control instance lifetime.
 ```apex
 provide(UnitOfWork.class).useClass(UnitOfWork.class).scope(Di.Scope.SCOPED);
 ```
+
+Configure scope before registration. A committed provider rejects later `scope(...)` changes, and `null` is never a valid scope.
 
 ### Creating a Scope
 

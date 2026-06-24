@@ -60,6 +60,9 @@ public virtual inherited sharing class Di {
         'Scoped providers require an active scope cache.' +
         '\nUse createScope() method instead to create a ScopeRef.';
     private static final String NULL_SCOPE_CONTEXT_MESSAGE = 'Cannot create a scope with a null ScopeContext.';
+    private static final String NULL_PROVIDER_SCOPE_MESSAGE = 'Provider scope cannot be null.';
+    private static final String COMMITTED_PROVIDER_SCOPE_MESSAGE = 'Cannot change the scope of a committed provider. Configure provider scope before module registration.';
+    private static final String REGISTERED_MODULE_SCOPE_CHANGE_MESSAGE = 'Cannot change a registered module from local to global. Configure module scope before registration.';
     private static final String SCOPE_CONTEXT_MISMATCH_MESSAGE =
         'A ScopeContext cannot be shared across application contexts. ' +
         'Create a separate ScopeContext for each application context.';
@@ -72,8 +75,8 @@ public virtual inherited sharing class Di {
     private static final String INVALID_PROVIDER_CONFIG_MESSAGE =
         'Invalid provider configuration for token "{0}". ' +
         'The provider must be one of: ClassProvider, ValueProvider, FactoryProvider or ExistingProvider.';
-    private static final String CIRCULAR_DEPENDENCY_MESSAGE = 'Circular dependency detected for provider "{0}". Resolution path: {1}';
-    private static final String CIRCULAR_REEXPORT_MESSAGE = 'Circular module reexport detected for module "{0}". Registration path: {1}';
+    private static final String CIRCULAR_DEPENDENCY_MESSAGE = 'Circular dependency detected for provider "{0}". Resolution path: {1} -> {0}';
+    private static final String CIRCULAR_REEXPORT_MESSAGE = 'Circular module reexport detected for module "{0}". Registration path: {1} -> {0}';
     private static final String CIRCULAR_MODULE_IMPORT_MESSAGE = 'Circular module import detected for module "{0}".';
     private static final String INVALID_OPERATION_MESSAGE = 'This operation is not supported for this provider type.';
     private static final String INVALID_DEVELOPER_NAME_MESSAGE = 'The developer name for a metadata provider cannot be blank.';
@@ -89,6 +92,9 @@ public virtual inherited sharing class Di {
     private static final String NULL_METADATA_SOURCE_MESSAGE = 'Cannot create an application context with a null metadata source.';
 
     private static final ApplicationContext DEFAULT_CONTEXT = new ApplicationContext();
+
+    @TestVisible
+    private static Integer guardExceptionCreationCount = 0;
 
     @TestVisible
     private static Boolean hasGlobalLoadBeenAttempted {
@@ -164,10 +170,7 @@ public virtual inherited sharing class Di {
 
     private static Module create(final String token) {
         Type moduleType = Type.forName(token);
-        isTrue(
-            moduleType != null,
-            new UnknownModuleException(String.format(UNKNOWN_MODULE_MESSAGE, new List<String>{ token }))
-        );
+        isTrue(moduleType != null, UnknownModuleException.class, UNKNOWN_MODULE_MESSAGE, new List<String>{ token });
 
         Object raw;
         try {
@@ -178,32 +181,23 @@ public virtual inherited sharing class Di {
                 exc
             );
         }
-        isTrue(
-            raw instanceof Module,
-            new InvalidModuleException(String.format(INVALID_MODULE_MESSAGE, new List<String>{ token }))
-        );
+        isTrue(raw instanceof Module, InvalidModuleException.class, INVALID_MODULE_MESSAGE, new List<String>{ token });
 
         Module module = (Module) raw;
         return module;
     }
 
     private static Object instantiate(final String typeName) {
-        isTrue(
-            typeName != null,
-            new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ 'null' }))
-        );
+        isTrue(typeName != null, InvalidClassException.class, INVALID_CLASS_MESSAGE, new List<String>{ 'null' });
 
         Type providedType = Type.forName(typeName);
-        isTrue(
-            providedType != null,
-            new InvalidClassException(String.format(INVALID_CLASS_MESSAGE, new List<String>{ typeName }))
-        );
+        isTrue(providedType != null, InvalidClassException.class, INVALID_CLASS_MESSAGE, new List<String>{ typeName });
 
         return instantiate(providedType);
     }
 
     private static Object instantiate(final Type type) {
-        isTrue(type != null, new InvalidClassException(NULL_PROVIDER_FACTORY_MESSAGE));
+        isTrue(type != null, InvalidClassException.class, NULL_PROVIDER_FACTORY_MESSAGE);
         try {
             return type.newInstance();
         } catch (Exception exc) {
@@ -217,7 +211,9 @@ public virtual inherited sharing class Di {
     private static Factory validateFactory(final Object raw, final String typeName, final String token) {
         isTrue(
             raw instanceof Factory,
-            new InvalidClassException(String.format(INVALID_FACTORY_CLASS_MESSAGE, new List<String>{ typeName, token }))
+            InvalidClassException.class,
+            INVALID_FACTORY_CLASS_MESSAGE,
+            new List<String>{ typeName, token }
         );
 
         return (Factory) raw;
@@ -260,11 +256,46 @@ public virtual inherited sharing class Di {
         return definitions;
     }
 
-    private static void isTrue(final Boolean condition, final Exception exc) {
+    private static void isTrue(final Boolean condition, final Type exceptionType, final String message) {
         if (condition ?? false) {
             return;
         }
-        throw exc;
+        throw createException(exceptionType, message);
+    }
+
+    private static void isTrue(
+        final Boolean condition,
+        final Type exceptionType,
+        final String messageTemplate,
+        final List<String> arguments
+    ) {
+        if (condition ?? false) {
+            return;
+        }
+        throw createException(exceptionType, String.format(messageTemplate, arguments));
+    }
+
+    private static void isTrue(
+        final Boolean condition,
+        final Type exceptionType,
+        final String messageTemplate,
+        final String token,
+        final List<String> path
+    ) {
+        if (condition ?? false) {
+            return;
+        }
+        throw createException(
+            exceptionType,
+            String.format(messageTemplate, new List<String>{ token, String.join(path, ' -> ') })
+        );
+    }
+
+    private static Exception createException(final Type exceptionType, final String message) {
+        guardExceptionCreationCount++;
+        Exception guardException = (Exception) exceptionType.newInstance();
+        guardException.setMessage(message);
+        return guardException;
     }
     // </editor-fold>
 
@@ -308,7 +339,7 @@ public virtual inherited sharing class Di {
         }
 
         protected Module(final String token) {
-            isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
 
             this.token = token;
         }
@@ -380,19 +411,20 @@ public virtual inherited sharing class Di {
         // </editor-fold>
 
         protected virtual Module replace(final Provider newProvider) {
-            isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
+            isTrue(newProvider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
 
             String token = newProvider.getToken();
-            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
             isTrue(
                 hasProvider(token),
-                new UnknownProviderException(
-                    String.format(UNKNOWN_PROVIDER_MESSAGE, new List<String>{ token, getToken() })
-                )
+                UnknownProviderException.class,
+                UNKNOWN_PROVIDER_MESSAGE,
+                new List<String>{ token, getToken() }
             );
 
             Map<String, Provider> replacementProviders = new Map<String, Provider>(definition.providers);
             replacementProviders.put(token, newProvider);
+            newProvider.freeze();
             definition = new ModuleDefinition(
                 replacementProviders,
                 definition.exports,
@@ -420,14 +452,16 @@ public virtual inherited sharing class Di {
 
         // <editor-fold desc="Helpers">
         private ApplicationContext getContext() {
-            isTrue(context != null, new InvalidContextException(UNREGISTERED_MODULE_CONTEXT_MESSAGE));
+            isTrue(context != null, InvalidContextException.class, UNREGISTERED_MODULE_CONTEXT_MESSAGE);
             return context;
         }
 
         private void setContext(final ApplicationContext context) {
             isTrue(
                 this.context == null || this.context === context,
-                new InvalidModuleException(String.format(MODULE_CONTEXT_MISMATCH_MESSAGE, new List<String>{ token }))
+                InvalidModuleException.class,
+                MODULE_CONTEXT_MISMATCH_MESSAGE,
+                new List<String>{ token }
             );
             this.context = context;
         }
@@ -438,12 +472,18 @@ public virtual inherited sharing class Di {
             }
         }
 
+        private void freezeDefinition() {
+            for (Provider provider : definition.providers.values()) {
+                provider.freeze();
+            }
+        }
+
         private ProviderBinding getProviderBinding(final String token) {
             return getProviderBinding(token, true);
         }
 
         private ProviderBinding getProviderBinding(final String token, final Boolean includeGlobals) {
-            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             ProviderBinding visibleProvider = getContext().getVisibleProviderBinding(this, token);
             if (visibleProvider != null) {
@@ -451,9 +491,9 @@ public virtual inherited sharing class Di {
             }
             isTrue(
                 !getContext().hasCompiledGraph(),
-                new UnknownProviderException(
-                    String.format(UNKNOWN_PROVIDER_MESSAGE, new List<String>{ token, getToken() })
-                )
+                UnknownProviderException.class,
+                UNKNOWN_PROVIDER_MESSAGE,
+                new List<String>{ token, getToken() }
             );
 
             // First check local definitions
@@ -484,17 +524,14 @@ public virtual inherited sharing class Di {
                 }
                 isTrue(
                     selectedProvider.getOwner() === provider.getOwner(),
-                    new InvalidProviderException(
-                        String.format(
-                            AMBIGUOUS_IMPORTED_PROVIDER_MESSAGE,
-                            new List<String>{
-                                token,
-                                getToken(),
-                                selectedProvider.getOwner().getModule().getToken(),
-                                provider.getOwner().getModule().getToken()
-                            }
-                        )
-                    )
+                    InvalidProviderException.class,
+                    AMBIGUOUS_IMPORTED_PROVIDER_MESSAGE,
+                    new List<String>{
+                        token,
+                        getToken(),
+                        selectedProvider.getOwner().getModule().getToken(),
+                        provider.getOwner().getModule().getToken()
+                    }
                 );
             }
             if (selectedProvider != null) {
@@ -523,12 +560,12 @@ public virtual inherited sharing class Di {
             }
 
             for (String token : exports() ?? new Set<String>()) {
-                isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+                isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
                 isTrue(
                     candidateProviders.containsKey(token),
-                    new UnknownExportException(
-                        String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, getToken() })
-                    )
+                    UnknownExportException.class,
+                    UNKNOWN_EXPORT_MESSAGE,
+                    new List<String>{ token, getToken() }
                 );
 
                 candidateExports.add(token);
@@ -554,15 +591,20 @@ public virtual inherited sharing class Di {
 
             return new ModuleDefinition(candidateProviders, candidateExports, candidateImports, candidateReexports);
         }
+
+        protected Boolean isRegistered() {
+            return context != null;
+        }
         // </editor-fold>
     }
 
     public abstract inherited sharing class Provider {
         protected final String token;
-        protected Scope scopeType = Scope.SINGLETON;
+        private Boolean isCommitted = false;
+        private Scope scopeType = Scope.SINGLETON;
 
         protected Provider(String token) {
-            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             this.token = token;
         }
@@ -574,6 +616,8 @@ public virtual inherited sharing class Di {
         }
 
         public virtual Provider scope(final Scope scopeType) {
+            isTrue(scopeType != null, InvalidScopeException.class, NULL_PROVIDER_SCOPE_MESSAGE);
+            isTrue(!isCommitted, InvalidProviderException.class, COMMITTED_PROVIDER_SCOPE_MESSAGE);
             this.scopeType = scopeType;
             return this;
         }
@@ -591,6 +635,10 @@ public virtual inherited sharing class Di {
 
         public Integer hashCode() {
             return System.hashCode(token);
+        }
+
+        private void freeze() {
+            isCommitted = true;
         }
     }
 
@@ -611,7 +659,7 @@ public virtual inherited sharing class Di {
 
         // <editor-fold desc="Resolution API">
         public virtual Object get(final String token, final Object args) {
-            isTrue(args == null, new InvalidProviderException(GET_ARGS_NOT_SUPPORTED_MESSAGE));
+            isTrue(args == null, InvalidProviderException.class, GET_ARGS_NOT_SUPPORTED_MESSAGE);
             if (inCall) {
                 return getInternal(token, args);
             }
@@ -663,7 +711,7 @@ public virtual inherited sharing class Di {
 
         public virtual Object inject(final Object instance) {
             validateContextGeneration();
-            isTrue(instance instanceof Injectable, new InvalidClassException(NOT_INJECTABLE_MESSAGE));
+            isTrue(instance instanceof Injectable, InvalidClassException.class, NOT_INJECTABLE_MESSAGE);
             return autowire(instance);
         }
 
@@ -680,7 +728,8 @@ public virtual inherited sharing class Di {
         protected void validateContextGeneration() {
             isTrue(
                 contextGeneration == context.lifecycleGeneration,
-                new InvalidContextException(CLEARED_CONTEXT_REFERENCE_MESSAGE)
+                InvalidContextException.class,
+                CLEARED_CONTEXT_REFERENCE_MESSAGE
             );
         }
 
@@ -691,9 +740,9 @@ public virtual inherited sharing class Di {
                 Provider provider = binding.getProvider();
                 isTrue(
                     getProviderScope(provider) !== Scope.PROTOTYPE,
-                    new InvalidScopeException(
-                        String.format(PROTOTYPE_SCOPE_ERROR_MESSAGE, new List<String>{ provider.getToken() })
-                    )
+                    InvalidScopeException.class,
+                    PROTOTYPE_SCOPE_ERROR_MESSAGE,
+                    new List<String>{ provider.getToken() }
                 );
 
                 Container resolutionContainer = getResolutionContainer(binding.getOwner());
@@ -761,14 +810,13 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual void validateAndAddPath(final String token) {
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
             isTrue(
                 !resolutionPath.contains(token),
-                new CircularDependencyException(
-                    String.format(
-                        CIRCULAR_DEPENDENCY_MESSAGE,
-                        new List<String>{ token, String.join(resolutionPath, ' -> ') + ' -> ' + token }
-                    )
-                )
+                CircularDependencyException.class,
+                CIRCULAR_DEPENDENCY_MESSAGE,
+                token,
+                resolutionPath
             );
 
             resolutionPath.add(token);
@@ -974,12 +1022,12 @@ public virtual inherited sharing class Di {
         }
 
         public ApplicationContext(final MetadataSource metadataSource) {
-            isTrue(metadataSource != null, new InvalidModuleException(NULL_METADATA_SOURCE_MESSAGE));
+            isTrue(metadataSource != null, InvalidModuleException.class, NULL_METADATA_SOURCE_MESSAGE);
             this.metadataSource = metadataSource;
         }
 
         public virtual ModuleRef getModuleRef(final Module module) {
-            isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+            isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
 
             String token = module.getToken();
             ModuleRef ref = findRegisteredModuleRef(module);
@@ -989,13 +1037,15 @@ public virtual inherited sharing class Di {
 
             isTrue(
                 ref.getModule() === module,
-                new InvalidModuleException(String.format(MODULE_ALREADY_REGISTERED_MESSAGE, new List<String>{ token }))
+                InvalidModuleException.class,
+                MODULE_ALREADY_REGISTERED_MESSAGE,
+                new List<String>{ token }
             );
             return ref;
         }
 
         public virtual ModuleRef getModuleRef(final String token) {
-            isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
 
             ModuleRef ref = findModuleRef(token);
             if (ref != null) {
@@ -1011,7 +1061,7 @@ public virtual inherited sharing class Di {
         }
 
         public virtual ModuleRef addModule(final Module module) {
-            isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+            isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
             markGraphChanged();
 
             String token = module.getToken();
@@ -1019,7 +1069,9 @@ public virtual inherited sharing class Di {
             ModuleDefinition previousDefinition = module.definition;
             isTrue(
                 !registry.containsKey(token),
-                new InvalidModuleException(String.format(MODULE_ALREADY_REGISTERED_MESSAGE, new List<String>{ token }))
+                InvalidModuleException.class,
+                MODULE_ALREADY_REGISTERED_MESSAGE,
+                new List<String>{ token }
             );
 
             ModuleRef ref = new ModuleRef(this, module);
@@ -1029,6 +1081,7 @@ public virtual inherited sharing class Di {
                 if (module.isGlobal()) {
                     validateGlobalProviderBindings();
                 }
+                module.freezeDefinition();
                 return ref;
             } catch (Exception exc) {
                 if (registry.get(token) === ref) {
@@ -1042,13 +1095,13 @@ public virtual inherited sharing class Di {
         }
 
         public virtual void replaceModule(final String token, final Module newModule) {
-            isTrue(newModule != null, new InvalidModuleException(INVALID_MODULE_REPLACEMENT_MESSAGE));
-            isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+            isTrue(newModule != null, InvalidModuleException.class, INVALID_MODULE_REPLACEMENT_MESSAGE);
+            isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
             isTrue(
                 token.equals(newModule.getToken()),
-                new InvalidModuleException(
-                    String.format(MODULE_TOKEN_MISMATCH_MESSAGE, new List<String>{ token, newModule.getToken() })
-                )
+                InvalidModuleException.class,
+                MODULE_TOKEN_MISMATCH_MESSAGE,
+                new List<String>{ token, newModule.getToken() }
             );
 
             markGraphChanged();
@@ -1057,16 +1110,13 @@ public virtual inherited sharing class Di {
             String oldRegistryToken = oldRef.registryToken;
             isTrue(
                 oldModule.isGlobal() == newModule.isGlobal(),
-                new InvalidModuleException(
-                    String.format(
-                        MODULE_SCOPE_MISMATCH_MESSAGE,
-                        new List<String>{
-                            oldModule.isGlobal() ? 'global' : 'local',
-                            token,
-                            newModule.isGlobal() ? 'global' : 'local'
-                        }
-                    )
-                )
+                InvalidModuleException.class,
+                MODULE_SCOPE_MISMATCH_MESSAGE,
+                new List<String>{
+                    oldModule.isGlobal() ? 'global' : 'local',
+                    token,
+                    newModule.isGlobal() ? 'global' : 'local'
+                }
             );
 
             Map<String, ModuleRef> registry = oldModule.isGlobal() ? globalRegistry : moduleRegistry;
@@ -1081,6 +1131,7 @@ public virtual inherited sharing class Di {
                 registry.put(token, newRef);
                 try {
                     validateGlobalProviderBindings();
+                    newModule.freezeDefinition();
                     clearAllModuleCaches();
                 } catch (Exception exc) {
                     registry.remove(token);
@@ -1095,7 +1146,11 @@ public virtual inherited sharing class Di {
                     registry.remove(oldRegistryToken);
                 }
                 registry.put(token, newRef);
+                newModule.freezeDefinition();
                 clearAllModuleCaches();
+            }
+            if (oldModule !== newModule) {
+                oldModule.clearContext(this);
             }
         }
 
@@ -1191,12 +1246,10 @@ public virtual inherited sharing class Di {
         protected void assertNoCircularReexport(final String token) {
             isTrue(
                 !moduleRegistrationPath.contains(token),
-                new InvalidModuleException(
-                    String.format(
-                        CIRCULAR_REEXPORT_MESSAGE,
-                        new List<String>{ token, String.join(moduleRegistrationPath, ' -> ') + ' -> ' + token }
-                    )
-                )
+                InvalidModuleException.class,
+                CIRCULAR_REEXPORT_MESSAGE,
+                token,
+                moduleRegistrationPath
             );
         }
 
@@ -1299,9 +1352,9 @@ public virtual inherited sharing class Di {
 
             isTrue(
                 !compilingModuleKeys.contains(moduleKey),
-                new InvalidModuleException(
-                    String.format(CIRCULAR_MODULE_IMPORT_MESSAGE, new List<String>{ module.getToken() })
-                )
+                InvalidModuleException.class,
+                CIRCULAR_MODULE_IMPORT_MESSAGE,
+                new List<String>{ module.getToken() }
             );
             compilingModuleKeys.add(moduleKey);
             try {
@@ -1331,12 +1384,9 @@ public virtual inherited sharing class Di {
                         ProviderBinding provider = importedProviders.get(token);
                         isTrue(
                             provider != null,
-                            new UnknownExportException(
-                                String.format(
-                                    UNKNOWN_EXPORT_MESSAGE,
-                                    new List<String>{ token, importedModule.getToken() }
-                                )
-                            )
+                            UnknownExportException.class,
+                            UNKNOWN_EXPORT_MESSAGE,
+                            new List<String>{ token, importedModule.getToken() }
                         );
                         ProviderBinding selectedProvider = visibleProviders.get(token);
                         if (selectedProvider == null) {
@@ -1345,17 +1395,14 @@ public virtual inherited sharing class Di {
                         }
                         isTrue(
                             selectedProvider.getOwner() === provider.getOwner(),
-                            new InvalidProviderException(
-                                String.format(
-                                    AMBIGUOUS_IMPORTED_PROVIDER_MESSAGE,
-                                    new List<String>{
-                                        token,
-                                        module.getToken(),
-                                        selectedProvider.getOwner().getModule().getToken(),
-                                        provider.getOwner().getModule().getToken()
-                                    }
-                                )
-                            )
+                            InvalidProviderException.class,
+                            AMBIGUOUS_IMPORTED_PROVIDER_MESSAGE,
+                            new List<String>{
+                                token,
+                                module.getToken(),
+                                selectedProvider.getOwner().getModule().getToken(),
+                                provider.getOwner().getModule().getToken()
+                            }
                         );
                     }
                 }
@@ -1393,9 +1440,9 @@ public virtual inherited sharing class Di {
                     Module module = create(moduleDef.moduleClass);
                     isTrue(
                         module.isGlobal(),
-                        new InvalidModuleException(
-                            String.format(INVALID_GLOBAL_MODULE_MESSAGE, new List<String>{ module.getToken() })
-                        )
+                        InvalidModuleException.class,
+                        INVALID_GLOBAL_MODULE_MESSAGE,
+                        new List<String>{ module.getToken() }
                     );
 
                     addModule(module);
@@ -1453,26 +1500,23 @@ public virtual inherited sharing class Di {
             final Module module,
             final String token
         ) {
-            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             ProviderBinding provider = module.getProviderBinding(token, false);
             isTrue(
                 provider != null,
-                new UnknownExportException(
-                    String.format(UNKNOWN_EXPORT_MESSAGE, new List<String>{ token, module.getToken() })
-                )
+                UnknownExportException.class,
+                UNKNOWN_EXPORT_MESSAGE,
+                new List<String>{ token, module.getToken() }
             );
 
             ProviderBinding existingProvider = globalBindings.get(token);
             String existingModuleToken = existingProvider?.getOwner().getModule().getToken();
             isTrue(
                 existingProvider == null || existingProvider.getOwner() === provider.getOwner(),
-                new InvalidProviderException(
-                    String.format(
-                        DUPLICATE_GLOBAL_PROVIDER_MESSAGE,
-                        new List<String>{ token, module.getToken(), existingModuleToken }
-                    )
-                )
+                InvalidProviderException.class,
+                DUPLICATE_GLOBAL_PROVIDER_MESSAGE,
+                new List<String>{ token, module.getToken(), existingModuleToken }
             );
 
             globalBindings.put(token, provider);
@@ -1507,33 +1551,34 @@ public virtual inherited sharing class Di {
         }
 
         public DynamicModule setGlobal() {
+            isTrue(!isRegistered(), InvalidModuleException.class, REGISTERED_MODULE_SCOPE_CHANGE_MESSAGE);
             isGlobal = true;
             return this;
         }
 
         public DynamicModule addImport(final ModuleImport moduleImport) {
-            isTrue(moduleImport != null, new InvalidModuleException(NULL_MODULE_IMPORT_MESSAGE));
+            isTrue(moduleImport != null, InvalidModuleException.class, NULL_MODULE_IMPORT_MESSAGE);
 
             dynamicImports.add(moduleImport);
             return this;
         }
 
         public DynamicModule addProvider(final Provider provider) {
-            isTrue(provider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
+            isTrue(provider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
 
             dynamicProviders.put(provider.getToken(), provider);
             return this;
         }
 
         public DynamicModule addExport(final String token) {
-            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             dynamicExports.add(token);
             return this;
         }
 
         public DynamicModule addReexport(final ModuleImport moduleImport) {
-            isTrue(moduleImport != null, new InvalidModuleException(NULL_MODULE_IMPORT_MESSAGE));
+            isTrue(moduleImport != null, InvalidModuleException.class, NULL_MODULE_IMPORT_MESSAGE);
 
             dynamicReexports.add(moduleImport);
             return this;
@@ -1544,7 +1589,7 @@ public virtual inherited sharing class Di {
         protected final String token;
 
         protected ProviderBuilder(final String token) {
-            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             this.token = token;
         }
@@ -1593,7 +1638,9 @@ public virtual inherited sharing class Di {
             super(token);
             isTrue(
                 type != null,
-                new InvalidProviderException(String.format(INVALID_PROVIDER_TYPE_MESSAGE, new List<String>{ token }))
+                InvalidProviderException.class,
+                INVALID_PROVIDER_TYPE_MESSAGE,
+                new List<String>{ token }
             );
 
             typeName = type;
@@ -1612,7 +1659,7 @@ public virtual inherited sharing class Di {
         }
 
         public override Object resolve(final Container container, final Object args) {
-            isTrue(args == null, new InvalidProviderException(ARGS_NOT_SUPPORTED_MESSAGE));
+            isTrue(args == null, InvalidProviderException.class, ARGS_NOT_SUPPORTED_MESSAGE);
             return instantiate(typeName);
         }
 
@@ -1634,7 +1681,7 @@ public virtual inherited sharing class Di {
         }
 
         public override Object resolve(final Container container, final Object args) {
-            isTrue(args == null, new InvalidProviderException(ARGS_NOT_SUPPORTED_MESSAGE));
+            isTrue(args == null, InvalidProviderException.class, ARGS_NOT_SUPPORTED_MESSAGE);
             return value;
         }
     }
@@ -1644,7 +1691,7 @@ public virtual inherited sharing class Di {
 
         public FactoryProvider(final String token, final Factory factory) {
             super(token);
-            isTrue(factory != null, new InvalidProviderException(NULL_PROVIDER_FACTORY_MESSAGE));
+            isTrue(factory != null, InvalidProviderException.class, NULL_PROVIDER_FACTORY_MESSAGE);
 
             this.factory = factory;
         }
@@ -1679,7 +1726,7 @@ public virtual inherited sharing class Di {
 
         public ExistingProvider(final String token, final String existing) {
             super(token);
-            isTrue(existing != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(existing != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             this.existing = existing;
         }
@@ -1711,7 +1758,7 @@ public virtual inherited sharing class Di {
         // <editor-fold desc="Provider API">
         public CustomMetadataTypesProvider(final String token, final String developerName) {
             super(token);
-            isTrue(!String.isBlank(developerName), new InvalidProviderException(INVALID_DEVELOPER_NAME_MESSAGE));
+            isTrue(!String.isBlank(developerName), InvalidProviderException.class, INVALID_DEVELOPER_NAME_MESSAGE);
 
             this.developerName = developerName;
         }
@@ -1722,7 +1769,7 @@ public virtual inherited sharing class Di {
 
         public override Object resolve(final Container container, final Object args) {
             ProviderDefinition definition = getDefinition(container.context);
-            Scope scopeType = !String.isBlank(definition.scope) ? parseMetadataScope(definition) : this.scopeType;
+            Scope scopeType = !String.isBlank(definition.scope) ? parseMetadataScope(definition) : super.getScope();
             // Runtime args have the highest priority
             Object factoryArgs = args ?? definition.args;
             String typeName = definition.type;
@@ -1774,15 +1821,15 @@ public virtual inherited sharing class Di {
             ProviderDefinition definition = context.getProviderDefinitions().get(developerName);
             isTrue(
                 definition != null,
-                new InvalidProviderException(
-                    String.format(MISSING_METADATA_PROVIDER_MESSAGE, new List<String>{ token, developerName })
-                )
+                InvalidProviderException.class,
+                MISSING_METADATA_PROVIDER_MESSAGE,
+                new List<String>{ token, developerName }
             );
             isTrue(
                 definition.isActive,
-                new InvalidProviderException(
-                    String.format(INACTIVE_METADATA_PROVIDER_MESSAGE, new List<String>{ token, developerName })
-                )
+                InvalidProviderException.class,
+                INACTIVE_METADATA_PROVIDER_MESSAGE,
+                new List<String>{ token, developerName }
             );
             return definition;
         }
@@ -1816,16 +1863,16 @@ public virtual inherited sharing class Di {
         }
 
         public virtual ScopeRef createScope(final ScopeContext scopeContext) {
-            isTrue(scopeContext != null, new InvalidScopeException(NULL_SCOPE_CONTEXT_MESSAGE));
+            isTrue(scopeContext != null, InvalidScopeException.class, NULL_SCOPE_CONTEXT_MESSAGE);
             refreshIfModuleChanged();
             return new ScopeRef(this, scopeContext);
         }
 
         public virtual void replace(final Provider newProvider) {
-            isTrue(newProvider != null, new InvalidProviderException(NULL_PROVIDER_MESSAGE));
+            isTrue(newProvider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
 
             String token = newProvider.getToken();
-            isTrue(token != null, new InvalidProviderException(INVALID_PROVIDER_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             refreshIfModuleChanged();
             getModule().replace(newProvider);
@@ -1847,6 +1894,7 @@ public virtual inherited sharing class Di {
                 if (currentModule.isGlobal()) {
                     context.validateGlobalProviderBindings();
                 }
+                currentModule.freezeDefinition();
                 context.clearAllModuleCaches();
             } catch (Exception exc) {
                 currentModule.definition = previousDefinition;
@@ -1865,9 +1913,9 @@ public virtual inherited sharing class Di {
             Scope providerScope = getProviderScope(provider);
             isTrue(
                 providerScope !== Scope.SCOPED,
-                new InvalidScopeException(
-                    String.format(SCOPED_ROOT_ACCESS_ERROR_MESSAGE, new List<String>{ provider.getToken() })
-                )
+                InvalidScopeException.class,
+                SCOPED_ROOT_ACCESS_ERROR_MESSAGE,
+                new List<String>{ provider.getToken() }
             );
             String key = provider.getToken();
             if (providerScope == Scope.SINGLETON && hasSingleton(key)) {
@@ -1890,9 +1938,9 @@ public virtual inherited sharing class Di {
         protected override Object resolveInstance(final Provider provider, final Object args) {
             isTrue(
                 getProviderScope(provider) !== Scope.SCOPED,
-                new InvalidScopeException(
-                    String.format(SCOPED_ROOT_ACCESS_ERROR_MESSAGE, new List<String>{ provider.getToken() })
-                )
+                InvalidScopeException.class,
+                SCOPED_ROOT_ACCESS_ERROR_MESSAGE,
+                new List<String>{ provider.getToken() }
             );
             return super.resolveInstance(provider, args);
         }
@@ -1951,7 +1999,8 @@ public virtual inherited sharing class Di {
         private void bind(final ApplicationContext context) {
             isTrue(
                 this.context == null || this.context === context,
-                new InvalidScopeException(SCOPE_CONTEXT_MISMATCH_MESSAGE)
+                InvalidScopeException.class,
+                SCOPE_CONTEXT_MISMATCH_MESSAGE
             );
             if (this.context == null) {
                 this.context = context;
@@ -2139,7 +2188,7 @@ public virtual inherited sharing class Di {
         }
 
         protected ModuleImport(final ApplicationContext context, final String token) {
-            isTrue(token != null, new InvalidModuleException(INVALID_MODULE_TOKEN_MESSAGE));
+            isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
 
             this.context = context ?? DEFAULT_CONTEXT;
             this.token = token;
@@ -2150,7 +2199,7 @@ public virtual inherited sharing class Di {
         }
 
         protected ModuleImport(final ApplicationContext context, final Module module) {
-            isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+            isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
 
             this.context = context ?? DEFAULT_CONTEXT;
             token = module.getToken();
@@ -2273,7 +2322,7 @@ public virtual inherited sharing class Di {
         private final Map<String, Object> singletonCache = new Map<String, Object>();
 
         private ModuleRuntime(final Module module) {
-            isTrue(module != null, new InvalidModuleException(NULL_MODULE_MESSAGE));
+            isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
             this.module = module;
         }
     }

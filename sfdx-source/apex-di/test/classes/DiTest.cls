@@ -3372,6 +3372,154 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_reject_provider_scope_mutation_after_registration() {
+        // Arrange: A provider is committed into a registered module and cached as a singleton.
+        Di.ClassProvider provider = new Di.ClassProvider('immutableScope', TestServiceImpl.class);
+        Di.DynamicModule module = new Di.DynamicModule('ImmutableProviderModule');
+        module.addProvider(provider).addExport('immutableScope');
+        Di.ModuleRef ref = Di.addModule(module);
+        Object original = ref.get('immutableScope');
+
+        // Act: Mutating the public provider object must not mutate the committed graph.
+        try {
+            provider.scope(Di.Scope.PROTOTYPE);
+            Assert.fail('Expected committed provider scope mutation to be rejected.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('committed'), 'Exception should explain provider immutability.');
+        }
+
+        // Assert: The committed provider remains a singleton with its original cached instance.
+        Assert.areEqual(Di.Scope.SINGLETON, module.getProvider('immutableScope').getScope());
+        Assert.areEqual(original, ref.get('immutableScope'));
+    }
+
+    @IsTest
+    static void should_release_replaced_module_instance_for_another_context() {
+        // Arrange: One context owns a local module instance.
+        Di.ApplicationContext leftContext = Di.createContext();
+        Di.ApplicationContext rightContext = Di.createContext();
+        Di.DynamicModule original = new Di.DynamicModule('ReleasedReplacementModule');
+        original.addProvider(original.provide('replacementOwnership').useValue('original'));
+        leftContext.addModule(original);
+        Di.DynamicModule replacement = new Di.DynamicModule(original.getToken());
+        replacement.addProvider(replacement.provide('replacementOwnership').useValue('replacement'));
+
+        // Act: The left context commits a distinct replacement, then the original is registered elsewhere.
+        leftContext.replaceModule(original.getToken(), replacement);
+        Di.ModuleRef rightRef = rightContext.addModule(original);
+
+        // Assert: Successful replacement releases only the superseded module instance.
+        Assert.areEqual('replacement', leftContext.getModuleRef(original.getToken()).get('replacementOwnership'));
+        Assert.areEqual('original', rightRef.get('replacementOwnership'));
+    }
+
+    @IsTest
+    static void should_throw_framework_exception_when_resolution_token_is_null() {
+        // Arrange: A valid root module reference receives invalid String and Type tokens.
+        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+
+        // Act and Assert: Every public get/resolve overload rejects null before path mutation.
+        Integer rejectedCallCount = 0;
+        try {
+            ref.get((String) null);
+            Assert.fail('Expected get(String) to reject a null provider token.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('cannot be null'));
+            rejectedCallCount++;
+        }
+        try {
+            ref.resolve((String) null);
+            Assert.fail('Expected resolve(String) to reject a null provider token.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('cannot be null'));
+            rejectedCallCount++;
+        }
+        try {
+            ref.get((Type) null);
+            Assert.fail('Expected get(Type) to reject a null provider token.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('cannot be null'));
+            rejectedCallCount++;
+        }
+        try {
+            ref.resolve((Type) null);
+            Assert.fail('Expected resolve(Type) to reject a null provider token.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('cannot be null'));
+            rejectedCallCount++;
+        }
+        Assert.areEqual(4, rejectedCallCount, 'Every null-token overload should reject the call consistently.');
+    }
+
+    @IsTest
+    static void should_reject_null_provider_scope() {
+        // Arrange: A standalone provider has the valid default singleton scope.
+        Di.Provider provider = new Di.ClassProvider('nullScope', TestServiceImpl.class);
+
+        // Act: Null is not a valid provider lifetime.
+        try {
+            provider.scope(null);
+            Assert.fail('Expected null provider scope to be rejected.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('cannot be null'),
+                'Exception should identify the invalid null scope.'
+            );
+        }
+
+        // Assert: Failed configuration leaves the original scope unchanged.
+        Assert.areEqual(Di.Scope.SINGLETON, provider.getScope());
+    }
+
+    @IsTest
+    static void should_reject_global_scope_change_after_module_registration() {
+        // Arrange: A dynamic module is already owned by the local registry.
+        Di.DynamicModule module = new Di.DynamicModule('RegisteredLocalModule');
+        module.addProvider(module.provide('registeredLocal').useValue('local'));
+        Di.ModuleRef ref = Di.addModule(module);
+
+        // Act: Registry ownership cannot be changed through the retained module object.
+        try {
+            module.setGlobal();
+            Assert.fail('Expected global scope mutation after registration to be rejected.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('registered'),
+                'Exception should explain module identity immutability.'
+            );
+        }
+
+        // Assert: The registered local module remains intact.
+        Assert.areEqual('local', ref.get('registeredLocal'));
+        Assert.isFalse(module.isGlobal());
+    }
+
+    @IsTest
+    static void should_construct_guard_exception_only_when_validation_fails() {
+        // Arrange: Capture the lazy-guard counter before a normal hot-path resolution.
+        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+        Integer initialCreationCount = Di.guardExceptionCreationCount;
+
+        // Act: Successful guard checks should not construct discarded exception objects.
+        ref.get('TestService');
+        ref.get('TestService');
+
+        // Assert: Happy-path resolution allocates no guard exceptions.
+        Assert.areEqual(initialCreationCount, Di.guardExceptionCreationCount);
+
+        // Act: A failing guard constructs exactly the exception that is thrown.
+        try {
+            ref.get((String) null);
+            Assert.fail('Expected a null provider token to fail validation.');
+        } catch (Di.InvalidProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('cannot be null'));
+        }
+
+        // Assert: Exception construction is lazy and failure-driven.
+        Assert.areEqual(initialCreationCount + 1, Di.guardExceptionCreationCount);
+    }
+
+    @IsTest
     static void should_clear_dependent_singleton_caches_when_provider_is_replaced() {
         // Arrange: A consumer singleton captures an imported owner value.
         ValueModule valueModule = new ValueModule();
