@@ -215,15 +215,17 @@ dbModule.addExport('ConnectionString');
 Di.ModuleRef ref = Di.addModule(dbModule);
 ```
 
-This module can be updated and refreshed after registration:
+Successful registration permanently seals the dynamic module definition. To change it, configure a new module with the same token and replace the registered module:
 
 ```apex
-// Later: update configuration
-dbModule.addProvider(dbModule.provide('ConnectionString').useValue('new-connection'));
-ref.refresh();
+Di.DynamicModule replacement = new Di.DynamicModule('DatabaseModule');
+replacement.addProvider(replacement.provide('ConnectionString').useValue('new-connection'));
+replacement.addExport('ConnectionString');
+
+Di.replaceModule('DatabaseModule', replacement);
 ```
 
-For global dynamic modules, `refresh()` commits the current module definition, invalidates provider-binding indexes, and clears module caches so consumers do not keep stale bindings or singleton instances.
+Replacement validates and commits the complete new definition atomically, invalidates provider-binding indexes, and clears module caches so consumers do not keep stale bindings or singleton instances. A global replacement must also call `setGlobal()` before registration.
 
 If you want to register a dynamic module in the global scope:
 
@@ -236,7 +238,9 @@ Di.addModule(globalDbModule);
 
 > **Warning**: As mentioned above, making everything global is not a good design decision.
 
-Configure dynamic modules before registration. Call `refresh()` after changing a registered dynamic module, and call graph mutation APIs such as `replace()`, `refresh()`, or `addModule()` only between top-level resolutions, not from `Factory.newInstance()` or `Injectable.inject()`.
+Configure dynamic modules before registration. After a successful registration, all five structural mutators (`setGlobal`, `addProvider`, `addImport`, `addExport`, and `addReexport`) reject further changes. Failed registration leaves the candidate editable and retryable. `ApplicationContext.clear()` releases ownership without unsealing the definition, so the same unchanged instance can be registered in another context; reconfiguration requires a new `DynamicModule` instance.
+
+Call graph mutation APIs such as `replace()`, `replaceModule()`, or `addModule()` only between top-level resolutions, not from `Factory.newInstance()` or `Injectable.inject()`.
 
 Replacing a module requires the replacement to declare exactly the same token and remain in the same local or global registry. The framework rejects mismatched replacements before publishing them.
 
@@ -416,7 +420,7 @@ Di.ScopeRef salesScope = salesRef.createScope(unitOfWork);
 Di.ScopeRef accountsScope = accountsRef.createScope(unitOfWork);
 ```
 
-A `ScopeContext` belongs to one `ApplicationContext`. It caches scoped instances by provider owner and token, detects graph revisions between top-level resolutions, and discards stale instances after graph mutations. `unitOfWork.clear()` explicitly resets the entire shared scope; clearing or refreshing any participant also resets that shared unit of work.
+A `ScopeContext` belongs to one `ApplicationContext`. It caches scoped instances by provider owner and token, detects graph revisions between top-level resolutions, and discards stale instances after graph mutations. `unitOfWork.clear()` explicitly resets the entire shared scope; clearing any participant also resets that shared unit of work.
 
 ---
 

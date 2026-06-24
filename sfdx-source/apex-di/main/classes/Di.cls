@@ -62,7 +62,7 @@ public virtual inherited sharing class Di {
     private static final String NULL_SCOPE_CONTEXT_MESSAGE = 'Cannot create a scope with a null ScopeContext.';
     private static final String NULL_PROVIDER_SCOPE_MESSAGE = 'Provider scope cannot be null.';
     private static final String COMMITTED_PROVIDER_SCOPE_MESSAGE = 'Cannot change the scope of a committed provider. Configure provider scope before module registration.';
-    private static final String REGISTERED_MODULE_SCOPE_CHANGE_MESSAGE = 'Cannot change a registered module from local to global. Configure module scope before registration.';
+    private static final String SEALED_DYNAMIC_MODULE_MESSAGE = 'Cannot modify sealed dynamic module "{0}". Create a new DynamicModule instance to change its definition.';
     private static final String SCOPE_CONTEXT_MISMATCH_MESSAGE =
         'A ScopeContext cannot be shared across application contexts. ' +
         'Create a separate ScopeContext for each application context.';
@@ -333,6 +333,7 @@ public virtual inherited sharing class Di {
             new Set<ModuleImport>()
         );
         private ApplicationContext context;
+        private Boolean isSealed = false;
 
         protected Module() {
             token = String.valueOf(this).substringBefore(':');
@@ -450,6 +451,10 @@ public virtual inherited sharing class Di {
             }
         }
 
+        protected Boolean isSealed() {
+            return isSealed;
+        }
+
         // <editor-fold desc="Helpers">
         private ApplicationContext getContext() {
             isTrue(context != null, InvalidContextException.class, UNREGISTERED_MODULE_CONTEXT_MESSAGE);
@@ -476,6 +481,7 @@ public virtual inherited sharing class Di {
             for (Provider provider : definition.providers.values()) {
                 provider.freeze();
             }
+            isSealed = true;
         }
 
         private ProviderBinding getProviderBinding(final String token) {
@@ -592,9 +598,6 @@ public virtual inherited sharing class Di {
             return new ModuleDefinition(candidateProviders, candidateExports, candidateImports, candidateReexports);
         }
 
-        protected Boolean isRegistered() {
-            return context != null;
-        }
         // </editor-fold>
     }
 
@@ -1551,12 +1554,13 @@ public virtual inherited sharing class Di {
         }
 
         public DynamicModule setGlobal() {
-            isTrue(!isRegistered(), InvalidModuleException.class, REGISTERED_MODULE_SCOPE_CHANGE_MESSAGE);
+            validateConfigurable();
             isGlobal = true;
             return this;
         }
 
         public DynamicModule addImport(final ModuleImport moduleImport) {
+            validateConfigurable();
             isTrue(moduleImport != null, InvalidModuleException.class, NULL_MODULE_IMPORT_MESSAGE);
 
             dynamicImports.add(moduleImport);
@@ -1564,6 +1568,7 @@ public virtual inherited sharing class Di {
         }
 
         public DynamicModule addProvider(final Provider provider) {
+            validateConfigurable();
             isTrue(provider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
 
             dynamicProviders.put(provider.getToken(), provider);
@@ -1571,6 +1576,7 @@ public virtual inherited sharing class Di {
         }
 
         public DynamicModule addExport(final String token) {
+            validateConfigurable();
             isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             dynamicExports.add(token);
@@ -1578,10 +1584,20 @@ public virtual inherited sharing class Di {
         }
 
         public DynamicModule addReexport(final ModuleImport moduleImport) {
+            validateConfigurable();
             isTrue(moduleImport != null, InvalidModuleException.class, NULL_MODULE_IMPORT_MESSAGE);
 
             dynamicReexports.add(moduleImport);
             return this;
+        }
+
+        private void validateConfigurable() {
+            isTrue(
+                !isSealed(),
+                InvalidModuleException.class,
+                SEALED_DYNAMIC_MODULE_MESSAGE,
+                new List<String>{ getToken() }
+            );
         }
     }
 
@@ -1882,25 +1898,6 @@ public virtual inherited sharing class Di {
 
         public virtual override Object resolve(final String token, final Object args) {
             return super.resolve(token, args);
-        }
-
-        public virtual void refresh() {
-            refreshIfModuleChanged();
-            context.markGraphChanged();
-            Module currentModule = getModule();
-            ModuleDefinition previousDefinition = currentModule.definition;
-            try {
-                currentModule.register(context);
-                if (currentModule.isGlobal()) {
-                    context.validateGlobalProviderBindings();
-                }
-                currentModule.freezeDefinition();
-                context.clearAllModuleCaches();
-            } catch (Exception exc) {
-                currentModule.definition = previousDefinition;
-                context.markGraphChanged();
-                throw exc;
-            }
         }
 
         public virtual void clearCache() {

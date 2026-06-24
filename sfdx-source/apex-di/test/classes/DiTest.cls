@@ -2790,41 +2790,161 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_update_global_dynamic_module_exports_when_refreshed() {
+    static void should_reject_all_dynamic_module_mutations_after_successful_registration() {
+        // Arrange: A fully configured dynamic module has committed successfully.
+        Di.DynamicModule module = new Di.DynamicModule('SealedDynamicModule');
+        module.addProvider(module.provide('sealedValue').useValue('stable')).addExport('sealedValue');
+        Di.addModule(module);
+        Integer rejectedMutationCount = 0;
+
+        // Act and Assert: Every public structural mutator rejects the sealed declaration.
+        try {
+            module.addProvider(module.provide('lateProvider').useValue('late'));
+            Assert.fail('Expected addProvider() to reject a sealed module.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('sealed'));
+            rejectedMutationCount++;
+        }
+        try {
+            module.addImport(Di.import(ValueModule.class));
+            Assert.fail('Expected addImport() to reject a sealed module.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('sealed'));
+            rejectedMutationCount++;
+        }
+        try {
+            module.addExport('lateProvider');
+            Assert.fail('Expected addExport() to reject a sealed module.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('sealed'));
+            rejectedMutationCount++;
+        }
+        try {
+            module.addReexport(Di.import(ValueModule.class));
+            Assert.fail('Expected addReexport() to reject a sealed module.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('sealed'));
+            rejectedMutationCount++;
+        }
+        try {
+            module.setGlobal();
+            Assert.fail('Expected setGlobal() to reject a sealed module.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('sealed'));
+            rejectedMutationCount++;
+        }
+        Assert.areEqual(5, rejectedMutationCount, 'Every DynamicModule mutator should share the seal contract.');
+    }
+
+    @IsTest
+    static void should_keep_dynamic_module_sealed_when_context_is_cleared_and_allow_unchanged_reregistration() {
+        // Arrange: A committed dynamic declaration is released by clearing its first context.
+        Di.ApplicationContext firstContext = Di.createContext();
+        Di.DynamicModule module = new Di.DynamicModule('ReusableSealedDynamicModule');
+        module.addProvider(module.provide('reusableValue').useValue('stable')).addExport('reusableValue');
+        firstContext.addModule(module);
+        firstContext.clear();
+
+        // Act: Ownership release permits unchanged registration in another context.
+        Di.ApplicationContext secondContext = Di.createContext();
+        Di.ModuleRef secondRef = secondContext.addModule(module);
+
+        // Assert: The declaration remains usable but cannot be reconfigured after clear().
+        Assert.areEqual('stable', secondRef.get('reusableValue'));
+        try {
+            module.addProvider(module.provide('lateValue').useValue('late'));
+            Assert.fail('Expected clear() not to reopen a sealed dynamic declaration.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('sealed'));
+        }
+    }
+
+    @IsTest
+    static void should_keep_dynamic_module_editable_and_retryable_after_failed_registration() {
+        // Arrange: An eager import is missing when a dynamic module first attempts registration.
+        Di.ApplicationContext context = Di.createContext();
+        Di.DynamicModule module = new Di.DynamicModule('RetryableDynamicModule');
+        module.addImport(context.import('RetryableMissingImport').immediately());
+        try {
+            context.addModule(module);
+            Assert.fail('Expected registration to fail while the eager import is missing.');
+        } catch (Di.UnknownModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('RetryableMissingImport'));
+        }
+
+        // Act: The still-editable candidate is corrected and retried.
+        module.addProvider(module.provide('retryValue').useValue('corrected')).addExport('retryValue');
+        context.addModule(new Di.DynamicModule('RetryableMissingImport'));
+        Di.ModuleRef ref = context.addModule(module);
+
+        // Assert: Failed registration did not seal or poison the candidate.
+        Assert.areEqual('corrected', ref.get('retryValue'));
+    }
+
+    @IsTest
+    static void should_release_replacement_candidate_context_when_registration_fails() {
+        // Arrange: One context owns the valid original definition.
+        Di.ApplicationContext firstContext = Di.createContext();
+        Di.DynamicModule original = new Di.DynamicModule('FailedReplacementCandidate');
+        original.addProvider(original.provide('stableReplacementValue').useValue('stable'))
+            .addExport('stableReplacementValue');
+        firstContext.addModule(original);
+        Di.DynamicModule replacement = new Di.DynamicModule(original.getToken());
+        replacement.addExport('missingReplacementExport');
+
+        // Act: Candidate registration fails before registry publication.
+        try {
+            firstContext.replaceModule(original.getToken(), replacement);
+            Assert.fail('Expected invalid replacement registration to fail.');
+        } catch (Di.UnknownExportException ex) {
+            Assert.isTrue(ex.getMessage().contains('missingReplacementExport'));
+        }
+
+        // Assert: The original survives and the failed candidate can be corrected and registered elsewhere.
+        Assert.areEqual('stable', firstContext.getModuleRef(original.getToken()).get('stableReplacementValue'));
+        replacement.addProvider(replacement.provide('missingReplacementExport').useValue('corrected'));
+        Di.ApplicationContext secondContext = Di.createContext();
+        Assert.areEqual('corrected', secondContext.addModule(replacement).get('missingReplacementExport'));
+    }
+
+    @IsTest
+    static void should_update_global_dynamic_module_exports_when_replaced() {
         // Arrange: A global dynamic module is registered with one exported provider.
         Di.DynamicModule dynGlobal = new Di.DynamicModule('RefreshableGlobalDynamic').setGlobal();
         dynGlobal.addProvider(dynGlobal.provide('globalRefreshValue').useValue('initial'))
             .addExport('globalRefreshValue');
-        Di.ModuleRef globalRef = Di.addModule(dynGlobal);
+        Di.addModule(dynGlobal);
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('initial', consumerRef.get('globalRefreshValue'), 'Pre-condition: global export is visible.');
 
-        // Act: Existing and newly exported global providers are changed, then the global module is refreshed.
-        dynGlobal.addProvider(dynGlobal.provide('globalRefreshValue').useValue('updated'));
-        dynGlobal.addProvider(dynGlobal.provide('globalRefreshAdded').useValue('added'))
+        // Act: A new same-token module replaces the committed global definition.
+        Di.DynamicModule replacement = new Di.DynamicModule(dynGlobal.getToken()).setGlobal();
+        replacement.addProvider(replacement.provide('globalRefreshValue').useValue('updated'));
+        replacement.addProvider(replacement.provide('globalRefreshAdded').useValue('added'))
             .addExport('globalRefreshAdded');
-        globalRef.refresh();
+        replacement.addExport('globalRefreshValue');
+        Di.replaceModule(dynGlobal.getToken(), replacement);
 
-        // Assert: Global consumers should see the refreshed export map and provider bindings.
+        // Assert: Global consumers should see the replacement export map and provider bindings.
         Assert.areEqual(
             'updated',
             consumerRef.get('globalRefreshValue'),
-            'Existing global exports should point to the refreshed provider binding.'
+            'Existing global exports should point to the replacement provider binding.'
         );
         Assert.areEqual(
             'added',
             consumerRef.get('globalRefreshAdded'),
-            'New exports from refreshed global modules should become globally visible.'
+            'New exports from replacement global modules should become globally visible.'
         );
     }
 
     @IsTest
-    static void should_restore_global_module_definition_when_refresh_validation_fails() {
+    static void should_restore_global_module_definition_when_replacement_validation_fails() {
         // Arrange: Two global modules own distinct exports.
-        Di.DynamicModule refreshedModule = new Di.DynamicModule('AtomicRefreshGlobal').setGlobal();
-        refreshedModule.addProvider(refreshedModule.provide('atomicRefreshValue').useValue('stable'))
+        Di.DynamicModule originalModule = new Di.DynamicModule('AtomicRefreshGlobal').setGlobal();
+        originalModule.addProvider(originalModule.provide('atomicRefreshValue').useValue('stable'))
             .addExport('atomicRefreshValue');
-        Di.ModuleRef refreshedRef = Di.addModule(refreshedModule);
+        Di.ModuleRef originalRef = Di.addModule(originalModule);
         Di.DynamicModule conflictOwner = new Di.DynamicModule('AtomicRefreshConflictOwner').setGlobal();
         conflictOwner.addProvider(conflictOwner.provide('atomicRefreshConflict').useValue('owner'))
             .addExport('atomicRefreshConflict');
@@ -2832,18 +2952,21 @@ private class DiTest {
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('stable', consumerRef.get('atomicRefreshValue'));
 
-        // Act: The refreshed candidate attempts to claim another global owner's export.
-        refreshedModule.addProvider(refreshedModule.provide('atomicRefreshConflict').useValue('candidate'))
+        // Act: A same-token replacement attempts to claim another global owner's export.
+        Di.DynamicModule replacement = new Di.DynamicModule(originalModule.getToken()).setGlobal();
+        replacement.addProvider(replacement.provide('atomicRefreshValue').useValue('replacement'))
+            .addExport('atomicRefreshValue');
+        replacement.addProvider(replacement.provide('atomicRefreshConflict').useValue('candidate'))
             .addExport('atomicRefreshConflict');
         try {
-            refreshedRef.refresh();
-            Assert.fail('Expected InvalidProviderException for a conflicting global refresh.');
+            Di.replaceModule(originalModule.getToken(), replacement);
+            Assert.fail('Expected InvalidProviderException for a conflicting global replacement.');
         } catch (Di.InvalidProviderException ex) {
             Assert.isTrue(ex.getMessage().contains('atomicRefreshConflict'));
         }
 
         // Assert: Both previously committed definitions and global bindings remain intact.
-        Assert.isFalse(refreshedRef.getModule().hasProvider('atomicRefreshConflict'));
+        Assert.isFalse(originalRef.getModule().hasProvider('atomicRefreshConflict'));
         Assert.areEqual('stable', consumerRef.get('atomicRefreshValue'));
         Assert.areEqual('owner', consumerRef.get('atomicRefreshConflict'));
     }
@@ -2910,13 +3033,13 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_update_container_when_dynamic_module_is_refreshed() {
+    static void should_update_held_module_ref_when_dynamic_module_is_replaced() {
         // Arrange: A dynamic module is registered, initially without a specific provider.
         Di.DynamicModule dyn = new Di.DynamicModule('RefreshableModule');
         Di.ModuleRef ref = Di.addModule(dyn);
         try {
             ref.get('newValue');
-            Assert.fail('Provider should not exist before being added and refreshed.');
+            Assert.fail('Provider should not exist before the module is replaced.');
         } catch (Di.UnknownProviderException ex) {
             Assert.isTrue(
                 ex.getMessage().contains('Could not find "newValue" provider'),
@@ -2924,41 +3047,13 @@ private class DiTest {
             );
         }
 
-        // Act: A new provider is added to the module instance, and the container is refreshed.
-        dyn.addProvider(dyn.provide('newValue').useValue('refreshed'));
-        dyn.addExport('newValue');
-        ref.refresh();
+        // Act: A new same-token module definition replaces the original.
+        Di.DynamicModule replacement = new Di.DynamicModule(dyn.getToken());
+        replacement.addProvider(replacement.provide('newValue').useValue('replaced')).addExport('newValue');
+        Di.replaceModule(dyn.getToken(), replacement);
 
-        // Assert: The new provider is now available through the original module reference.
-        Assert.areEqual('refreshed', ref.get('newValue'), 'Provider should be available after refresh.');
-    }
-
-    @IsTest
-    static void should_preserve_committed_module_definition_when_refresh_fails() {
-        // Arrange: The module starts with a valid, committed provider definition.
-        FailingRefreshModule module = new FailingRefreshModule();
-        Di.ModuleRef ref = Di.addModule(module);
-        Assert.areEqual('stable', ref.get('stableRefreshValue'));
-
-        // Act: Its next declaration is invalid after defining a different provider.
-        module.shouldFailRefresh = true;
-        try {
-            ref.refresh();
-            Assert.fail('Expected UnknownExportException for the invalid refreshed definition.');
-        } catch (Di.UnknownExportException ex) {
-            Assert.isTrue(ex.getMessage().contains('missingRefreshExport'));
-        }
-
-        // Assert: Failed staging leaves the previously committed definition fully intact.
-        Assert.isTrue(ref.getModule().hasProvider('stableRefreshValue'));
-        Assert.isFalse(ref.getModule().hasProvider('uncommittedRefreshValue'));
-        Assert.areEqual('stable', ref.get('stableRefreshValue'));
-        try {
-            ref.get('uncommittedRefreshValue');
-            Assert.fail('A provider from a failed refresh must not become visible.');
-        } catch (Di.UnknownProviderException ex) {
-            Assert.isTrue(ex.getMessage().contains('uncommittedRefreshValue'));
-        }
+        // Assert: The held reference adopts the replacement runtime.
+        Assert.areEqual('replaced', ref.get('newValue'), 'Provider should be available after replacement.');
     }
 
     @IsTest
@@ -3286,7 +3381,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_refresh_existing_module_ref_when_local_module_is_replaced() {
+    static void should_update_existing_module_ref_when_local_module_is_replaced() {
         // Arrange: A local module ref is held before the module is replaced.
         SingleModule module = new SingleModule();
         Di.ModuleRef ref = Di.addModule(module);
@@ -3343,31 +3438,6 @@ private class DiTest {
             'depends on replaced',
             consumerRef.get('dependentVal'),
             'Dependent singleton providers should be rebuilt after local module replacement.'
-        );
-    }
-
-    @IsTest
-    static void should_clear_dependent_singleton_caches_when_local_module_is_refreshed() {
-        // Arrange: A consumer singleton is cached from an imported local module value.
-        Di.DynamicModule valueModule = new Di.DynamicModule(ValueModule.class.getName());
-        valueModule.addProvider(valueModule.provide('val').useValue('initial')).addExport('val');
-        Di.ModuleRef ownerRef = Di.addModule(valueModule);
-        Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
-        Assert.areEqual(
-            'depends on initial',
-            consumerRef.get('dependentVal'),
-            'Pre-condition: value should be cached.'
-        );
-
-        // Act: Refresh the local owner after changing its declared value.
-        valueModule.addProvider(valueModule.provide('val').useValue('refreshed')).addExport('val');
-        ownerRef.refresh();
-
-        // Assert: Dependent singleton caches are invalidated after local refresh.
-        Assert.areEqual(
-            'depends on refreshed',
-            consumerRef.get('dependentVal'),
-            'Dependent singleton providers should be rebuilt after local module refresh.'
         );
     }
 
@@ -3472,20 +3542,20 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_global_scope_change_after_module_registration() {
-        // Arrange: A dynamic module is already owned by the local registry.
+    static void should_reject_global_scope_change_after_dynamic_module_is_sealed() {
+        // Arrange: A dynamic module has committed to the local registry and is permanently sealed.
         Di.DynamicModule module = new Di.DynamicModule('RegisteredLocalModule');
         module.addProvider(module.provide('registeredLocal').useValue('local'));
         Di.ModuleRef ref = Di.addModule(module);
 
-        // Act: Registry ownership cannot be changed through the retained module object.
+        // Act: Registry identity cannot be changed through the retained module object.
         try {
             module.setGlobal();
             Assert.fail('Expected global scope mutation after registration to be rejected.');
         } catch (Di.InvalidModuleException ex) {
             Assert.isTrue(
-                ex.getMessage().contains('registered'),
-                'Exception should explain module identity immutability.'
+                ex.getMessage().contains('sealed'),
+                'Exception should explain permanent module-definition immutability.'
             );
         }
 
@@ -3717,25 +3787,25 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_refresh_feature_flag_when_dynamic_module_is_reconfigured() {
+    static void should_update_feature_flag_when_dynamic_module_is_replaced() {
         // Arrange: A dynamic module for feature flags is registered, initially empty.
         Di.DynamicModule featureFlagsModule = new Di.DynamicModule('FeatureFlags');
-        Di.ModuleRef featureFlagsRef = Di.addModule(featureFlagsModule);
+        Di.addModule(featureFlagsModule);
         Di.ModuleRef appRef = Di.getModuleRef(AppModule.class);
         UserExperienceService uxService = (UserExperienceService) appRef.get(UserExperienceService.class);
         Assert.isFalse(uxService.isNewCheckoutEnabled(), 'Pre-condition: New checkout should be disabled initially.');
 
-        // Act: A feature flag is enabled at runtime, and the module container is refreshed.
-        featureFlagsModule.addProvider(featureFlagsModule.provide('EnableNewCheckout').useValue(true));
-        featureFlagsModule.addExport('EnableNewCheckout');
-        featureFlagsRef.refresh();
-        appRef.refresh(); // Refresh the dependent module to clear its cache
+        // Act: A new same-token module definition enables the feature flag.
+        Di.DynamicModule replacement = new Di.DynamicModule(featureFlagsModule.getToken());
+        replacement.addProvider(replacement.provide('EnableNewCheckout').useValue(true));
+        replacement.addExport('EnableNewCheckout');
+        Di.replaceModule(featureFlagsModule.getToken(), replacement);
 
         // Assert: The service now correctly reflects the enabled feature flag.
         UserExperienceService newUxService = (UserExperienceService) appRef.get(UserExperienceService.class);
         Assert.isTrue(
             newUxService.isNewCheckoutEnabled(),
-            'New checkout should be enabled after refreshing the feature flag module.'
+            'New checkout should be enabled after replacing the feature flag module.'
         );
     }
 
@@ -4545,19 +4615,6 @@ private class DiTest {
         public override Set<Di.Provider> providers() {
             providerBuildCount++;
             return new Set<Di.Provider>{ provide('counted').useValue('registered') };
-        }
-    }
-    public class FailingRefreshModule extends EmptyModule {
-        public Boolean shouldFailRefresh = false;
-        public override Set<Di.Provider> providers() {
-            return shouldFailRefresh
-                ? new Set<Di.Provider>{ provide('uncommittedRefreshValue').useValue('uncommitted') }
-                : new Set<Di.Provider>{ provide('stableRefreshValue').useValue('stable') };
-        }
-        public override Set<String> exports() {
-            return shouldFailRefresh
-                ? new Set<String>{ 'missingRefreshExport' }
-                : new Set<String>{ 'stableRefreshValue' };
         }
     }
     public class LazyErrorConsumerModule extends EmptyModule {
