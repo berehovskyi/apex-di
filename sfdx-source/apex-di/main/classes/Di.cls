@@ -140,6 +140,14 @@ public virtual inherited sharing class Di {
         DEFAULT_CONTEXT.replaceModule(token, newModule);
     }
 
+    public static void replaceProvider(final String moduleToken, final Provider newProvider) {
+        DEFAULT_CONTEXT.replaceProvider(moduleToken, newProvider);
+    }
+
+    public static void replaceProvider(final Type moduleToken, final Provider newProvider) {
+        DEFAULT_CONTEXT.replaceProvider(moduleToken, newProvider);
+    }
+
     public static ModuleImport import(final Module module) {
         return new ModuleImport(module);
     }
@@ -715,7 +723,16 @@ public virtual inherited sharing class Di {
         public virtual Object inject(final Object instance) {
             validateContextGeneration();
             isTrue(instance instanceof Injectable, InvalidClassException.class, NOT_INJECTABLE_MESSAGE);
-            return autowire(instance);
+            if (inCall) {
+                return autowire(instance);
+            }
+
+            startResolution();
+            try {
+                return autowire(instance);
+            } finally {
+                endResolution();
+            }
         }
 
         public Module getModule() {
@@ -846,6 +863,10 @@ public virtual inherited sharing class Di {
             runtime.singletonCache.remove(token);
         }
 
+        private Module getRuntimeModule() {
+            return runtime.module;
+        }
+
         private void clearSingletons() {
             runtime.singletonCache.clear();
         }
@@ -929,6 +950,8 @@ public virtual inherited sharing class Di {
         }
 
         private void startResolution() {
+            validateContextGeneration();
+            context.open();
             inCall = true;
             resolutionPath.clear();
         }
@@ -1006,6 +1029,7 @@ public virtual inherited sharing class Di {
         private Boolean hasGlobalLoadFailed = false;
         private Boolean isCompiled = false;
         private Boolean isLoadingGlobalModules = false;
+        private Boolean isOpen = false;
         private Integer lifecycleGeneration = 0;
         private MetadataSource metadataSource;
         private Map<String, ProviderDefinition> providerDefinitionByDeveloperName;
@@ -1035,7 +1059,7 @@ public virtual inherited sharing class Di {
             String token = module.getToken();
             ModuleRef ref = findRegisteredModuleRef(module);
             if (ref == null) {
-                return addModule(module);
+                return installModule(module, isOpen);
             }
 
             isTrue(
@@ -1056,7 +1080,7 @@ public virtual inherited sharing class Di {
             }
 
             Module module = create(token);
-            return findModuleRef(module.getToken()) ?? addModule(module);
+            return findModuleRef(module.getToken()) ?? installModule(module, isOpen);
         }
 
         public virtual ModuleRef getModuleRef(final Type moduleType) {
@@ -1064,6 +1088,33 @@ public virtual inherited sharing class Di {
         }
 
         public virtual ModuleRef addModule(final Module module) {
+            return installModule(module, isOpen);
+        }
+
+        public virtual void replaceProvider(final String moduleToken, final Provider newProvider) {
+            isTrue(moduleToken != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
+            isTrue(newProvider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
+
+            ModuleRef ref = findExistingModuleRef(moduleToken);
+            isTrue(ref != null, UnknownModuleException.class, UNKNOWN_MODULE_MESSAGE, new List<String>{ moduleToken });
+
+            Module module = ref.getModule();
+            ModuleDefinition previousDefinition = module.definition;
+            try {
+                module.replace(newProvider);
+                markGraphChanged();
+                invalidateLifecycleHandles();
+            } catch (Exception exc) {
+                module.definition = previousDefinition;
+                throw exc;
+            }
+        }
+
+        public virtual void replaceProvider(final Type moduleToken, final Provider newProvider) {
+            replaceProvider(moduleToken?.getName(), newProvider);
+        }
+
+        private ModuleRef installModule(final Module module, final Boolean invalidateHandlesOnSuccess) {
             isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
             markGraphChanged();
 
@@ -1085,6 +1136,10 @@ public virtual inherited sharing class Di {
                     validateGlobalProviderBindings();
                 }
                 module.freezeDefinition();
+                if (invalidateHandlesOnSuccess) {
+                    invalidateLifecycleHandles();
+                    return findRegisteredModuleRef(module);
+                }
                 return ref;
             } catch (Exception exc) {
                 if (registry.get(token) === ref) {
@@ -1107,8 +1162,8 @@ public virtual inherited sharing class Di {
                 new List<String>{ token, newModule.getToken() }
             );
 
-            markGraphChanged();
-            ModuleRef oldRef = getModuleRef(token);
+            ModuleRef oldRef = findExistingModuleRef(token);
+            isTrue(oldRef != null, UnknownModuleException.class, UNKNOWN_MODULE_MESSAGE, new List<String>{ token });
             Module oldModule = oldRef.getModule();
             String oldRegistryToken = oldRef.registryToken;
             isTrue(
@@ -1122,38 +1177,37 @@ public virtual inherited sharing class Di {
                 }
             );
 
+            markGraphChanged();
             Map<String, ModuleRef> registry = oldModule.isGlobal() ? globalRegistry : moduleRegistry;
             ModuleRef newRef = new ModuleRef(this, newModule);
             ModuleDefinition previousNewDefinition = newModule.definition;
             newRef.registryToken = token;
-            newModule.register(this);
-            if (oldModule.isGlobal()) {
+            Boolean registryChanged = false;
+            try {
+                newModule.register(this);
                 if (!oldRegistryToken.equals(token)) {
                     registry.remove(oldRegistryToken);
                 }
                 registry.put(token, newRef);
-                try {
+                registryChanged = true;
+
+                if (oldModule.isGlobal()) {
                     validateGlobalProviderBindings();
-                    newModule.freezeDefinition();
-                    clearAllModuleCaches();
-                } catch (Exception exc) {
+                }
+                newModule.freezeDefinition();
+                if (oldModule !== newModule) {
+                    oldModule.clearContext(this);
+                }
+                invalidateLifecycleHandles();
+            } catch (Exception exc) {
+                if (registryChanged) {
                     registry.remove(token);
                     registry.put(oldRegistryToken, oldRef);
-                    newModule.definition = previousNewDefinition;
-                    newModule.clearContext(this);
-                    markGraphChanged();
-                    throw exc;
                 }
-            } else {
-                if (!oldRegistryToken.equals(token)) {
-                    registry.remove(oldRegistryToken);
-                }
-                registry.put(token, newRef);
-                newModule.freezeDefinition();
-                clearAllModuleCaches();
-            }
-            if (oldModule !== newModule) {
-                oldModule.clearContext(this);
+                newModule.definition = previousNewDefinition;
+                newModule.clearContext(this);
+                markGraphChanged();
+                throw exc;
             }
         }
 
@@ -1205,15 +1259,16 @@ public virtual inherited sharing class Di {
             }
             hasGlobalLoadBeenAttempted = false;
             hasGlobalLoadFailed = false;
+            isOpen = false;
             providerDefinitionByDeveloperName = null;
         }
         // </editor-fold>
 
         protected Module resolveImport(final ModuleImport moduleImport) {
             if (moduleImport.cachedModule != null) {
-                return getModuleRef(moduleImport.cachedModule).getModule();
+                return getInternalModuleRef(moduleImport.cachedModule).getModule();
             }
-            return getModuleRef(moduleImport.getToken()).getModule();
+            return getInternalModuleRef(moduleImport.getToken()).getModule();
         }
 
         protected Map<String, ModuleRef> getLoadedRegistry(final Module module) {
@@ -1232,18 +1287,9 @@ public virtual inherited sharing class Di {
             return providerDefinitionByDeveloperName;
         }
 
-        protected void clearAllModuleCaches() {
-            for (ModuleRef ref : moduleRegistry.values()) {
-                ref.clearCache();
-            }
-            for (ModuleRef ref : globalModuleRegistry.values()) {
-                ref.clearCache();
-            }
-        }
-
         protected ModuleRef getRegisteredModuleRef(final Module module) {
             ModuleRef ref = findRegisteredModuleRef(module);
-            return ref ?? getModuleRef(module);
+            return ref ?? getInternalModuleRef(module);
         }
 
         protected void assertNoCircularReexport(final String token) {
@@ -1271,6 +1317,9 @@ public virtual inherited sharing class Di {
             getMetadataOverrideSource().globalModules = normalizeGlobalModuleDefinitions(mockModules);
             hasGlobalLoadBeenAttempted = false;
             hasGlobalLoadFailed = false;
+            if (isOpen) {
+                invalidateLifecycleHandles();
+            }
         }
 
         @TestVisible
@@ -1278,6 +1327,9 @@ public virtual inherited sharing class Di {
             markGraphChanged();
             providerDefinitionByDeveloperName = null;
             getMetadataOverrideSource().providers = normalizeProviderDefinitions(providerByDeveloperName);
+            if (isOpen) {
+                invalidateLifecycleHandles();
+            }
         }
 
         private MetadataOverrideSource getMetadataOverrideSource() {
@@ -1311,6 +1363,45 @@ public virtual inherited sharing class Di {
             return isCompiled;
         }
 
+        private ModuleRef getInternalModuleRef(final Module module) {
+            ModuleRef ref = findRegisteredModuleRef(module);
+            return ref ?? installModule(module, false);
+        }
+
+        private ModuleRef getInternalModuleRef(final String token) {
+            ModuleRef ref = findModuleRef(token);
+            if (ref != null) {
+                return ref;
+            }
+
+            Module module = create(token);
+            return findModuleRef(module.getToken()) ?? installModule(module, false);
+        }
+
+        private ModuleRef findExistingModuleRef(final String token) {
+            ModuleRef ref = findModuleRef(token);
+            if (ref != null) {
+                return ref;
+            }
+
+            Type moduleType = Type.forName(token);
+            if (moduleType == null) {
+                return null;
+            }
+
+            Object raw;
+            try {
+                raw = moduleType.newInstance();
+            } catch (Exception exc) {
+                return null;
+            }
+
+            if (!(raw instanceof Module)) {
+                return null;
+            }
+            return findModuleRef(((Module) raw).getToken());
+        }
+
         private ModuleRef findModuleRef(String token) {
             return moduleRegistry.get(token) ?? globalRegistry.get(token);
         }
@@ -1333,6 +1424,27 @@ public virtual inherited sharing class Di {
         private void markGraphChanged() {
             graphRevision++;
             invalidateCompiledGraph();
+        }
+
+        private void open() {
+            isOpen = true;
+        }
+
+        private void invalidateLifecycleHandles() {
+            lifecycleGeneration++;
+            reissueModuleRefs(moduleRegistry);
+            reissueModuleRefs(globalModuleRegistry);
+            markGraphChanged();
+        }
+
+        private void reissueModuleRefs(final Map<String, ModuleRef> registry) {
+            Map<String, ModuleRef> previousRefs = new Map<String, ModuleRef>(registry);
+            registry.clear();
+            for (String registryToken : previousRefs.keySet()) {
+                ModuleRef ref = new ModuleRef(this, previousRefs.get(registryToken).getRuntimeModule());
+                ref.registryToken = registryToken;
+                registry.put(registryToken, ref);
+            }
         }
 
         private List<ModuleRef> snapshotModuleRefs(final Map<String, ModuleRef> registry) {
@@ -1448,7 +1560,7 @@ public virtual inherited sharing class Di {
                         new List<String>{ module.getToken() }
                     );
 
-                    addModule(module);
+                    installModule(module, false);
                 }
                 hasGlobalLoadBeenAttempted = true;
                 hasGlobalLoadFailed = false;
@@ -1880,20 +1992,8 @@ public virtual inherited sharing class Di {
 
         public virtual ScopeRef createScope(final ScopeContext scopeContext) {
             isTrue(scopeContext != null, InvalidScopeException.class, NULL_SCOPE_CONTEXT_MESSAGE);
-            refreshIfModuleChanged();
+            validateContextGeneration();
             return new ScopeRef(this, scopeContext);
-        }
-
-        public virtual void replace(final Provider newProvider) {
-            isTrue(newProvider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
-
-            String token = newProvider.getToken();
-            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
-
-            refreshIfModuleChanged();
-            getModule().replace(newProvider);
-            context.markGraphChanged();
-            context.clearAllModuleCaches();
         }
 
         public virtual override Object resolve(final String token, final Object args) {
@@ -1954,28 +2054,12 @@ public virtual inherited sharing class Di {
         }
 
         protected override Object getInternal(final String token, final Object args) {
-            refreshIfModuleChanged();
             return super.getInternal(token, args);
         }
 
         protected override Object resolveInternal(final String token, final Object args) {
-            refreshIfModuleChanged();
             return super.resolveInternal(token, args);
         }
-
-        // <editor-fold desc="Helpers">
-        private void refreshIfModuleChanged() {
-            validateContextGeneration();
-            ModuleRef currentRef = getCurrentRegisteredRef();
-            if (currentRef != null && currentRef !== this && currentRef.getModule() !== getModule()) {
-                adoptRuntime(currentRef);
-            }
-        }
-
-        private ModuleRef getCurrentRegisteredRef() {
-            return context.getLoadedRegistry(getModule()).get(registryToken);
-        }
-        // </editor-fold>
     }
 
     public virtual class ScopeContext {
@@ -2119,12 +2203,10 @@ public virtual inherited sharing class Di {
         }
 
         protected override Object getInternal(final String token, final Object args) {
-            refreshIfModuleChanged();
             return super.getInternal(token, args);
         }
 
         protected override Object resolveInternal(final String token, final Object args) {
-            refreshIfModuleChanged();
             return super.resolveInternal(token, args);
         }
 
@@ -2160,15 +2242,6 @@ public virtual inherited sharing class Di {
             if (scopeGeneration != scopeContext.generation) {
                 ownerScopes.clear();
                 scopeGeneration = scopeContext.generation;
-            }
-        }
-
-        private void refreshIfModuleChanged() {
-            ModuleRef currentRef = ((ModuleRef) parent).getCurrentRegisteredRef();
-            if (currentRef != null && currentRef !== parent) {
-                parent = currentRef;
-                adoptRuntime(currentRef);
-                clearCache();
             }
         }
         // </editor-fold>

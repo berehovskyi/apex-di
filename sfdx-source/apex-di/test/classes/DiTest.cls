@@ -360,6 +360,20 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_clear_singleton_cache_when_module_ref_cache_is_cleared() {
+        // Arrange: A singleton provider has been cached on the root module ref.
+        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+        Object first = ref.get('TestService');
+
+        // Act: Clear only this root module ref cache.
+        ref.clearCache();
+        Object second = ref.get('TestService');
+
+        // Assert: The singleton is rebuilt after clearing the root cache.
+        Assert.areNotEqual(first, second, 'Clearing a ModuleRef cache should evict singleton instances.');
+    }
+
+    @IsTest
     static void should_invalidate_live_scope_when_scoped_provider_is_replaced() {
         // Arrange: A live scope has cached an instance from the current scoped provider definition.
         ScopedModule module = new ScopedModule();
@@ -367,16 +381,26 @@ private class DiTest {
         Di.ScopeRef scope = moduleRef.createScope();
         Object original = scope.get(ScopedService.class);
 
-        // Act: Replace the scoped provider while retaining the existing scope.
-        moduleRef.replace(module.provide(ScopedService.class).useClass(ScopedService.class).scope(Di.Scope.SCOPED));
-        Object replacement = scope.get(ScopedService.class);
+        // Act: Replace the scoped provider through the owning application context.
+        Di.replaceProvider(
+            module.getToken(),
+            module.provide(ScopedService.class).useClass(ScopedService.class).scope(Di.Scope.SCOPED)
+        );
 
-        // Assert: The live scope discards the stale instance, then caches the replacement instance.
-        Assert.areNotEqual(original, replacement, 'Provider replacement should invalidate existing scope caches.');
+        // Assert: The old scope is stale and a fresh scope receives a new cached instance.
+        try {
+            scope.get(ScopedService.class);
+            Assert.fail('Expected provider replacement to invalidate the held scope.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+        Di.ScopeRef freshScope = Di.getModuleRef(module.getToken()).createScope();
+        Object replacement = freshScope.get(ScopedService.class);
+        Assert.areNotEqual(original, replacement, 'A fresh scope should rebuild after provider replacement.');
         Assert.areEqual(
             replacement,
-            scope.get(ScopedService.class),
-            'The rebuilt scoped instance should remain cached within the live scope.'
+            freshScope.get(ScopedService.class),
+            'The rebuilt scoped instance should remain cached within the fresh scope.'
         );
     }
 
@@ -393,11 +417,17 @@ private class DiTest {
         // Assert: The initial module supplies the scoped value.
         Assert.areEqual('A', val1, 'Should return value from initial module');
 
-        // Act: Replace the module and resolve again from the same scope.
+        // Act: Replace the module and try to resolve again from the same scope.
         Di.replaceModule(ScopeRefIntegrityModule.class, new ScopeRefIntegrityReplacementModule());
-        String val2 = (String) scope.resolve('ScopedService');
 
-        // Assert: The existing scope observes the replacement without retaining the old value.
+        // Assert: The existing scope is stale; a fresh scope observes the replacement.
+        try {
+            scope.resolve('ScopedService');
+            Assert.fail('Expected module replacement to invalidate the held scope.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+        String val2 = (String) Di.getModuleRef(ScopeRefIntegrityModule.class).createScope().resolve('ScopedService');
         Assert.areEqual('B', val2, 'Should return value from replacement module');
         Assert.areNotEqual(val1, val2, 'Should not return cached value from old module');
     }
@@ -691,10 +721,10 @@ private class DiTest {
         // Assert: Two different instances of the correct implementation are returned.
         Assert.isTrue(instance1 instanceof TestServiceImpl, 'Resolved instance should be of the correct type.');
 
-        // Act: The provider is replaced through the module's public builder.
+        // Act: The provider is replaced through the owning application context.
         Di.Provider newProvider = ref.getModule().provide(TestService.class).useClass(MockService.class);
-        ref.replace(newProvider);
-        Object instance2 = ref.resolve(TestService.class);
+        Di.replaceProvider(TypeModule.class, newProvider);
+        Object instance2 = Di.getModuleRef(TypeModule.class).resolve(TestService.class);
 
         // Assert: Two different instances of the correct implementation are returned.
         Assert.isTrue(instance2 instanceof MockService, 'Resolved instance should be of the correct type.');
@@ -706,12 +736,16 @@ private class DiTest {
         Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
         Assert.areEqual('hello', ref.get('val'), 'Pre-condition: Initial value should be "hello".');
 
-        // Act: The provider is replaced through the module's public builder.
+        // Act: The provider is replaced through the owning application context.
         Di.Provider newProvider = ref.getModule().provide('val').useValue('world');
-        ref.replace(newProvider);
+        Di.replaceProvider(ValueModule.class, newProvider);
 
         // Assert: Getting the provider now returns the new value.
-        Assert.areEqual('world', ref.get('val'), 'The provider value should be updated after replacement.');
+        Assert.areEqual(
+            'world',
+            Di.getModuleRef(ValueModule.class).get('val'),
+            'The provider value should be updated after replacement.'
+        );
     }
 
     @IsTest
@@ -722,7 +756,7 @@ private class DiTest {
 
         // Act: Replacing an absent provider should fail loudly.
         try {
-            ref.replace(missingProvider);
+            Di.replaceProvider(ValueModule.class, missingProvider);
             Assert.fail('Expected UnknownProviderException when replacing a missing provider.');
         } catch (Di.UnknownProviderException ex) {
             Assert.isTrue(
@@ -733,6 +767,60 @@ private class DiTest {
 
         // Assert: Existing providers remain unchanged after the failed replacement.
         Assert.areEqual('hello', ref.get('val'), 'Existing providers should not be changed by a failed replace.');
+    }
+
+    @IsTest
+    static void should_not_register_missing_module_when_replacing_provider_by_module_type() {
+        // Arrange: A different module has already opened the context.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef heldRef = context.addModule(new SingleModule());
+        Assert.isTrue(heldRef.get('TestService') instanceof TestServiceImpl, 'Pre-condition: context is open.');
+
+        // Act: Replacing a provider requires the owner module to already be registered.
+        try {
+            context.replaceProvider(ValueModule.class, new Di.ValueProvider('val', 'replacement'));
+            Assert.fail('Expected UnknownModuleException for replacing a provider on an unregistered module.');
+        } catch (Di.UnknownModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains(ValueModule.class.getName()));
+        }
+
+        // Assert: The failed replacement did not add ValueModule or invalidate the held handle.
+        Assert.isTrue(heldRef.get('TestService') instanceof TestServiceImpl);
+    }
+
+    @IsTest
+    static void should_not_register_missing_module_when_replacing_module_by_type() {
+        // Arrange: A different module has already opened the context.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef heldRef = context.addModule(new SingleModule());
+        Assert.isTrue(heldRef.get('TestService') instanceof TestServiceImpl, 'Pre-condition: context is open.');
+
+        // Act: Replacing a module requires the target module to already be registered.
+        try {
+            context.replaceModule(ValueModule.class, new Di.DynamicModule(ValueModule.class.getName()));
+            Assert.fail('Expected UnknownModuleException for replacing an unregistered module.');
+        } catch (Di.UnknownModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains(ValueModule.class.getName()));
+        }
+
+        // Assert: The failed replacement did not add ValueModule or invalidate the held handle.
+        Assert.isTrue(heldRef.get('TestService') instanceof TestServiceImpl);
+    }
+
+    @IsTest
+    static void should_not_register_missing_module_when_replacement_token_cannot_resolve_to_module() {
+        // Arrange: A different module has already opened the context.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef heldRef = context.addModule(new SingleModule());
+        Assert.isTrue(heldRef.get('TestService') instanceof TestServiceImpl, 'Pre-condition: context is open.');
+
+        // Act/Assert: Missing, unconstructable, and non-module type tokens all fail without registration.
+        assertUnknownModuleReplacement(context, 'DiTest.DoesNotExistModule');
+        assertUnknownModuleReplacement(context, UnconstructableModule.class.getName());
+        assertUnknownModuleReplacement(context, NotAModule.class.getName());
+
+        // Assert: Failed lookups did not invalidate the held handle.
+        Assert.isTrue(heldRef.get('TestService') instanceof TestServiceImpl);
     }
 
     @IsTest
@@ -1039,6 +1127,45 @@ private class DiTest {
 
         // Assert: Context behavior remains deterministic until its metadata state is explicitly reset.
         Assert.areEqual('snapshot', ref.resolve('StringValue'));
+    }
+
+    @IsTest
+    static void should_invalidate_existing_refs_when_provider_metadata_is_mocked_after_resolution() {
+        // Arrange: A context has resolved metadata-backed value from its initial override.
+        Di.ApplicationContext context = newTestContext();
+        context.mockProviders(
+            new Map<String, DI_Provider__mdt>{
+                'StringValueProvider' => new DI_Provider__mdt(
+                    DeveloperName = 'StringValueProvider',
+                    Type__c = 'Value',
+                    Value__c = 'initial metadata',
+                    IsActive__c = true
+                )
+            }
+        );
+        Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
+        Assert.areEqual('initial metadata', ref.get('StringValue'), 'Pre-condition: metadata value is cached.');
+
+        // Act: Replacing metadata overrides after resolution is an external cold mutation.
+        context.mockProviders(
+            new Map<String, DI_Provider__mdt>{
+                'StringValueProvider' => new DI_Provider__mdt(
+                    DeveloperName = 'StringValueProvider',
+                    Type__c = 'Value',
+                    Value__c = 'updated metadata',
+                    IsActive__c = true
+                )
+            }
+        );
+
+        // Assert: The old handle is stale and a fresh handle reads the updated metadata.
+        try {
+            ref.get('StringValue');
+            Assert.fail('Expected metadata override mutation to invalidate the held ref.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+        Assert.areEqual('updated metadata', context.getModuleRef(MetadataModule.class).get('StringValue'));
     }
 
     @IsTest
@@ -1617,7 +1744,8 @@ private class DiTest {
 
         // Act: Replace the imported owner provider and resolve through the consumer again.
         Integer traversalsBeforeMutation = consumer.importTraversalCount;
-        context.getModuleRef(ValueModule.class).replace(consumer.provide('val').useValue('updated'));
+        context.replaceProvider(ValueModule.class, consumer.provide('val').useValue('updated'));
+        consumerRef = context.getModuleRef(BindingIndexCountingConsumerModule.class);
         Assert.areEqual('updated', consumerRef.get('val'));
         Integer traversalsAfterMutation = consumer.importTraversalCount;
         Assert.areEqual(
@@ -2570,8 +2698,12 @@ private class DiTest {
         );
         Di.getModuleRef(CmtGlobalModule.class.getName());
 
-        // Assert: The corrected global metadata is now visible.
-        Assert.areEqual('helloFromCmt', consumerRef.get('cmtGlobalVal'), 'Global loading should retry after failure.');
+        // Assert: The corrected global metadata is now visible through a fresh handle.
+        Assert.areEqual(
+            'helloFromCmt',
+            Di.getModuleRef(EmptyModule.class).get('cmtGlobalVal'),
+            'Global loading should retry after failure.'
+        );
     }
 
     @IsTest
@@ -2706,7 +2838,7 @@ private class DiTest {
 
         // Assert: The 'val' provider should be GONE from global scope.
         try {
-            consumer.get('val');
+            Di.getModuleRef(EmptyModule.class).get('val');
             Assert.fail('Should have thrown UnknownProviderException because val should be removed from global scope');
         } catch (Di.UnknownProviderException e) {
             Assert.isNotNull(e, 'Expected UnknownProviderException');
@@ -2925,7 +3057,8 @@ private class DiTest {
         replacement.addExport('globalRefreshValue');
         Di.replaceModule(dynGlobal.getToken(), replacement);
 
-        // Assert: Global consumers should see the replacement export map and provider bindings.
+        // Assert: Fresh global consumers should see the replacement export map and provider bindings.
+        consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual(
             'updated',
             consumerRef.get('globalRefreshValue'),
@@ -2977,17 +3110,17 @@ private class DiTest {
         Di.DynamicModule dynGlobal = new Di.DynamicModule('ReplaceableGlobalDynamic').setGlobal();
         dynGlobal.addProvider(dynGlobal.provide('globalReplaceValue').useValue('initial'))
             .addExport('globalReplaceValue');
-        Di.ModuleRef globalRef = Di.addModule(dynGlobal);
+        Di.addModule(dynGlobal);
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('initial', consumerRef.get('globalReplaceValue'), 'Pre-condition: global export is visible.');
 
         // Act: Replace the provider on the owning global module.
-        globalRef.replace(dynGlobal.provide('globalReplaceValue').useValue('updated'));
+        Di.replaceProvider(dynGlobal.getToken(), dynGlobal.provide('globalReplaceValue').useValue('updated'));
 
         // Assert: Global fallback should resolve the current owner provider, not a stale published binding.
         Assert.areEqual(
             'updated',
-            consumerRef.get('globalReplaceValue'),
+            Di.getModuleRef(EmptyModule.class).get('globalReplaceValue'),
             'Global fallback should behave like an implicit import and observe provider replacement.'
         );
     }
@@ -3013,8 +3146,11 @@ private class DiTest {
 
         // Act: Mutate the local owner behind the global re-export and resolve again.
         Integer traversalsBeforeMutation = globalModule.bindingTraversalCount;
-        Di.getModuleRef(SharedGlobalReexportCommonModule.class)
-            .replace(globalModule.provide('sharedGlobalReexportVal').useValue('updated'));
+        Di.replaceProvider(
+            SharedGlobalReexportCommonModule.class,
+            globalModule.provide('sharedGlobalReexportVal').useValue('updated')
+        );
+        consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('updated', consumerRef.get('sharedGlobalReexportVal'));
         Integer traversalsAfterMutation = globalModule.bindingTraversalCount;
         Assert.areEqual(
@@ -3033,7 +3169,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_update_held_module_ref_when_dynamic_module_is_replaced() {
+    static void should_require_fresh_ref_when_dynamic_module_is_replaced() {
         // Arrange: A dynamic module is registered, initially without a specific provider.
         Di.DynamicModule dyn = new Di.DynamicModule('RefreshableModule');
         Di.ModuleRef ref = Di.addModule(dyn);
@@ -3052,8 +3188,18 @@ private class DiTest {
         replacement.addProvider(replacement.provide('newValue').useValue('replaced')).addExport('newValue');
         Di.replaceModule(dyn.getToken(), replacement);
 
-        // Assert: The held reference adopts the replacement runtime.
-        Assert.areEqual('replaced', ref.get('newValue'), 'Provider should be available after replacement.');
+        // Assert: The held reference is stale; a fresh handle resolves the replacement.
+        try {
+            ref.get('newValue');
+            Assert.fail('Expected replacement to invalidate the held module ref.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+        Assert.areEqual(
+            'replaced',
+            Di.getModuleRef(dyn.getToken()).get('newValue'),
+            'Provider should be available through a fresh handle after replacement.'
+        );
     }
 
     @IsTest
@@ -3126,6 +3272,18 @@ private class DiTest {
         // Assert
         Assert.isTrue(instance.wasInjected, 'The inject() method should be called after manual injection.');
         Assert.areEqual(instance, result, 'inject() should return the injected instance.');
+    }
+
+    @IsTest
+    static void should_inject_without_restarting_resolution_when_factory_calls_container_inject() {
+        // Arrange: A factory manually injects an object while its provider resolution is already active.
+        Di.ModuleRef ref = Di.getModuleRef(NestedInjectModule.class);
+
+        // Act: Resolve the factory provider.
+        FooInjectable instance = (FooInjectable) ref.get('NestedInject');
+
+        // Assert: Nested inject() uses the active resolution context and still autowires the instance.
+        Assert.isTrue(instance.wasInjected, 'Nested inject() should autowire inside the active resolution.');
     }
 
     @IsTest
@@ -3255,6 +3413,118 @@ private class DiTest {
     }
 
     @IsTest
+    static void should_reject_held_module_ref_after_external_module_replacement() {
+        // Arrange: A caller holds a root handle before replacing the module definition.
+        Di.ApplicationContext context = newTestContext();
+        SingleModule module = new SingleModule();
+        Di.ModuleRef heldRef = context.addModule(module);
+        Assert.isTrue(heldRef.get('TestService') instanceof TestServiceImpl, 'Pre-condition: original ref resolves.');
+        Di.DynamicModule replacement = new Di.DynamicModule(module.getToken());
+        replacement.addProvider(replacement.provide('TestService').useValue('replaced')).addExport('TestService');
+
+        // Act: Replacing the module is an external cold mutation.
+        context.replaceModule(module.getToken(), replacement);
+
+        // Assert: The previously issued handle is stale and the caller must reacquire.
+        try {
+            heldRef.get('TestService');
+            Assert.fail('Expected the held ModuleRef to be invalidated by external module replacement.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('application context'),
+                'Error should explain that the held reference belongs to an old context generation.'
+            );
+        }
+        Assert.areEqual(
+            'replaced',
+            context.getModuleRef(module.getToken()).get('TestService'),
+            'A freshly issued handle should resolve the replacement module.'
+        );
+    }
+
+    @IsTest
+    static void should_reject_held_scope_ref_after_external_module_replacement() {
+        // Arrange: A scoped handle resolves against the original module definition.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef ref = context.getModuleRef(ScopeRefIntegrityModule.class);
+        Di.ScopeRef heldScope = ref.createScope();
+        Assert.areEqual('A', heldScope.resolve('ScopedService'), 'Pre-condition: scope resolves original value.');
+
+        // Act: Replacing the owner module is an external cold mutation.
+        context.replaceModule(ScopeRefIntegrityModule.class, new ScopeRefIntegrityReplacementModule());
+
+        // Assert: The held scope does not self-heal across the mutation boundary.
+        try {
+            heldScope.resolve('ScopedService');
+            Assert.fail('Expected the held ScopeRef to be invalidated by external module replacement.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('application context'),
+                'Error should explain that the held scope belongs to an old context generation.'
+            );
+        }
+        Assert.areEqual(
+            'B',
+            context.getModuleRef(ScopeRefIntegrityModule.class).createScope().resolve('ScopedService'),
+            'A freshly issued scope should resolve the replacement value.'
+        );
+    }
+
+    @IsTest
+    static void should_reject_held_refs_when_public_get_module_ref_adds_module_after_resolution() {
+        // Arrange: A root handle has already performed a top-level resolution, opening the context.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef heldRef = context.addModule(new SingleModule());
+        Assert.isTrue(heldRef.get('TestService') instanceof TestServiceImpl, 'Pre-condition: context is open.');
+
+        // Act: Publicly requesting a missing module after the context is open is an external cold mutation.
+        Di.ModuleRef addedRef = context.getModuleRef(ValueModule.class);
+
+        // Assert: The old handle is stale, while freshly issued handles remain valid.
+        try {
+            heldRef.get('TestService');
+            Assert.fail('Expected the held ModuleRef to be invalidated by post-open module addition.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(
+                ex.getMessage().contains('application context'),
+                'Error should explain that public post-open module addition invalidates old handles.'
+            );
+        }
+        Assert.areEqual('hello', addedRef.get('val'), 'The newly added module handle should be valid.');
+        Assert.isTrue(
+            context.getModuleRef(SingleModule.class).get('TestService') instanceof TestServiceImpl,
+            'A freshly issued handle for the original module should remain valid.'
+        );
+    }
+
+    @IsTest
+    static void should_keep_module_refs_valid_when_modules_are_added_before_resolution() {
+        // Arrange: Multiple modules are added during the setup phase before any top-level resolution.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef singleRef = context.addModule(new SingleModule());
+        Di.ModuleRef valueRef = context.addModule(new ValueModule());
+
+        // Act and Assert: Setup-time additions do not invalidate handles issued before the context opens.
+        Assert.isTrue(singleRef.get('TestService') instanceof TestServiceImpl);
+        Assert.areEqual('hello', valueRef.get('val'));
+    }
+
+    @IsTest
+    static void should_keep_module_ref_valid_when_lazy_import_is_discovered_during_resolution() {
+        // Arrange: The consumer is registered, but its imported ValueModule is not registered yet.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef consumerRef = context.addModule(new LazyConsumerModule());
+
+        // Act: Resolving the consumer lazily materializes its import inside the active resolution.
+        Object first = consumerRef.get('dependentVal');
+        Object second = consumerRef.get('dependentVal');
+
+        // Assert: Internal lazy discovery updates indexes only and does not invalidate the active handle.
+        Assert.areEqual('depends on hello', first);
+        Assert.areEqual(first, second, 'The same handle should remain valid after lazy import discovery.');
+    }
+
+    @IsTest
     static void should_isolate_local_modules_when_application_contexts_are_distinct() {
         // Arrange: Two application contexts register the same module token independently.
         Di.ApplicationContext leftContext = newTestContext();
@@ -3381,7 +3651,7 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_update_existing_module_ref_when_local_module_is_replaced() {
+    static void should_reject_existing_module_ref_when_local_module_is_replaced() {
         // Arrange: A local module ref is held before the module is replaced.
         SingleModule module = new SingleModule();
         Di.ModuleRef ref = Di.addModule(module);
@@ -3392,31 +3662,44 @@ private class DiTest {
         // Act: The module is replaced while the old ref is still in use.
         Di.replaceModule(module.getToken(), replacement);
 
-        // Assert: The old ref observes the replacement instead of serving stale providers/cache.
-        Object result = ref.get('TestService');
-        Assert.isTrue(result instanceof String, 'Existing refs should observe local module replacement.');
-        Assert.areEqual('replaced', (String) result, 'Existing refs should serve replacement providers.');
+        // Assert: The old ref is stale and a fresh ref serves replacement providers.
+        try {
+            ref.get('TestService');
+            Assert.fail('Expected local module replacement to invalidate the existing ref.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+        Assert.areEqual(
+            'replaced',
+            Di.getModuleRef(module.getToken()).get('TestService'),
+            'Fresh refs should serve replacement providers.'
+        );
     }
 
     @IsTest
-    static void should_share_replacement_runtime_when_old_ref_is_held() {
+    static void should_issue_fresh_singleton_runtime_when_module_is_replaced() {
         // Arrange: Hold the original ref before replacing its module with another singleton provider definition.
         SingleModule module = new SingleModule();
         Di.ModuleRef heldRef = Di.addModule(module);
         Di.DynamicModule replacement = new Di.DynamicModule(module.getToken());
         replacement.addProvider(replacement.provide('TestService').useClass(TestServiceImpl.class));
 
-        // Act: Resolve through both the current registry ref and the previously held ref.
+        // Act: Resolve through a fresh registry ref after replacement.
         Di.replaceModule(module.getToken(), replacement);
         Di.ModuleRef registeredRef = Di.getModuleRef(module.getToken());
         Object registeredInstance = registeredRef.get('TestService');
-        Object heldInstance = heldRef.get('TestService');
 
-        // Assert: Both refs converge on the replacement module's one singleton runtime.
+        // Assert: The old ref is stale and the fresh ref owns a stable singleton runtime.
+        try {
+            heldRef.get('TestService');
+            Assert.fail('Expected module replacement to invalidate the held ref.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
         Assert.areEqual(
             registeredInstance,
-            heldInstance,
-            'Held and registered refs should share the replacement runtime singleton cache.'
+            registeredRef.get('TestService'),
+            'Fresh replacement refs should cache singleton providers in their own current runtime.'
         );
     }
 
@@ -3433,10 +3716,16 @@ private class DiTest {
         // Act: The imported local module is replaced.
         Di.replaceModule(valueModule.getToken(), replacement);
 
-        // Assert: Dependent singleton caches are invalidated after local replacement.
+        // Assert: The old consumer handle is stale; a fresh one observes the replacement.
+        try {
+            consumerRef.get('dependentVal');
+            Assert.fail('Expected local module replacement to invalidate dependent consumer refs.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
         Assert.areEqual(
             'depends on replaced',
-            consumerRef.get('dependentVal'),
+            Di.getModuleRef(LazyConsumerModule.class).get('dependentVal'),
             'Dependent singleton providers should be rebuilt after local module replacement.'
         );
     }
@@ -3593,17 +3882,23 @@ private class DiTest {
     static void should_clear_dependent_singleton_caches_when_provider_is_replaced() {
         // Arrange: A consumer singleton captures an imported owner value.
         ValueModule valueModule = new ValueModule();
-        Di.ModuleRef ownerRef = Di.addModule(valueModule);
+        Di.addModule(valueModule);
         Di.ModuleRef consumerRef = Di.getModuleRef(LazyConsumerModule.class);
         Assert.areEqual('depends on hello', consumerRef.get('dependentVal'));
 
-        // Act: Replace only the imported provider on its owner runtime.
-        ownerRef.replace(valueModule.provide('val').useValue('provider-replaced'));
+        // Act: Replace only the imported provider through the owning application context.
+        Di.replaceProvider(ValueModule.class, valueModule.provide('val').useValue('provider-replaced'));
 
-        // Assert: All dependent module runtimes are invalidated, not only the owner cache entry.
+        // Assert: The old consumer handle is stale and a fresh one observes the replacement.
+        try {
+            consumerRef.get('dependentVal');
+            Assert.fail('Expected provider replacement to invalidate the held consumer ref.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
         Assert.areEqual(
             'depends on provider-replaced',
-            consumerRef.get('dependentVal'),
+            Di.getModuleRef(LazyConsumerModule.class).get('dependentVal'),
             'Dependent singleton providers should rebuild after provider replacement.'
         );
     }
@@ -3801,8 +4096,15 @@ private class DiTest {
         replacement.addExport('EnableNewCheckout');
         Di.replaceModule(featureFlagsModule.getToken(), replacement);
 
-        // Assert: The service now correctly reflects the enabled feature flag.
-        UserExperienceService newUxService = (UserExperienceService) appRef.get(UserExperienceService.class);
+        // Assert: The old app handle is stale and a fresh one reflects the enabled feature flag.
+        try {
+            appRef.get(UserExperienceService.class);
+            Assert.fail('Expected feature-flag replacement to invalidate the held app ref.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+        UserExperienceService newUxService = (UserExperienceService) Di.getModuleRef(AppModule.class)
+            .get(UserExperienceService.class);
         Assert.isTrue(
             newUxService.isNewCheckoutEnabled(),
             'New checkout should be enabled after replacing the feature flag module.'
@@ -3874,6 +4176,15 @@ private class DiTest {
         return 1;
     }
 
+    private static void assertUnknownModuleReplacement(final Di.ApplicationContext context, final String token) {
+        try {
+            context.replaceModule(token, new Di.DynamicModule(token));
+            Assert.fail('Expected UnknownModuleException for replacing an unregistered module.');
+        } catch (Di.UnknownModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains(token), 'Exception message should identify the missing module.');
+        }
+    }
+
     // --- Service Interfaces and Implementations ---
     public interface TestService {
     }
@@ -3897,6 +4208,15 @@ private class DiTest {
     }
     public class MockMetadataServiceImpl implements IMetadataService {
     }
+    public class ConstructorFailureException extends Exception {
+    }
+    public class UnconstructableModule extends Di.Module {
+        public UnconstructableModule() {
+            throw new ConstructorFailureException();
+        }
+    }
+    public class NotAModule {
+    }
 
     // --- Factory Implementations ---
     public class TestFactory implements Di.Factory {
@@ -3917,6 +4237,11 @@ private class DiTest {
     public class InternalConsumerFactory implements Di.Factory {
         public Object newInstance(Di.Container ref, Object args) {
             return ref.get('foo');
+        }
+    }
+    public class NestedInjectFactory implements Di.Factory {
+        public Object newInstance(Di.Container ref, Object args) {
+            return ref.inject(new FooInjectable());
         }
     }
     public class DependentProviderFactory implements Di.Factory {
@@ -4047,6 +4372,11 @@ private class DiTest {
     public class InjectableModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(FooInjectable.class).useClass(FooInjectable.class) };
+        }
+    }
+    public class NestedInjectModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('NestedInject').useFactory(new NestedInjectFactory()) };
         }
     }
     public class TypeModule extends EmptyModule {

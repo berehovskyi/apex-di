@@ -97,6 +97,8 @@ context.compile();
 
 Compiled graphs require acyclic module imports. Graph mutations invalidate compiled and incremental bindings; resolution returns to lazy discovery until `compile()` is called again.
 
+The first top-level `get()` / `resolve()` opens an application context lifecycle. Setup-time module additions before that point keep their issued handles valid. Successful external graph mutations after that point, such as `addModule`, `replaceProvider`, metadata mock changes in tests, or `replaceModule`, invalidate previously issued `ModuleRef` and `ScopeRef` handles. Reacquire refs/scopes from the context after a mutation. Framework-controlled lazy import/global discovery during resolution remains handle-safe.
+
 ---
 
 ## Feature Modules
@@ -225,7 +227,7 @@ replacement.addExport('ConnectionString');
 Di.replaceModule('DatabaseModule', replacement);
 ```
 
-Replacement validates and commits the complete new definition atomically, invalidates provider-binding indexes, and clears module caches so consumers do not keep stale bindings or singleton instances. A global replacement must also call `setGlobal()` before registration.
+Replacement validates and commits the complete new definition atomically, invalidates provider-binding indexes, and starts a new lifecycle generation so previously issued refs/scopes fail fast instead of serving stale bindings or singleton instances. A global replacement must also call `setGlobal()` before registration.
 
 If you want to register a dynamic module in the global scope:
 
@@ -240,7 +242,7 @@ Di.addModule(globalDbModule);
 
 Configure dynamic modules before registration. After a successful registration, all five structural mutators (`setGlobal`, `addProvider`, `addImport`, `addExport`, and `addReexport`) reject further changes. Failed registration leaves the candidate editable and retryable. `ApplicationContext.clear()` releases ownership without unsealing the definition, so the same unchanged instance can be registered in another context; reconfiguration requires a new `DynamicModule` instance.
 
-Call graph mutation APIs such as `replace()`, `replaceModule()`, or `addModule()` only between top-level resolutions, not from `Factory.newInstance()` or `Injectable.inject()`.
+Call graph mutation APIs such as `replaceProvider()`, `replaceModule()`, or `addModule()` only between top-level resolutions, not from `Factory.newInstance()` or `Injectable.inject()`.
 
 Replacing a module requires the replacement to declare exactly the same token and remain in the same local or global registry. The framework rejects mismatched replacements before publishing them.
 
@@ -256,6 +258,19 @@ Use the fluent builder inside modules, or instantiate the public provider classe
 Di.DynamicModule module = new Di.DynamicModule('TestModule');
 Di.Provider configured = module.provide(TestService.class).useClass(TestServiceImpl.class);
 Di.ValueProvider standalone = new Di.ValueProvider('Greeting', 'hello');
+```
+
+Provider replacement is owned by the application context:
+
+```apex
+Di.ModuleRef ref = Di.getModuleRef(DatabaseModule.class);
+DatabaseService first = (DatabaseService) ref.get(DatabaseService.class);
+
+Di.replaceProvider(DatabaseModule.class, new Di.ValueProvider('ConnectionString', 'new-connection'));
+
+// The old ref belongs to the previous lifecycle generation.
+Di.ModuleRef freshRef = Di.getModuleRef(DatabaseModule.class);
+DatabaseService second = (DatabaseService) freshRef.get(DatabaseService.class);
 ```
 
 ### Token Identity
@@ -420,7 +435,7 @@ Di.ScopeRef salesScope = salesRef.createScope(unitOfWork);
 Di.ScopeRef accountsScope = accountsRef.createScope(unitOfWork);
 ```
 
-A `ScopeContext` belongs to one `ApplicationContext`. It caches scoped instances by provider owner and token, detects graph revisions between top-level resolutions, and discards stale instances after graph mutations. `unitOfWork.clear()` explicitly resets the entire shared scope; clearing any participant also resets that shared unit of work.
+A `ScopeContext` belongs to one `ApplicationContext`. It caches scoped instances by provider owner and token. Successful external graph mutations invalidate held `ScopeRef` handles; internal lazy graph discovery remains safe for the active scope. `unitOfWork.clear()` explicitly resets the entire shared scope; clearing any participant also resets that shared unit of work.
 
 ---
 
