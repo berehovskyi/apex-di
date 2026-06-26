@@ -95,6 +95,8 @@ public virtual inherited sharing class Di {
 
     @TestVisible
     private static Integer guardExceptionCreationCount = 0;
+    @TestVisible
+    private static Integer memoRevisionMissCount = 0;
 
     @TestVisible
     private static Boolean hasGlobalLoadBeenAttempted {
@@ -342,6 +344,7 @@ public virtual inherited sharing class Di {
         );
         private ApplicationContext context;
         private Boolean isSealed = false;
+        private String cachedModuleKey;
 
         protected Module() {
             token = String.valueOf(this).substringBefore(':');
@@ -351,6 +354,13 @@ public virtual inherited sharing class Di {
             isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
 
             this.token = token;
+        }
+
+        private String moduleKey() {
+            if (cachedModuleKey == null) {
+                cachedModuleKey = (isGlobal() ? 'global:' : 'local:') + token;
+            }
+            return cachedModuleKey;
         }
 
         // <editor-fold desc="Module API">
@@ -660,6 +670,7 @@ public virtual inherited sharing class Di {
         protected Boolean inCall = false;
         private final Integer contextGeneration;
         private ModuleRuntime runtime;
+        private Map<String, ResolvedPlan> resolutionMemo;
 
         protected Container(final ApplicationContext context, final Container parent, final Module module) {
             this.context = context ?? DEFAULT_CONTEXT;
@@ -756,7 +767,17 @@ public virtual inherited sharing class Di {
         protected virtual Object getInternal(final String token, final Object args) {
             validateAndAddPath(token);
             try {
-                ProviderBinding binding = getModule().getProviderBinding(token);
+                ResolvedPlan plan = memoizedPlan(token);
+                if (plan != null) {
+                    isTrue(
+                        plan.scope !== Scope.PROTOTYPE,
+                        InvalidScopeException.class,
+                        PROTOTYPE_SCOPE_ERROR_MESSAGE,
+                        new List<String>{ token }
+                    );
+                    return getInstanceFrom(getResolutionContainer(plan.owner), plan.provider, args);
+                }
+                ProviderBinding binding = getRuntimeModule().getProviderBinding(token);
                 Provider provider = binding.getProvider();
                 isTrue(
                     getProviderScope(provider) !== Scope.PROTOTYPE,
@@ -775,6 +796,7 @@ public virtual inherited sharing class Di {
                         return getInternalFrom(resolutionContainer, existing, args);
                     }
                 }
+                memoizePlan(token, provider, binding.getOwner());
                 return getInstanceFrom(resolutionContainer, provider, args);
             } finally {
                 popIfMatches(token);
@@ -784,7 +806,11 @@ public virtual inherited sharing class Di {
         protected virtual Object resolveInternal(final String token, final Object args) {
             validateAndAddPath(token);
             try {
-                ProviderBinding binding = getModule().getProviderBinding(token);
+                ResolvedPlan plan = memoizedPlan(token);
+                if (plan != null) {
+                    return resolveInstanceFrom(getResolutionContainer(plan.owner), plan.provider, args);
+                }
+                ProviderBinding binding = getRuntimeModule().getProviderBinding(token);
                 Provider provider = binding.getProvider();
                 Container resolutionContainer = getResolutionContainer(binding.getOwner());
                 if (provider instanceof ExistingProvider) {
@@ -796,6 +822,7 @@ public virtual inherited sharing class Di {
                         return resolveInternalFrom(resolutionContainer, existing, args);
                     }
                 }
+                memoizePlan(token, provider, binding.getOwner());
                 return resolveInstanceFrom(resolutionContainer, provider, args);
             } finally {
                 popIfMatches(token);
@@ -869,6 +896,41 @@ public virtual inherited sharing class Di {
 
         private void clearSingletons() {
             runtime.singletonCache.clear();
+        }
+
+        private void enableResolutionMemo() {
+            resolutionMemo = new Map<String, ResolvedPlan>();
+        }
+
+        private ResolvedPlan memoizedPlan(final String token) {
+            if (resolutionMemo == null) {
+                return null;
+            }
+            ResolvedPlan plan = resolutionMemo.get(token);
+            if (plan == null) {
+                return null;
+            }
+            if (plan.graphRevision != context.graphRevision) {
+                memoRevisionMissCount++;
+                return null;
+            }
+            return plan;
+        }
+
+        private void memoizePlan(final String token, final Provider provider, final ModuleRef owner) {
+            if (resolutionMemo == null) {
+                return;
+            }
+            if (
+                provider instanceof ClassProvider ||
+                provider instanceof ValueProvider ||
+                provider instanceof FactoryProvider
+            ) {
+                resolutionMemo.put(
+                    token,
+                    new ResolvedPlan(provider, owner, provider.getScope(), context.graphRevision)
+                );
+            }
         }
 
         private Object getInternalFrom(final Container target, final String token, final Object args) {
@@ -1452,7 +1514,7 @@ public virtual inherited sharing class Di {
         }
 
         private String getModuleKey(final Module module) {
-            return (module.isGlobal() ? 'global:' : 'local:') + module.getToken();
+            return module.moduleKey();
         }
 
         private Map<String, ProviderBinding> compileModule(
@@ -1983,6 +2045,7 @@ public virtual inherited sharing class Di {
         private ModuleRef(final ApplicationContext context, final Module module) {
             super(context, null, module);
             registryToken = module.getToken();
+            enableResolutionMemo();
         }
 
         // <editor-fold desc="Module API">
@@ -2125,7 +2188,7 @@ public virtual inherited sharing class Di {
         }
 
         private String getOwnerKey(final Module ownerModule) {
-            return (ownerModule.isGlobal() ? 'global:' : 'local:') + ownerModule.getToken();
+            return ownerModule.moduleKey();
         }
         // </editor-fold>
     }
@@ -2394,6 +2457,25 @@ public virtual inherited sharing class Di {
         private ModuleRuntime(final Module module) {
             isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
             this.module = module;
+        }
+    }
+
+    private class ResolvedPlan {
+        private final Provider provider;
+        private final ModuleRef owner;
+        private final Scope scope;
+        private final Integer graphRevision;
+
+        private ResolvedPlan(
+            final Provider provider,
+            final ModuleRef owner,
+            final Scope scope,
+            final Integer graphRevision
+        ) {
+            this.provider = provider;
+            this.owner = owner;
+            this.scope = scope;
+            this.graphRevision = graphRevision;
         }
     }
 }

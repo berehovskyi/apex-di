@@ -4155,6 +4155,141 @@ private class DiTest {
     }
     // </editor-fold>
 
+    // <editor-fold desc="Resolution memo">
+    @IsTest
+    static void should_return_stable_singleton_across_memoized_lookups() {
+        // Arrange: A singleton provider is registered and ready for repeated lookup.
+        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+
+        // Act: Resolve once through the slow path, then repeat through the memoized path.
+        Object first = ref.get('TestService'); // slow path: resolves, caches singleton, memoizes plan
+        Object second = ref.get('TestService'); // memo hit
+        Object third = ref.get('TestService');
+
+        // Assert: Memoized lookups preserve singleton identity.
+        Assert.isNotNull(first, 'Memoized singleton lookup should resolve an instance.');
+        Assert.isTrue(first === second, 'Repeated memoized lookups must return the same singleton instance.');
+        Assert.isTrue(second === third, 'Repeated memoized lookups must remain stable.');
+    }
+
+    @IsTest
+    static void should_return_consistent_value_and_factory_via_memo() {
+        // Arrange: Value and factory modules are registered independently.
+        Di.ModuleRef valueRef = Di.getModuleRef(ValueModule.class);
+
+        // Act and Assert: Repeated value lookups use the memo without changing the returned value.
+        Assert.areEqual('hello', (String) valueRef.get('val'));
+        Assert.areEqual('hello', (String) valueRef.get('val'), 'Memoized value lookup must stay consistent.');
+
+        // Arrange: A singleton factory provider is registered.
+        Di.ModuleRef factoryRef = Di.getModuleRef(FactoryModule.class);
+
+        // Act: Resolve the factory provider twice.
+        Object firstSvc = factoryRef.get('svc');
+        Object secondSvc = factoryRef.get('svc');
+
+        // Assert: Memoized factory lookup still respects singleton caching.
+        Assert.isTrue(firstSvc === secondSvc, 'Memoized factory singleton must return the same instance.');
+    }
+
+    @IsTest
+    static void should_keep_prototype_resolve_fresh_and_reject_get_with_memo() {
+        // Arrange: A prototype provider is registered.
+        Di.ModuleRef ref = Di.getModuleRef(PrototypeModule.class);
+
+        // Act: Resolve twice so the plan can be memoized while instances remain fresh.
+        Object first = ref.resolve('p'); // memoizes the plan, returns a fresh instance
+        Object second = ref.resolve('p'); // memo hit, still fresh
+
+        // Assert: resolve() stays fresh for prototype providers.
+        Assert.isTrue(first !== second, 'PROTOTYPE resolve must stay fresh even when the plan is memoized.');
+
+        // Act: Try to use get() on the same memoized prototype provider.
+        try {
+            ref.get('p');
+            Assert.fail('PROTOTYPE get must still throw when the plan is memoized.');
+        } catch (Di.InvalidScopeException ex) {
+            // Assert: get() still enforces the prototype scope rule.
+            Assert.isTrue(
+                ex.getMessage().containsIgnoreCase('prototype'),
+                'Exception should explain the prototype rule.'
+            );
+        }
+    }
+
+    @IsTest
+    static void should_reject_stale_handle_and_resolve_new_value_after_replacement_with_memo() {
+        // Arrange: Resolve a value once so the original handle has a memoized plan.
+        Di.ModuleRef ref = Di.getModuleRef(ValueModule.class);
+        Assert.areEqual('hello', (String) ref.get('val')); // memoizes the plan for 'val'
+        Di.Provider replacement = ref.getModule().provide('val').useValue('replaced');
+
+        // Act: Replace the provider through the application context.
+        Di.replaceProvider(ValueModule.class, replacement); // external mutation: bumps generation, reissues handles
+
+        // Assert: The stale handle rejects use instead of serving the old memoized plan.
+        try {
+            ref.get('val');
+            Assert.fail('Stale handle must throw after external mutation, not serve a memoized plan.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+
+        // Assert: A freshly issued handle sees the replacement.
+        Di.ModuleRef fresh = Di.getModuleRef(ValueModule.class);
+        Assert.areEqual('replaced', (String) fresh.get('val'), 'Fresh handle must resolve the replaced value.');
+    }
+
+    @IsTest
+    static void should_resolve_through_lazy_import_with_memo_enabled() {
+        // Arrange: A consumer lazily imports ValueModule during resolution.
+        Di.ModuleRef ref = Di.getModuleRef(LazyConsumerModule.class);
+
+        // Act and Assert: The first lookup materializes the import and resolves correctly.
+        Assert.areEqual('depends on hello', (String) ref.get('dependentVal'));
+
+        // Act and Assert: Repeated memoized lookups remain correct after discovery settles.
+        Assert.areEqual('depends on hello', (String) ref.get('dependentVal'));
+        Assert.areEqual('depends on hello', (String) ref.get('dependentVal'));
+    }
+
+    @IsTest
+    static void should_not_share_memo_entries_across_module_handles() {
+        // Arrange: Two module handles expose the same token name from different module definitions.
+        Di.ModuleRef valueRef = Di.getModuleRef(ValueModule.class);
+        Di.DynamicModule other = new Di.DynamicModule('MemoOtherModule');
+        other.addProvider(other.provide('val').useValue('other'));
+        Di.ModuleRef otherRef = Di.addModule(other);
+
+        // Act and Assert: Each handle keeps its own memo entry and returns its own provider.
+        Assert.areEqual('hello', (String) valueRef.get('val'));
+        Assert.areEqual('other', (String) otherRef.get('val'));
+        Assert.areEqual('hello', (String) valueRef.get('val'));
+        Assert.areEqual('other', (String) otherRef.get('val'));
+    }
+
+    @IsTest
+    static void should_reject_memoized_plan_built_at_an_earlier_graph_revision() {
+        // Arrange: 'dependentVal' is memoized before its nested 'val' lookup lazily installs ValueModule,
+        // which bumps the graph revision mid-resolution and leaves the 'dependentVal' plan one revision behind.
+        Di.ModuleRef ref = Di.getModuleRef(LazyConsumerModule.class);
+        Integer before = Di.memoRevisionMissCount;
+        Assert.areEqual('depends on hello', (String) ref.get('dependentVal'));
+        Assert.areEqual(before, Di.memoRevisionMissCount, 'First resolution should not reject any plan on revision.');
+
+        // Act: Resolve the same token again; its memoized plan now predates the current graph revision.
+        Assert.areEqual('depends on hello', (String) ref.get('dependentVal'));
+
+        // Assert: The graphRevision guard rejected the stale plan and rebuilt it. This would NOT increment
+        // if the guard were weakened to ignore the revision and serve the stale entry.
+        Assert.areEqual(
+            before + 1,
+            Di.memoRevisionMissCount,
+            'The graphRevision guard must reject a resolution plan built at an earlier revision.'
+        );
+    }
+    // </editor-fold>
+
     // <editor-fold desc="Helpers">
     private static Di.ApplicationContext newTestContext() {
         Di.ApplicationContext context = Di.createContext();
