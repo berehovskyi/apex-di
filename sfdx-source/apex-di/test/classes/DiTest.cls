@@ -4349,6 +4349,260 @@ private class DiTest {
     }
     // </editor-fold>
 
+    // <editor-fold desc="Graph description">
+    @IsTest
+    static void should_describe_only_registered_graph_without_instantiating_providers() {
+        // Arrange: One module has an observable factory and another has an undiscovered lazy import.
+        Di.ApplicationContext context = newTestContext();
+        InjectionFailureModule factoryModule = new InjectionFailureModule();
+        context.addModule(factoryModule);
+        context.getModuleRef(LazyConsumerModule.class);
+
+        // Act: Describe the currently registered graph.
+        Di.ContextDescription description = context.describe();
+
+        // Assert: The snapshot is deterministic, non-instantiating, and excludes unmaterialized imports.
+        Assert.isFalse(description.isCompiled);
+        Assert.areEqual(2, description.modules.size());
+        Assert.areEqual(0, factoryModule.factory.instantiationCount);
+        Assert.isNull(findModuleDescription(description, new ValueModule().getToken()));
+        Assert.areEqual(
+            Di.ProviderKind.FACTORY_PROVIDER,
+            findProviderDescription(findModuleDescription(description, factoryModule.getToken()), 'BrokenService').kind
+        );
+        Assert.areEqual(
+            ValueModule.class.getName(),
+            findModuleDescription(description, new LazyConsumerModule().getToken()).imports[0].token
+        );
+        Assert.isFalse(findModuleDescription(description, new LazyConsumerModule().getToken()).imports[0].isEager);
+    }
+
+    @IsTest
+    static void should_describe_complete_reachable_graph_after_compile() {
+        // Arrange: A context contains a module with an unmaterialized import.
+        Di.ApplicationContext context = newTestContext();
+        context.getModuleRef(LazyConsumerModule.class);
+
+        // Act: Compile the reachable graph before describing it.
+        context.compile();
+        Di.ContextDescription description = context.describe();
+
+        // Assert: Compilation is explicit and the imported module now appears in the snapshot.
+        Assert.isTrue(description.isCompiled);
+        Assert.isNotNull(findModuleDescription(description, new LazyConsumerModule().getToken()));
+        Assert.isNotNull(findModuleDescription(description, new ValueModule().getToken()));
+    }
+
+    @IsTest
+    static void should_describe_provider_kinds_scopes_exports_and_redirects() {
+        // Arrange: Built-in, custom, metadata, and global provider definitions are registered.
+        Di.ApplicationContext context = newTestContext();
+        context.mockProviders(
+            new Map<String, DI_Provider__mdt>{
+                'AliasProvider' => new DI_Provider__mdt(
+                    DeveloperName = 'AliasProvider',
+                    Type__c = 'Existing',
+                    Value__c = 'TargetService',
+                    Scope__c = 'PROTOTYPE',
+                    IsActive__c = true
+                )
+            }
+        );
+        context.addModule(new DescriptionProviderModule());
+        context.addModule(new MetadataExistingModule());
+        DescriptionGlobalModule globalModule = new DescriptionGlobalModule();
+        context.addModule(globalModule);
+
+        // Act: Snapshot the committed definitions.
+        Di.ContextDescription description = context.describe();
+        Di.ModuleDescription providerModule = findModuleDescription(
+            description,
+            new DescriptionProviderModule().getToken()
+        );
+
+        // Assert: Provider metadata is useful without exposing values, factories, or instances.
+        Assert.areEqual(Di.ProviderKind.CLASS_PROVIDER, findProviderDescription(providerModule, 'class').kind);
+        Assert.areEqual(Di.Scope.PROTOTYPE, findProviderDescription(providerModule, 'class').declaredScope);
+        Assert.areEqual(Di.ProviderKind.VALUE_PROVIDER, findProviderDescription(providerModule, 'value').kind);
+        Assert.areEqual(
+            Di.ProviderConfigurationStatus.VALID,
+            findProviderDescription(providerModule, 'value').configurationStatus
+        );
+        Assert.isTrue(findProviderDescription(providerModule, 'value').isExported);
+        Assert.areEqual(Di.ProviderKind.FACTORY_PROVIDER, findProviderDescription(providerModule, 'factory').kind);
+        Assert.areEqual(Di.ProviderKind.EXISTING_PROVIDER, findProviderDescription(providerModule, 'alias').kind);
+        Assert.areEqual('value', findProviderDescription(providerModule, 'alias').redirectToken);
+        Assert.areEqual(
+            Di.ProviderKind.METADATA_PROVIDER,
+            findProviderDescription(
+                    findModuleDescription(description, new MetadataExistingModule().getToken()),
+                    'AliasService'
+                )
+                .kind
+        );
+        Assert.areEqual(
+            'TargetService',
+            findProviderDescription(
+                    findModuleDescription(description, new MetadataExistingModule().getToken()),
+                    'AliasService'
+                )
+                .redirectToken
+        );
+        Assert.areEqual(
+            Di.ProviderConfigurationStatus.VALID,
+            findProviderDescription(
+                    findModuleDescription(description, new MetadataExistingModule().getToken()),
+                    'AliasService'
+                )
+                .configurationStatus
+        );
+        Assert.areEqual(
+            Di.Scope.PROTOTYPE,
+            findProviderDescription(
+                    findModuleDescription(description, new MetadataExistingModule().getToken()),
+                    'AliasService'
+                )
+                .declaredScope
+        );
+        Assert.isTrue(findModuleDescription(description, globalModule.getToken()).isGlobal);
+    }
+
+    @IsTest
+    static void should_describe_missing_metadata_definition_without_throwing() {
+        // Arrange: A registered metadata provider has no matching metadata definition.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new MetadataModule());
+
+        // Act: Describe the malformed metadata-backed graph.
+        Di.ProviderDescription provider = findProviderDescription(
+            findModuleDescription(context.describe(), new MetadataModule().getToken()),
+            IMetadataService.class.getName()
+        );
+
+        // Assert: Diagnostics remain available and avoid inventing redirect metadata.
+        Assert.areEqual(Di.ProviderKind.METADATA_PROVIDER, provider.kind);
+        Assert.areEqual(Di.ProviderConfigurationStatus.MISSING_METADATA, provider.configurationStatus);
+        Assert.areEqual(Di.Scope.SINGLETON, provider.declaredScope);
+        Assert.isNull(provider.redirectToken);
+    }
+
+    @IsTest
+    static void should_describe_inactive_metadata_definition_without_throwing() {
+        // Arrange: A registered metadata alias points at an inactive definition.
+        Di.ApplicationContext context = newTestContext();
+        context.mockProviders(
+            new Map<String, DI_Provider__mdt>{
+                'AliasProvider' => new DI_Provider__mdt(
+                    DeveloperName = 'AliasProvider',
+                    Type__c = 'Existing',
+                    Value__c = 'TargetService',
+                    IsActive__c = false
+                )
+            }
+        );
+        context.addModule(new MetadataExistingModule());
+
+        // Act: Describe the inactive metadata-backed alias.
+        Di.ProviderDescription provider = findProviderDescription(
+            findModuleDescription(context.describe(), new MetadataExistingModule().getToken()),
+            'AliasService'
+        );
+
+        // Assert: Inactive configuration does not prevent graph introspection.
+        Assert.areEqual(Di.ProviderKind.METADATA_PROVIDER, provider.kind);
+        Assert.areEqual(Di.ProviderConfigurationStatus.INACTIVE_METADATA, provider.configurationStatus);
+        Assert.areEqual(Di.Scope.SINGLETON, provider.declaredScope);
+        Assert.isNull(provider.redirectToken);
+    }
+
+    @IsTest
+    static void should_describe_invalid_metadata_definitions_without_throwing() {
+        // Arrange: Metadata contains one invalid scope and one unsupported provider type.
+        Di.ApplicationContext context = newTestContext();
+        context.mockProviders(
+            new Map<String, DI_Provider__mdt>{
+                'ConfigurableService' => new DI_Provider__mdt(
+                    DeveloperName = 'ConfigurableService',
+                    Type__c = 'Class',
+                    Value__c = TestServiceImpl.class.getName(),
+                    Scope__c = 'INVALID_SCOPE',
+                    IsActive__c = true
+                ),
+                'StringValueProvider' => new DI_Provider__mdt(
+                    DeveloperName = 'StringValueProvider',
+                    Type__c = 'Unsupported',
+                    IsActive__c = true
+                )
+            }
+        );
+        context.addModule(new MetadataModule());
+
+        // Act: Describe both invalid metadata definitions.
+        Di.ModuleDescription module = findModuleDescription(context.describe(), new MetadataModule().getToken());
+        Di.ProviderDescription invalidScope = findProviderDescription(module, IMetadataService.class.getName());
+        Di.ProviderDescription invalidType = findProviderDescription(module, 'StringValue');
+
+        // Assert: Invalid definitions remain inspectable and use the provider's configured fallback scope.
+        Assert.areEqual(Di.ProviderConfigurationStatus.INVALID_METADATA, invalidScope.configurationStatus);
+        Assert.areEqual(Di.Scope.SINGLETON, invalidScope.declaredScope);
+        Assert.areEqual(Di.ProviderConfigurationStatus.INVALID_METADATA, invalidType.configurationStatus);
+        Assert.isNull(invalidType.redirectToken);
+    }
+
+    @IsTest
+    static void should_describe_import_and_reexport_edges_deterministically() {
+        // Arrange: A module declares eager/lazy imports and a re-export in non-sorted order.
+        Di.ApplicationContext context = newTestContext();
+        context.addModule(new DescriptionEdgesModule());
+
+        // Act: Describe the committed graph edges.
+        Di.ModuleDescription module = findModuleDescription(
+            context.describe(),
+            new DescriptionEdgesModule().getToken()
+        );
+
+        // Assert: Edge snapshots are sorted and preserve eager-import metadata.
+        Assert.areEqual(2, module.imports.size());
+        Assert.areEqual(SingleModule.class.getName(), module.imports[0].token);
+        Assert.isTrue(module.imports[0].isEager);
+        Assert.areEqual(ValueModule.class.getName(), module.imports[1].token);
+        Assert.isFalse(module.imports[1].isEager);
+        Assert.areEqual(1, module.reexports.size());
+        Assert.areEqual(SharedImportReexportCommonModule.class.getName(), module.reexports[0].token);
+        Assert.areEqual('sharedImportReexportVal', module.exports[0]);
+    }
+
+    @IsTest
+    static void should_return_defensive_description_without_opening_context_lifecycle() {
+        // Arrange: A context is still in bootstrap and contains one module handle.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef ref = context.getModuleRef(LazyConsumerModule.class);
+
+        // Act: Mutate the returned snapshot, then continue bootstrap registration.
+        Di.ContextDescription first = context.describe();
+        first.modules.clear();
+        context.addModule(new SingleModule());
+        Di.ContextDescription second = context.describe();
+
+        // Assert: Snapshot mutation is isolated and describe() did not invalidate the held bootstrap handle.
+        Assert.areEqual(0, first.modules.size());
+        Assert.areEqual(2, second.modules.size());
+        Assert.areEqual('hello', (String) ref.get('val'));
+    }
+
+    @IsTest
+    static void should_describe_default_application_context_through_static_facade() {
+        // Arrange: A module is registered through the default static facade.
+        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+
+        // Act: Describe the default application context.
+        Di.ContextDescription description = Di.describe();
+
+        // Assert: Static users can inspect the same committed module token.
+        Assert.areEqual(ref.getModule().getToken(), description.modules[0].token);
+    }
+    // </editor-fold>
+
     // <editor-fold desc="Resolution memo">
     @IsTest
     static void should_return_stable_singleton_across_memoized_lookups() {
@@ -4512,6 +4766,27 @@ private class DiTest {
     // </editor-fold>
 
     // <editor-fold desc="Helpers">
+    private static Di.ModuleDescription findModuleDescription(final Di.ContextDescription context, final String token) {
+        for (Di.ModuleDescription module : context.modules) {
+            if (module.token == token) {
+                return module;
+            }
+        }
+        return null;
+    }
+
+    private static Di.ProviderDescription findProviderDescription(
+        final Di.ModuleDescription module,
+        final String token
+    ) {
+        for (Di.ProviderDescription provider : module.providers) {
+            if (provider.token == token) {
+                return provider;
+            }
+        }
+        return null;
+    }
+
     private static Di.ApplicationContext newTestContext() {
         Di.ApplicationContext context = Di.createContext();
         context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
@@ -4713,6 +4988,41 @@ private class DiTest {
     public class FactoryModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('svc').useFactory(new TestFactory()) };
+        }
+    }
+    public class DescriptionProviderModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('class').useClass(TestServiceImpl.class).scope(Di.Scope.PROTOTYPE),
+                provide('value').useValue('not-exposed-by-description'),
+                provide('factory').useFactory(new TestFactory()),
+                provide('alias').useExisting('value')
+            };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'value' };
+        }
+    }
+    public class DescriptionGlobalModule extends EmptyModule {
+        public override Boolean isGlobal() {
+            return true;
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('descriptionGlobal').useValue('global') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'descriptionGlobal' };
+        }
+    }
+    public class DescriptionEdgesModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{
+                Di.import(ValueModule.class),
+                Di.import(SingleModule.class).immediately()
+            };
+        }
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{ Di.import(SharedImportReexportCommonModule.class) };
         }
     }
     public class ArgsModule extends EmptyModule {

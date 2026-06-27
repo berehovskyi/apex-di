@@ -165,6 +165,10 @@ public virtual inherited sharing class Di {
     public static void clear() {
         DEFAULT_CONTEXT.clear();
     }
+
+    public static ContextDescription describe() {
+        return DEFAULT_CONTEXT.describe();
+    }
     // </editor-fold>
 
     // <editor-fold desc="Helpers">
@@ -338,6 +342,21 @@ public virtual inherited sharing class Di {
         IMPORTED,
         IMPLICIT_GLOBAL,
         NONE
+    }
+
+    public enum ProviderKind {
+        CLASS_PROVIDER,
+        VALUE_PROVIDER,
+        FACTORY_PROVIDER,
+        EXISTING_PROVIDER,
+        METADATA_PROVIDER
+    }
+
+    public enum ProviderConfigurationStatus {
+        VALID,
+        MISSING_METADATA,
+        INACTIVE_METADATA,
+        INVALID_METADATA
     }
 
     public interface MetadataSource {
@@ -703,7 +722,7 @@ public virtual inherited sharing class Di {
         private Boolean isCommitted = false;
         private Scope scopeType = Scope.SINGLETON;
 
-        protected Provider(String token) {
+        private Provider(String token) {
             isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             this.token = token;
@@ -739,6 +758,12 @@ public virtual inherited sharing class Di {
 
         private void freeze() {
             isCommitted = true;
+        }
+
+        protected abstract ProviderKind getKind();
+
+        private Scope getConfiguredScope() {
+            return scopeType;
         }
     }
 
@@ -1230,6 +1255,76 @@ public virtual inherited sharing class Di {
         }
     }
 
+    public class ContextDescription {
+        public final Boolean isCompiled;
+        public final List<ModuleDescription> modules;
+
+        private ContextDescription(final Boolean isCompiled, final List<ModuleDescription> modules) {
+            this.isCompiled = isCompiled;
+            this.modules = new List<ModuleDescription>(modules);
+        }
+    }
+
+    public class ModuleDescription {
+        public final String token;
+        public final Boolean isGlobal;
+        public final List<ProviderDescription> providers;
+        public final List<String> exports;
+        public final List<ModuleImportDescription> imports;
+        public final List<ModuleImportDescription> reexports;
+
+        private ModuleDescription(
+            final String token,
+            final Boolean isGlobal,
+            final List<ProviderDescription> providers,
+            final List<String> exports,
+            final List<ModuleImportDescription> imports,
+            final List<ModuleImportDescription> reexports
+        ) {
+            this.token = token;
+            this.isGlobal = isGlobal;
+            this.providers = new List<ProviderDescription>(providers);
+            this.exports = new List<String>(exports);
+            this.imports = new List<ModuleImportDescription>(imports);
+            this.reexports = new List<ModuleImportDescription>(reexports);
+        }
+    }
+
+    public class ProviderDescription {
+        public final String token;
+        public final ProviderKind kind;
+        public final ProviderConfigurationStatus configurationStatus;
+        public final Scope declaredScope;
+        public final String redirectToken;
+        public final Boolean isExported;
+
+        private ProviderDescription(
+            final String token,
+            final ProviderKind kind,
+            final ProviderConfigurationStatus configurationStatus,
+            final Scope declaredScope,
+            final String redirectToken,
+            final Boolean isExported
+        ) {
+            this.token = token;
+            this.kind = kind;
+            this.configurationStatus = configurationStatus;
+            this.declaredScope = declaredScope;
+            this.redirectToken = redirectToken;
+            this.isExported = isExported;
+        }
+    }
+
+    public class ModuleImportDescription {
+        public final String token;
+        public final Boolean isEager;
+
+        private ModuleImportDescription(final String token, final Boolean isEager) {
+            this.token = token;
+            this.isEager = isEager;
+        }
+    }
+
     public virtual class ApplicationContext {
         private final Map<String, ModuleRef> moduleRegistry = new Map<String, ModuleRef>();
         private final Map<String, ModuleRef> globalModuleRegistry = new Map<String, ModuleRef>();
@@ -1460,6 +1555,13 @@ public virtual inherited sharing class Di {
             return this;
         }
 
+        public virtual ContextDescription describe() {
+            List<ModuleDescription> modules = new List<ModuleDescription>();
+            addModuleDescriptions(modules, moduleRegistry);
+            addModuleDescriptions(modules, globalModuleRegistry);
+            return new ContextDescription(isCompiled, modules);
+        }
+
         public virtual void clear() {
             markGraphChanged();
             clearModuleContexts(moduleRegistry);
@@ -1643,6 +1745,127 @@ public virtual inherited sharing class Di {
 
         private void open() {
             isOpen = true;
+        }
+
+        private void addModuleDescriptions(
+            final List<ModuleDescription> descriptions,
+            final Map<String, ModuleRef> registry
+        ) {
+            List<String> registryTokens = new List<String>(registry.keySet());
+            registryTokens.sort();
+            for (String registryToken : registryTokens) {
+                descriptions.add(describeModule(registry.get(registryToken).getRuntimeModule()));
+            }
+        }
+
+        private ModuleDescription describeModule(final Module module) {
+            List<String> providerTokens = new List<String>(module.definition.providers.keySet());
+            providerTokens.sort();
+            List<ProviderDescription> providers = new List<ProviderDescription>();
+            for (String providerToken : providerTokens) {
+                Provider provider = module.definition.providers.get(providerToken);
+                providers.add(describeProvider(module, providerToken, provider));
+            }
+
+            List<String> exports = new List<String>(module.definition.exports);
+            exports.sort();
+            return new ModuleDescription(
+                module.getToken(),
+                module.isGlobal(),
+                providers,
+                exports,
+                describeModuleImports(module.definition.imports),
+                describeModuleImports(module.definition.reexports)
+            );
+        }
+
+        private ProviderDescription describeProvider(final Module module, final String token, final Provider provider) {
+            ProviderDefinition metadataDefinition;
+            ProviderConfigurationStatus configurationStatus = ProviderConfigurationStatus.VALID;
+            if (provider instanceof CustomMetadataTypesProvider) {
+                metadataDefinition = ((CustomMetadataTypesProvider) provider).findDefinition(this);
+                configurationStatus = describeMetadataConfiguration(metadataDefinition);
+            }
+
+            return new ProviderDescription(
+                token,
+                provider.getKind(),
+                configurationStatus,
+                describeProviderScope(provider, configurationStatus, metadataDefinition),
+                describeProviderRedirect(provider, configurationStatus, metadataDefinition),
+                module.definition.exports.contains(token)
+            );
+        }
+
+        private ProviderConfigurationStatus describeMetadataConfiguration(final ProviderDefinition definition) {
+            if (definition == null) {
+                return ProviderConfigurationStatus.MISSING_METADATA;
+            }
+            if (definition.isActive != true) {
+                return ProviderConfigurationStatus.INACTIVE_METADATA;
+            }
+            if (!String.isBlank(definition.scope)) {
+                try {
+                    Scope.valueOf(definition.scope);
+                } catch (Exception exc) {
+                    return ProviderConfigurationStatus.INVALID_METADATA;
+                }
+            }
+            switch on definition.type {
+                when 'Class', 'Value', 'Factory', 'Existing' {
+                    return ProviderConfigurationStatus.VALID;
+                }
+                when else {
+                    return ProviderConfigurationStatus.INVALID_METADATA;
+                }
+            }
+        }
+
+        private Scope describeProviderScope(
+            final Provider provider,
+            final ProviderConfigurationStatus configurationStatus,
+            final ProviderDefinition metadataDefinition
+        ) {
+            if (!(provider instanceof CustomMetadataTypesProvider)) {
+                return provider.getScope();
+            }
+            return configurationStatus === ProviderConfigurationStatus.VALID &&
+                !String.isBlank(metadataDefinition.scope)
+                ? Scope.valueOf(metadataDefinition.scope)
+                : provider.getConfiguredScope();
+        }
+
+        private String describeProviderRedirect(
+            final Provider provider,
+            final ProviderConfigurationStatus configurationStatus,
+            final ProviderDefinition metadataDefinition
+        ) {
+            if (provider instanceof ExistingProvider) {
+                return ((ExistingProvider) provider).getExisting();
+            }
+            if (
+                provider instanceof CustomMetadataTypesProvider &&
+                configurationStatus === ProviderConfigurationStatus.VALID &&
+                metadataDefinition.type == 'Existing'
+            ) {
+                return metadataDefinition.value;
+            }
+            return null;
+        }
+
+        private List<ModuleImportDescription> describeModuleImports(final Set<ModuleImport> moduleImports) {
+            Map<String, Boolean> eagerByToken = new Map<String, Boolean>();
+            for (ModuleImport moduleImport : moduleImports) {
+                eagerByToken.put(moduleImport.getToken(), moduleImport.isEager);
+            }
+
+            List<String> tokens = new List<String>(eagerByToken.keySet());
+            tokens.sort();
+            List<ModuleImportDescription> descriptions = new List<ModuleImportDescription>();
+            for (String token : tokens) {
+                descriptions.add(new ModuleImportDescription(token, eagerByToken.get(token)));
+            }
+            return descriptions;
         }
 
         private void invalidateLifecycleHandles() {
@@ -2004,6 +2227,10 @@ public virtual inherited sharing class Di {
         public String getType() {
             return typeName;
         }
+
+        protected override ProviderKind getKind() {
+            return ProviderKind.CLASS_PROVIDER;
+        }
     }
 
     public virtual inherited sharing class ValueProvider extends Provider {
@@ -2021,6 +2248,10 @@ public virtual inherited sharing class Di {
         public override Object resolve(final Container container, final Object args) {
             isTrue(args == null, InvalidProviderException.class, ARGS_NOT_SUPPORTED_MESSAGE);
             return value;
+        }
+
+        protected override ProviderKind getKind() {
+            return ProviderKind.VALUE_PROVIDER;
         }
     }
 
@@ -2057,6 +2288,10 @@ public virtual inherited sharing class Di {
         public override Object resolve(final Container container, final Object args) {
             return factory.newInstance(container, args);
         }
+
+        protected override ProviderKind getKind() {
+            return ProviderKind.FACTORY_PROVIDER;
+        }
     }
 
     public virtual inherited sharing class ExistingProvider extends Provider {
@@ -2087,6 +2322,10 @@ public virtual inherited sharing class Di {
 
         public String getExisting() {
             return existing;
+        }
+
+        protected override ProviderKind getKind() {
+            return ProviderKind.EXISTING_PROVIDER;
         }
     }
 
@@ -2141,6 +2380,10 @@ public virtual inherited sharing class Di {
         }
         // </editor-fold>
 
+        protected override ProviderKind getKind() {
+            return ProviderKind.METADATA_PROVIDER;
+        }
+
         protected Scope getScope(final ApplicationContext context) {
             ProviderDefinition definition = context.getProviderDefinitions().get(developerName);
             if (String.isBlank(definition?.scope)) {
@@ -2155,8 +2398,12 @@ public virtual inherited sharing class Di {
         }
 
         // <editor-fold desc="Helpers">
+        private ProviderDefinition findDefinition(final ApplicationContext context) {
+            return context.getProviderDefinitions().get(developerName);
+        }
+
         private ProviderDefinition getDefinition(final ApplicationContext context) {
-            ProviderDefinition definition = context.getProviderDefinitions().get(developerName);
+            ProviderDefinition definition = findDefinition(context);
             isTrue(
                 definition != null,
                 InvalidProviderException.class,
