@@ -698,6 +698,20 @@ public virtual inherited sharing class Di {
                 return getInternal(token, args);
             }
 
+            if (resolutionMemo != null) {
+                ResolvedPlan plan = resolutionMemo.get(token);
+                if (
+                    plan != null &&
+                    plan.graphRevision == context.graphRevision &&
+                    plan.owner === this &&
+                    plan.scope == Scope.SINGLETON &&
+                    hasSingleton(token)
+                ) {
+                    validateContextGeneration();
+                    return getSingleton(token);
+                }
+            }
+
             startResolution();
             try {
                 return getInternal(token, args);

@@ -4288,6 +4288,33 @@ private class DiTest {
             'The graphRevision guard must reject a resolution plan built at an earlier revision.'
         );
     }
+
+    @IsTest
+    static void should_serve_cached_singleton_consistently_on_repeated_get() {
+        // Arrange: Warm a singleton so the module ref has both a memoized plan and a cached instance.
+        Di.ModuleRef ref = Di.getModuleRef(SingleModule.class);
+        Object warm = ref.get('TestService');
+
+        // Act: Repeat get() calls that are eligible for the root singleton fast lane.
+        Object first = ref.get('TestService');
+        Object second = ref.get('TestService');
+
+        // Assert: Repeated lookups return the same cached singleton instance.
+        Assert.isTrue(
+            first === warm && second === warm,
+            'Repeated cached singleton gets must return the same instance.'
+        );
+    }
+
+    @IsTest
+    static void should_resolve_imported_singleton_consistently_through_consumer() {
+        // Arrange: A consumer resolves an imported singleton, so the memo owner is not the consumer ref.
+        Di.ModuleRef consumer = Di.getModuleRef(LazyConsumerModule.class);
+
+        // Act and Assert: Repeated lookups route to the owner and stay correct.
+        Assert.areEqual('hello', (String) consumer.get('val'));
+        Assert.areEqual('hello', (String) consumer.get('val'));
+    }
     // </editor-fold>
 
     // <editor-fold desc="Helpers">
