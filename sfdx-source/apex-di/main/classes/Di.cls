@@ -289,6 +289,18 @@ public virtual inherited sharing class Di {
         final Boolean condition,
         final Type exceptionType,
         final String messageTemplate,
+        final String argument
+    ) {
+        if (condition ?? false) {
+            return;
+        }
+        throw createException(exceptionType, String.format(messageTemplate, new List<String>{ argument }));
+    }
+
+    private static void isTrue(
+        final Boolean condition,
+        final Type exceptionType,
+        final String messageTemplate,
         final String token,
         final List<String> path
     ) {
@@ -1766,12 +1778,7 @@ public virtual inherited sharing class Di {
         }
 
         private void validateConfigurable() {
-            isTrue(
-                !isSealed(),
-                InvalidModuleException.class,
-                SEALED_DYNAMIC_MODULE_MESSAGE,
-                new List<String>{ getToken() }
-            );
+            isTrue(!isSealed(), InvalidModuleException.class, SEALED_DYNAMIC_MODULE_MESSAGE, token);
         }
     }
 
