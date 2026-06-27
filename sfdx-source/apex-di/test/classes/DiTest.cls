@@ -4155,6 +4155,200 @@ private class DiTest {
     }
     // </editor-fold>
 
+    // <editor-fold desc="Resolution diagnostics">
+    @IsTest
+    static void should_explain_local_provider_without_instantiating_it() {
+        // Arrange: A local factory provider exposes an observable instantiation counter.
+        InjectionFailureModule module = new InjectionFailureModule();
+        Di.ModuleRef ref = Di.addModule(module);
+
+        // Act: Explain the provider binding without resolving it.
+        Di.ResolutionExplanation explanation = ref.explain('BrokenService');
+
+        // Assert: Binding details are structured and the provider was not instantiated.
+        Assert.areEqual(Di.ResolutionStatus.RESOLVED, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.LOCAL, explanation.source);
+        Assert.areEqual('BrokenService', explanation.token);
+        Assert.areEqual(module.getToken(), explanation.requestingModule);
+        Assert.areEqual(module.getToken(), explanation.ownerModule);
+        Assert.areEqual(Di.Scope.SINGLETON, explanation.declaredScope);
+        Assert.isNull(explanation.redirectToken);
+        Assert.areEqual(0, explanation.conflictingModules.size());
+        Assert.areEqual(0, module.factory.instantiationCount, 'explain() must not instantiate providers.');
+    }
+
+    @IsTest
+    static void should_explain_imported_provider_owner_from_type_token() {
+        // Arrange: A consumer imports an exported facade owned by another module.
+        Di.ModuleRef consumer = Di.getModuleRef(PrivateFacadeConsumerModule.class);
+
+        // Act: Explain through the Type overload.
+        Di.ResolutionExplanation explanation = consumer.explain(ExportedPrivateFacade.class);
+
+        // Assert: The explanation preserves the consumer-relative source and defining owner.
+        Assert.areEqual(Di.ResolutionStatus.RESOLVED, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.IMPORTED, explanation.source);
+        Assert.areEqual(consumer.getModule().getToken(), explanation.requestingModule);
+        Assert.areEqual(new PrivateFacadeOwnerModule().getToken(), explanation.ownerModule);
+        Assert.areEqual(Di.Scope.SINGLETON, explanation.declaredScope);
+    }
+
+    @IsTest
+    static void should_explain_implicit_global_provider() {
+        // Arrange: A global module exports a value to an unrelated consumer.
+        OverrideGlobalModule globalModule = new OverrideGlobalModule();
+        Di.addModule(globalModule);
+        Di.ModuleRef consumer = Di.getModuleRef(EmptyModule.class);
+
+        // Act: Explain the globally visible token.
+        Di.ResolutionExplanation explanation = consumer.explain('val');
+
+        // Assert: Global fallback and ownership are explicit.
+        Assert.areEqual(Di.ResolutionStatus.RESOLVED, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.IMPLICIT_GLOBAL, explanation.source);
+        Assert.areEqual(globalModule.getToken(), explanation.ownerModule);
+        Assert.areEqual(Di.Scope.SINGLETON, explanation.declaredScope);
+    }
+
+    @IsTest
+    static void should_explain_existing_provider_redirect() {
+        // Arrange: A module declares an ExistingProvider alias.
+        Di.ModuleRef ref = Di.getModuleRef(ArgsValidationModule.class);
+
+        // Act: Explain the alias binding without following or instantiating its target.
+        Di.ResolutionExplanation explanation = ref.explain('ExistingProvider');
+
+        // Assert: The redirect remains explicit instead of reporting a misleading terminal scope.
+        Assert.areEqual(Di.ResolutionStatus.RESOLVED, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.LOCAL, explanation.source);
+        Assert.areEqual('ClassProvider', explanation.redirectToken);
+        Assert.areEqual(Di.Scope.SINGLETON, explanation.declaredScope);
+    }
+
+    @IsTest
+    static void should_explain_metadata_existing_provider_redirect() {
+        // Arrange: Metadata configures a provider as an Existing alias.
+        Di.mockProviders(
+            new Map<String, DI_Provider__mdt>{
+                'AliasProvider' => new DI_Provider__mdt(
+                    DeveloperName = 'AliasProvider',
+                    Type__c = 'Existing',
+                    Value__c = 'TargetService',
+                    IsActive__c = true
+                )
+            }
+        );
+        Di.ModuleRef ref = Di.getModuleRef(MetadataExistingModule.class);
+
+        // Act: Explain the metadata-backed alias without resolving its target.
+        Di.ResolutionExplanation explanation = ref.explain('AliasService');
+
+        // Assert: Metadata normalization contributes the redirect and declared scope.
+        Assert.areEqual(Di.ResolutionStatus.RESOLVED, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.LOCAL, explanation.source);
+        Assert.areEqual('TargetService', explanation.redirectToken);
+        Assert.areEqual(Di.Scope.SINGLETON, explanation.declaredScope);
+    }
+
+    @IsTest
+    static void should_explain_ambiguous_imports_without_throwing() {
+        // Arrange: Two imported modules export the same token from different owners.
+        Di.ModuleRef consumer = Di.getModuleRef(AmbiguousImportConsumerModule.class);
+
+        // Act: Explain the ambiguous token.
+        Di.ResolutionExplanation explanation = consumer.explain('ambiguousImportVal');
+
+        // Assert: Both conflicting owners are reported structurally rather than thrown as prose.
+        Assert.areEqual(Di.ResolutionStatus.AMBIGUOUS, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.IMPORTED, explanation.source);
+        Assert.isNull(explanation.ownerModule);
+        Assert.isNull(explanation.declaredScope);
+        Assert.isTrue(explanation.conflictingModules.contains(new AmbiguousImportLeftModule().getToken()));
+        Assert.isTrue(explanation.conflictingModules.contains(new AmbiguousImportRightModule().getToken()));
+    }
+
+    @IsTest
+    static void should_explain_ambiguity_through_reexport_without_throwing() {
+        // Arrange: A consumer imports a module that re-exports two conflicting owners.
+        Di.ModuleRef consumer = Di.getModuleRef(AmbiguousReexportConsumerModule.class);
+
+        // Act: Explain the token whose ambiguity occurs inside the imported module.
+        Di.ResolutionExplanation explanation = consumer.explain('ambiguousImportVal');
+
+        // Assert: Nested ambiguity remains structured at the original consumer boundary.
+        Assert.areEqual(Di.ResolutionStatus.AMBIGUOUS, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.IMPORTED, explanation.source);
+        Assert.isTrue(explanation.conflictingModules.contains(new AmbiguousImportLeftModule().getToken()));
+        Assert.isTrue(explanation.conflictingModules.contains(new AmbiguousImportRightModule().getToken()));
+    }
+
+    @IsTest
+    static void should_explain_missing_provider_without_throwing() {
+        // Arrange: A module has no visible provider for the requested token.
+        Di.ModuleRef ref = Di.getModuleRef(LazyConsumerModule.class);
+
+        // Act: Explain the missing token.
+        Di.ResolutionExplanation explanation = ref.explain('missingProvider');
+
+        // Assert: Absence is represented as data with no invented owner or scope.
+        Assert.areEqual(Di.ResolutionStatus.NOT_FOUND, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.NONE, explanation.source);
+        Assert.areEqual('missingProvider', explanation.token);
+        Assert.isNull(explanation.ownerModule);
+        Assert.isNull(explanation.declaredScope);
+        Assert.areEqual(0, explanation.conflictingModules.size());
+    }
+
+    @IsTest
+    static void should_not_open_context_lifecycle_when_explaining_provider() {
+        // Arrange: A context has a consumer whose imported provider has not been discovered yet.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef consumer = context.getModuleRef(LazyConsumerModule.class);
+
+        // Act: Explain the lazy import, then continue setup by registering another module.
+        Di.ResolutionExplanation explanation = consumer.explain('val');
+        context.addModule(new SingleModule());
+
+        // Assert: Explanation may discover imports but must not turn later setup into a cold mutation.
+        Assert.areEqual(Di.ResolutionStatus.RESOLVED, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.IMPORTED, explanation.source);
+        Assert.areEqual('hello', (String) consumer.get('val'));
+    }
+
+    @IsTest
+    static void should_honor_compiled_graph_miss_when_explaining_provider() {
+        // Arrange: A compiled context has no visible binding for the requested token.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef ref = context.getModuleRef(EmptyModule.class);
+        context.compile();
+
+        // Act: Explain a token absent from the compiled binding index.
+        Di.ResolutionExplanation explanation = ref.explain('compiledMissingProvider');
+
+        // Assert: Diagnostics preserve the compiled graph's closed-world miss.
+        Assert.areEqual(Di.ResolutionStatus.NOT_FOUND, explanation.status);
+        Assert.areEqual(Di.ResolutionSource.NONE, explanation.source);
+        Assert.isNull(explanation.ownerModule);
+    }
+
+    @IsTest
+    static void should_reject_explanation_from_stale_module_ref() {
+        // Arrange: A context-owned handle is invalidated by clearing its context.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef staleRef = context.getModuleRef(SingleModule.class);
+        context.clear();
+
+        // Act: Attempt to explain through the stale handle.
+        try {
+            staleRef.explain('TestService');
+            Assert.fail('Expected InvalidContextException for a stale diagnostic handle.');
+        } catch (Di.InvalidContextException ex) {
+            // Assert: Diagnostics honor the same lifecycle boundary as resolution.
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+    }
+    // </editor-fold>
+
     // <editor-fold desc="Resolution memo">
     @IsTest
     static void should_return_stable_singleton_across_memoized_lookups() {
@@ -4767,6 +4961,19 @@ private class DiTest {
                 Di.import(AmbiguousImportLeftModule.class),
                 Di.import(AmbiguousImportRightModule.class)
             };
+        }
+    }
+    public class AmbiguousReexportModule extends EmptyModule {
+        public override Set<Di.ModuleImport> reexports() {
+            return new Set<Di.ModuleImport>{
+                Di.import(AmbiguousImportLeftModule.class),
+                Di.import(AmbiguousImportRightModule.class)
+            };
+        }
+    }
+    public class AmbiguousReexportConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(AmbiguousReexportModule.class) };
         }
     }
     public class SharedImportReexportCommonModule extends EmptyModule {

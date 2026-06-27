@@ -327,6 +327,19 @@ public virtual inherited sharing class Di {
         SCOPED
     }
 
+    public enum ResolutionStatus {
+        RESOLVED,
+        NOT_FOUND,
+        AMBIGUOUS
+    }
+
+    public enum ResolutionSource {
+        LOCAL,
+        IMPORTED,
+        IMPLICIT_GLOBAL,
+        NONE
+    }
+
     public interface MetadataSource {
         Iterable<GlobalModuleDefinition> getGlobalModules();
         Map<String, ProviderDefinition> getProviders();
@@ -532,14 +545,40 @@ public virtual inherited sharing class Di {
                 new List<String>{ token, getToken() }
             );
 
+            return discoverProviderBinding(token, includeGlobals, null, true);
+        }
+
+        private BindingExplanation explainProviderBinding(final String token) {
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
+
+            BindingExplanation explanation = new BindingExplanation();
+            if (getContext().hasCompiledGraph() && getContext().getVisibleProviderBinding(this, token) == null) {
+                return explanation;
+            }
+            try {
+                discoverProviderBinding(token, true, explanation, false);
+            } catch (UnknownProviderException exc) {
+                return explanation;
+            }
+            return explanation;
+        }
+
+        private ProviderBinding discoverProviderBinding(
+            final String token,
+            final Boolean includeGlobals,
+            final BindingExplanation explanation,
+            final Boolean shouldIndex
+        ) {
             // First check local definitions
             if (hasProvider(token)) {
-                return getContext()
-                    .indexVisibleProviderBinding(
-                        this,
-                        token,
-                        new ProviderBinding(definition.providers.get(token), getContext().getRegisteredModuleRef(this))
-                    );
+                ProviderBinding localProvider = new ProviderBinding(
+                    definition.providers.get(token),
+                    getContext().getRegisteredModuleRef(this)
+                );
+                explanation?.resolve(ResolutionSource.LOCAL, localProvider);
+                return shouldIndex
+                    ? getContext().indexVisibleProviderBinding(this, token, localProvider)
+                    : localProvider;
             }
 
             // Then check imported and re-exported modules
@@ -553,10 +592,32 @@ public virtual inherited sharing class Di {
                 if (!module.hasExport(token)) {
                     continue;
                 }
-                ProviderBinding provider = module.getProviderBinding(token);
+                ProviderBinding provider;
+                if (explanation == null) {
+                    provider = module.getProviderBinding(token);
+                } else {
+                    BindingExplanation importedExplanation = module.explainProviderBinding(token);
+                    if (importedExplanation.status === ResolutionStatus.AMBIGUOUS) {
+                        explanation.ambiguous(importedExplanation);
+                        return null;
+                    }
+                    provider = importedExplanation.binding;
+                    isTrue(
+                        provider != null,
+                        UnknownExportException.class,
+                        UNKNOWN_EXPORT_MESSAGE,
+                        new List<String>{ token, module.getToken() }
+                    );
+                }
                 if (selectedProvider == null) {
                     selectedProvider = provider;
                     continue;
+                }
+                if (selectedProvider.getOwner() !== provider.getOwner()) {
+                    if (explanation != null) {
+                        explanation.ambiguous(selectedProvider, provider);
+                        return null;
+                    }
                 }
                 isTrue(
                     selectedProvider.getOwner() === provider.getOwner(),
@@ -571,14 +632,20 @@ public virtual inherited sharing class Di {
                 );
             }
             if (selectedProvider != null) {
-                return getContext().indexVisibleProviderBinding(this, token, selectedProvider);
+                explanation?.resolve(ResolutionSource.IMPORTED, selectedProvider);
+                return shouldIndex
+                    ? getContext().indexVisibleProviderBinding(this, token, selectedProvider)
+                    : selectedProvider;
             }
 
             // Finally check implicit global module exports.
             if (includeGlobals) {
                 ProviderBinding globalProvider = getContext().getImplicitGlobalProviderBinding(token);
                 if (globalProvider != null) {
-                    return getContext().indexVisibleProviderBinding(this, token, globalProvider);
+                    explanation?.resolve(ResolutionSource.IMPLICIT_GLOBAL, globalProvider);
+                    return shouldIndex
+                        ? getContext().indexVisibleProviderBinding(this, token, globalProvider)
+                        : globalProvider;
                 }
             }
 
@@ -755,6 +822,35 @@ public virtual inherited sharing class Di {
 
         public virtual Object resolve(final Type token) {
             return resolve(token?.getName(), null);
+        }
+
+        public virtual ResolutionExplanation explain(final String token) {
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
+            validateContextGeneration();
+
+            BindingExplanation bindingExplanation = getRuntimeModule().explainProviderBinding(token);
+            Provider provider = bindingExplanation.binding?.getProvider();
+            String redirectToken;
+            if (provider instanceof ExistingProvider) {
+                redirectToken = ((ExistingProvider) provider).getExisting();
+            } else if (provider instanceof CustomMetadataTypesProvider) {
+                redirectToken = ((CustomMetadataTypesProvider) provider).getExisting(context);
+            }
+
+            return new ResolutionExplanation(
+                token,
+                getRuntimeModule().getToken(),
+                bindingExplanation.status,
+                bindingExplanation.source,
+                bindingExplanation.binding?.getOwner().getRuntimeModule().getToken(),
+                provider != null ? getProviderScope(provider) : null,
+                redirectToken,
+                bindingExplanation.conflictingModules
+            );
+        }
+
+        public virtual ResolutionExplanation explain(final Type token) {
+            return explain(token?.getName());
         }
 
         public virtual Object inject(final Object instance) {
@@ -1100,6 +1196,37 @@ public virtual inherited sharing class Di {
             this.args = args;
             this.scope = scope;
             this.isActive = isActive;
+        }
+    }
+
+    public class ResolutionExplanation {
+        public final String token;
+        public final String requestingModule;
+        public final ResolutionStatus status;
+        public final ResolutionSource source;
+        public final String ownerModule;
+        public final Scope declaredScope;
+        public final String redirectToken;
+        public final List<String> conflictingModules;
+
+        private ResolutionExplanation(
+            final String token,
+            final String requestingModule,
+            final ResolutionStatus status,
+            final ResolutionSource source,
+            final String ownerModule,
+            final Scope declaredScope,
+            final String redirectToken,
+            final List<String> conflictingModules
+        ) {
+            this.token = token;
+            this.requestingModule = requestingModule;
+            this.status = status;
+            this.source = source;
+            this.ownerModule = ownerModule;
+            this.declaredScope = declaredScope;
+            this.redirectToken = redirectToken;
+            this.conflictingModules = new List<String>(conflictingModules);
         }
     }
 
@@ -2404,6 +2531,39 @@ public virtual inherited sharing class Di {
     public virtual class InvalidContextException extends DiException {
     }
     public virtual class CircularDependencyException extends DiException {
+    }
+
+    private class BindingExplanation {
+        private ResolutionStatus status = ResolutionStatus.NOT_FOUND;
+        private ResolutionSource source = ResolutionSource.NONE;
+        private ProviderBinding binding;
+        private final List<String> conflictingModules = new List<String>();
+
+        private void resolve(final ResolutionSource source, final ProviderBinding binding) {
+            status = ResolutionStatus.RESOLVED;
+            this.source = source;
+            this.binding = binding;
+        }
+
+        private void ambiguous(final ProviderBinding left, final ProviderBinding right) {
+            status = ResolutionStatus.AMBIGUOUS;
+            source = ResolutionSource.IMPORTED;
+            addConflict(left);
+            addConflict(right);
+        }
+
+        private void ambiguous(final BindingExplanation nestedExplanation) {
+            status = ResolutionStatus.AMBIGUOUS;
+            source = ResolutionSource.IMPORTED;
+            conflictingModules.addAll(nestedExplanation.conflictingModules);
+        }
+
+        private void addConflict(final ProviderBinding provider) {
+            String ownerToken = provider.getOwner().getRuntimeModule().getToken();
+            if (!conflictingModules.contains(ownerToken)) {
+                conflictingModules.add(ownerToken);
+            }
+        }
     }
 
     private class ProviderBinding {
