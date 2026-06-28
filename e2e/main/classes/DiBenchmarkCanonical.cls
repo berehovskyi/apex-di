@@ -8,6 +8,7 @@ public without sharing class DiBenchmarkCanonical {
     private static final Integer DEPENDENCY_DEPTH = 10;
     private static final Integer MODULE_IMPORT_DEPTH = 10;
     private static final Integer MAX_COLD_ITERATIONS = 20;
+    private static final Integer MAX_COLD_PROFILE_ITERATIONS = 10;
     private static final Integer MAX_VALIDATION_ITERATIONS = 25;
     private static final String LIBRARY = 'apex-di';
 
@@ -80,6 +81,22 @@ public without sharing class DiBenchmarkCanonical {
             report.moduleCount = 1;
             report.providerCount = PROVIDER_WIDTH_LARGE;
             report.metrics.addAll(measureColdConstructSplit(cap(iterations, MAX_COLD_ITERATIONS)));
+        } else if (scenario == 'dynamic_module_cold') {
+            report.moduleCount = 1;
+            report.providerCount = PROVIDER_WIDTH_LARGE;
+            report.metrics.addAll(measureDynamicModuleCold(cap(iterations, MAX_COLD_PROFILE_ITERATIONS)));
+        } else if (scenario == 'class_module_cold') {
+            report.moduleCount = 1;
+            report.providerCount = PROVIDER_WIDTH_LARGE;
+            report.metrics.addAll(measureClassModuleCold(cap(iterations, MAX_COLD_PROFILE_ITERATIONS)));
+        } else if (scenario == 'dynamic_module_cold_split') {
+            report.moduleCount = 1;
+            report.providerCount = PROVIDER_WIDTH_LARGE;
+            report.metrics.addAll(measureDynamicModuleColdSplitProfile(cap(iterations, MAX_COLD_PROFILE_ITERATIONS)));
+        } else if (scenario == 'class_module_cold_split') {
+            report.moduleCount = 1;
+            report.providerCount = PROVIDER_WIDTH_LARGE;
+            report.metrics.addAll(measureClassModuleColdSplitProfile(cap(iterations, MAX_COLD_PROFILE_ITERATIONS)));
         } else if (scenario == 'dependency_depth') {
             report.moduleCount = 1;
             report.providerCount = DEPENDENCY_DEPTH;
@@ -261,6 +278,143 @@ public without sharing class DiBenchmarkCanonical {
         };
     }
 
+    private static List<BenchmarkMetric> measureDynamicModuleCold(final Integer iterations) {
+        List<BenchmarkMetric> metrics = new List<BenchmarkMetric>();
+        for (Integer providerCount : new List<Integer>{ 25, 100, PROVIDER_WIDTH_LARGE }) {
+            metrics.add(measureDynamicModuleColdTotal(providerCount, iterations));
+        }
+        return metrics;
+    }
+
+    private static List<BenchmarkMetric> measureClassModuleCold(final Integer iterations) {
+        List<BenchmarkMetric> metrics = new List<BenchmarkMetric>();
+        for (Integer providerCount : new List<Integer>{ 25, 100, PROVIDER_WIDTH_LARGE }) {
+            metrics.add(measureClassModuleColdTotal(providerCount, iterations));
+        }
+        return metrics;
+    }
+
+    private static List<BenchmarkMetric> measureDynamicModuleColdSplitProfile(final Integer iterations) {
+        List<BenchmarkMetric> metrics = new List<BenchmarkMetric>();
+        for (Integer providerCount : new List<Integer>{ 25, 100, PROVIDER_WIDTH_LARGE }) {
+            metrics.addAll(measureDynamicModuleColdSplit(providerCount, iterations));
+        }
+        return metrics;
+    }
+
+    private static List<BenchmarkMetric> measureClassModuleColdSplitProfile(final Integer iterations) {
+        List<BenchmarkMetric> metrics = new List<BenchmarkMetric>();
+        for (Integer providerCount : new List<Integer>{ 25, 100, PROVIDER_WIDTH_LARGE }) {
+            metrics.addAll(measureClassModuleColdSplit(providerCount, iterations));
+        }
+        return metrics;
+    }
+
+    private static BenchmarkMetric measureDynamicModuleColdTotal(
+        final Integer providerCount,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            checksum += (Integer) buildWidthGraph(newContext(), providerCount).get('order');
+        }
+        return finish('dynamic_cold_total_' + providerCount, iterations, sample, checksum);
+    }
+
+    private static List<BenchmarkMetric> measureDynamicModuleColdSplit(
+        final Integer providerCount,
+        final Integer iterations
+    ) {
+        Integer constructCpu = 0;
+        Integer registerCpu = 0;
+        Integer firstGetCpu = 0;
+        Integer constructHeap = 0;
+        Integer registerHeap = 0;
+        Integer checksum = 0;
+        for (Integer i = 0; i < iterations; i++) {
+            Integer t0 = Limits.getCpuTime();
+            Integer h0 = Limits.getHeapSize();
+            Di.ApplicationContext context = newContext();
+            Di.DynamicModule module = newDynamicWidthModule(providerCount);
+            Integer t1 = Limits.getCpuTime();
+            Integer h1 = Limits.getHeapSize();
+            Di.ModuleRef ref = context.addModule(module);
+            Integer t2 = Limits.getCpuTime();
+            Integer h2 = Limits.getHeapSize();
+            checksum += (Integer) ref.get('order');
+            Integer t3 = Limits.getCpuTime();
+
+            constructCpu += t1 - t0;
+            registerCpu += t2 - t1;
+            firstGetCpu += t3 - t2;
+            constructHeap += h1 - h0;
+            registerHeap += h2 - h1;
+        }
+        return new List<BenchmarkMetric>{
+            new BenchmarkMetric(
+                'dynamic_split_construct_' + providerCount,
+                iterations,
+                constructCpu,
+                constructHeap,
+                String.valueOf(checksum)
+            ),
+            new BenchmarkMetric('dynamic_split_register_' + providerCount, iterations, registerCpu, registerHeap, ''),
+            new BenchmarkMetric('dynamic_split_first_get_' + providerCount, iterations, firstGetCpu, 0, '')
+        };
+    }
+
+    private static BenchmarkMetric measureClassModuleColdTotal(final Integer providerCount, final Integer iterations) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            checksum += (Integer) buildClassWidthGraph(newContext(), providerCount).get('order');
+        }
+        return finish('class_cold_total_' + providerCount, iterations, sample, checksum);
+    }
+
+    private static List<BenchmarkMetric> measureClassModuleColdSplit(
+        final Integer providerCount,
+        final Integer iterations
+    ) {
+        Integer constructCpu = 0;
+        Integer registerCpu = 0;
+        Integer firstGetCpu = 0;
+        Integer constructHeap = 0;
+        Integer registerHeap = 0;
+        Integer checksum = 0;
+        for (Integer i = 0; i < iterations; i++) {
+            Integer t0 = Limits.getCpuTime();
+            Integer h0 = Limits.getHeapSize();
+            Di.ApplicationContext context = newContext();
+            ClassWidthModule module = new ClassWidthModule(providerCount);
+            Integer t1 = Limits.getCpuTime();
+            Integer h1 = Limits.getHeapSize();
+            Di.ModuleRef ref = context.addModule(module);
+            Integer t2 = Limits.getCpuTime();
+            Integer h2 = Limits.getHeapSize();
+            checksum += (Integer) ref.get('order');
+            Integer t3 = Limits.getCpuTime();
+
+            constructCpu += t1 - t0;
+            registerCpu += t2 - t1;
+            firstGetCpu += t3 - t2;
+            constructHeap += h1 - h0;
+            registerHeap += h2 - h1;
+        }
+        return new List<BenchmarkMetric>{
+            new BenchmarkMetric(
+                'class_split_construct_' + providerCount,
+                iterations,
+                constructCpu,
+                constructHeap,
+                String.valueOf(checksum)
+            ),
+            new BenchmarkMetric('class_split_register_' + providerCount, iterations, registerCpu, registerHeap, ''),
+            new BenchmarkMetric('class_split_first_get_' + providerCount, iterations, firstGetCpu, 0, '')
+        };
+    }
+
     private static BenchmarkMetric measureDependencyDepth(final Integer iterations) {
         Di.ApplicationContext context = newContext();
         Di.DynamicModule module = new Di.DynamicModule('ApexDepthModule');
@@ -430,6 +584,10 @@ public without sharing class DiBenchmarkCanonical {
     }
 
     private static Di.ModuleRef buildWidthGraph(final Di.ApplicationContext context, final Integer providerCount) {
+        return context.addModule(newDynamicWidthModule(providerCount));
+    }
+
+    private static Di.DynamicModule newDynamicWidthModule(final Integer providerCount) {
         Di.DynamicModule module = new Di.DynamicModule('ApexWidth' + providerCount);
         module.addProvider(module.provide('gateway').useValue(7));
         module.addProvider(module.provide('logger').useValue(3));
@@ -437,7 +595,11 @@ public without sharing class DiBenchmarkCanonical {
         for (Integer i = 0; i < providerCount - 3; i++) {
             module.addProvider(module.provide('filler_' + i).useValue(0));
         }
-        return context.addModule(module);
+        return module;
+    }
+
+    private static Di.ModuleRef buildClassWidthGraph(final Di.ApplicationContext context, final Integer providerCount) {
+        return context.addModule(new ClassWidthModule(providerCount));
     }
 
     private static BenchmarkMetric finish(
@@ -474,6 +636,27 @@ public without sharing class DiBenchmarkCanonical {
 
         public Map<String, Di.ProviderDefinition> getProviders() {
             return new Map<String, Di.ProviderDefinition>();
+        }
+    }
+
+    private class ClassWidthModule extends Di.Module {
+        private final Integer providerCount;
+
+        private ClassWidthModule(final Integer providerCount) {
+            super('ApexClassWidth' + providerCount);
+            this.providerCount = providerCount;
+        }
+
+        public override Set<Di.Provider> providers() {
+            Set<Di.Provider> providers = new Set<Di.Provider>{
+                provide('gateway').useValue(7),
+                provide('logger').useValue(3),
+                provide('order').useFactory(new OrderFactory())
+            };
+            for (Integer i = 0; i < providerCount - 3; i++) {
+                providers.add(provide('filler_' + i).useValue(0));
+            }
+            return providers;
         }
     }
 
