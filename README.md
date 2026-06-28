@@ -181,10 +181,6 @@ If you have to import the same set of modules everywhere, it can get tedious. Wh
 
 ```apex
 public class LoggingModule extends Di.Module {
-    public override Boolean isGlobal() {
-        return true;
-    }
-
     public override Set<Di.Provider> providers() {
         return new Set<Di.Provider>{ provide(ILogger.class).useClass(ConsoleLogger.class) };
     }
@@ -193,13 +189,33 @@ public class LoggingModule extends Di.Module {
         return new Set<String>{ ILogger.class.getName() };
     }
 }
+
+Di.addGlobalModule(new LoggingModule());
 ```
 
 Global modules should be registered only once. In the above example, the `ILogger` provider will be ubiquitous, and modules that wish to inject the service will not need to import the `LoggingModule` in their `imports()`.
 
 Global exports act as implicit fallback imports and retain their owning module's visibility and caches. Their binding index is rebuilt atomically after a graph mutation and reused for constant-time lookups until the graph changes again.
 
-You can also define global modules via Custom Metadata (`DI_GlobalModule__mdt`) with `ModuleClass__c` and `IsActive__c` fields. `ModuleClass__c` should contain the fully qualified Apex class name, such as `MyNamespace.LoggingModule` or `OuterClass.InnerModule`.
+Globalness belongs to the registration, not the module class. `addModule()` registers locally, while `addGlobalModule()` registers globally. Replacing a registered module preserves that visibility.
+
+Custom Metadata uses `DI_Module__mdt` with `ModuleClass__c`, `IsActive__c`, and `IsGlobal__c`. `ModuleClass__c` contains the fully qualified Apex class name, such as `MyNamespace.LoggingModule` or `OuterClass.InnerModule`. Active records with `IsGlobal__c = true` are loaded as globals.
+
+Active non-global records are selected explicitly by their `DeveloperName` alias:
+
+```apex
+Di.ModuleRef payments = Di.getMetadataModuleRef('Payments');
+```
+
+Modules can import the same configured alias without coupling to its selected class:
+
+```apex
+public override Set<Di.ModuleImport> imports() {
+    return new Set<Di.ModuleImport>{ Di.importMetadataModule('Payments') };
+}
+```
+
+The metadata alias selects a class but never replaces the module's canonical runtime token.
 
 > **Hint**: Making everything global is not recommended as a design practice. While global modules can help reduce boilerplate, it's generally better to use the `imports()` to make a module's API available to other modules in a controlled and clear way.
 
@@ -227,20 +243,20 @@ replacement.addExport('ConnectionString');
 Di.replaceModule('DatabaseModule', replacement);
 ```
 
-Replacement validates and commits the complete new definition atomically, invalidates provider-binding indexes, and starts a new lifecycle generation so previously issued refs/scopes fail fast instead of serving stale bindings or singleton instances. A global replacement must also call `setGlobal()` before registration.
+Replacement validates and commits the complete new definition atomically, preserves the existing registration visibility, invalidates provider-binding indexes, and starts a new lifecycle generation so previously issued refs/scopes fail fast instead of serving stale bindings or singleton instances.
 
 If you want to register a dynamic module in the global scope:
 
 ```apex
-Di.DynamicModule globalDbModule = new Di.DynamicModule('GlobalDatabaseModule').setGlobal();
+Di.DynamicModule globalDbModule = new Di.DynamicModule('GlobalDatabaseModule');
 globalDbModule.addProvider(globalDbModule.provide('ConnectionString').useValue('jdbc:salesforce://...'));
 globalDbModule.addExport('ConnectionString');
-Di.addModule(globalDbModule);
+Di.addGlobalModule(globalDbModule);
 ```
 
 > **Warning**: As mentioned above, making everything global is not a good design decision.
 
-Configure dynamic modules before registration. After a successful registration, all five structural mutators (`setGlobal`, `addProvider`, `addImport`, `addExport`, and `addReexport`) reject further changes. Failed registration leaves the candidate editable and retryable. `ApplicationContext.clear()` releases ownership without unsealing the definition, so the same unchanged instance can be registered in another context; reconfiguration requires a new `DynamicModule` instance.
+Configure dynamic modules before registration. After a successful registration, all four structural mutators (`addProvider`, `addImport`, `addExport`, and `addReexport`) reject further changes. Failed registration leaves the candidate editable and retryable. `ApplicationContext.clear()` releases ownership without unsealing the definition, so the same unchanged instance can be registered in another context; reconfiguration requires a new `DynamicModule` instance.
 
 Call graph mutation APIs such as `replaceProvider()`, `replaceModule()`, or `addModule()` only between top-level resolutions, not from `Factory.newInstance()` or `Injectable.inject()`.
 
@@ -341,12 +357,12 @@ Invalid metadata configuration is surfaced as framework exceptions. For example,
 
 ### Metadata Sources
 
-`Di.CustomMetadataSource` is the default adapter for `DI_GlobalModule__mdt` and `DI_Provider__mdt`. Supply a custom `Di.MetadataSource` to isolate an application from Custom Metadata or provide definitions from another source:
+`Di.CustomMetadataSource` is the default adapter for `DI_Module__mdt` and `DI_Provider__mdt`. Supply a custom `Di.MetadataSource` to isolate an application from Custom Metadata or provide definitions from another source:
 
 ```apex
 public class AppMetadataSource implements Di.MetadataSource {
-    public Iterable<Di.GlobalModuleDefinition> getGlobalModules() {
-        return new List<Di.GlobalModuleDefinition>();
+    public Map<String, Di.MetadataModuleDefinition> getModules() {
+        return new Map<String, Di.MetadataModuleDefinition>();
     }
 
     public Map<String, Di.ProviderDefinition> getProviders() {
@@ -357,7 +373,7 @@ public class AppMetadataSource implements Di.MetadataSource {
 Di.ApplicationContext context = Di.createContext(new AppMetadataSource());
 ```
 
-The framework core consumes normalized `GlobalModuleDefinition` and `ProviderDefinition` values; only the default adapter reads raw Custom Metadata records.
+The framework core consumes normalized `MetadataModuleDefinition` and `ProviderDefinition` values; only the default adapter reads raw Custom Metadata records.
 
 ---
 
@@ -441,7 +457,7 @@ A `ScopeContext` belongs to one `ApplicationContext`. It caches scoped instances
 
 ## Installation
 
-Deploy `sfdx-source/apex-di/main` as one metadata unit. `Di.cls` references the included `DI_Provider__mdt` and `DI_GlobalModule__mdt` types, so copying only the Apex class is not sufficient.
+Deploy `sfdx-source/apex-di/main` as one metadata unit. `Di.cls` references the included `DI_Provider__mdt` and `DI_Module__mdt` types, so copying only the Apex class is not sufficient.
 
 Local tooling is npm-based:
 
@@ -463,7 +479,7 @@ Prefer a fresh `ApplicationContext` with an injected `MetadataSource` for isolat
 @IsTest
 static void testIsolation() {
     Di.clear();
-    Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+    Di.mockModules(new List<DI_Module__mdt>());
     Di.mockProviders(new Map<String, DI_Provider__mdt>());
 
     // Your test code with clean DI state
