@@ -1,13 +1,15 @@
 @IsTest(IsParallel=true)
 @SuppressWarnings('PMD.ApexDoc')
 private class DiTest {
+    private static Integer metadataModuleInstantiationCount = 0;
+
     static {
         // A private constructor to satisfy the static-only class pattern and improve coverage.
         new Di();
         // Arrange: Clear all DI registries before each test run to ensure isolation.
         Di.clear();
         // Arrange: Mock global modules to prevent unintended loading from metadata in tests.
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        Di.mockModules(new List<DI_Module__mdt>());
         // Arrange: Mock providers to prevent unintended loading from metadata in tests.
         Di.mockProviders(new Map<String, DI_Provider__mdt>());
     }
@@ -1046,7 +1048,9 @@ private class DiTest {
     static void should_resolve_provider_and_global_module_when_metadata_source_is_injected() {
         // Arrange: One source supplies normalized provider and global-module definitions.
         Di.MetadataSource metadataSource = new InjectedMetadataSource(
-            new List<Di.GlobalModuleDefinition>{ new Di.GlobalModuleDefinition(CmtGlobalModule.class.getName(), true) },
+            new List<Di.MetadataModuleDefinition>{
+                new Di.MetadataModuleDefinition('CmtGlobal', CmtGlobalModule.class.getName(), true, true)
+            },
             new Map<String, Di.ProviderDefinition>{
                 'StringValueProvider' => new Di.ProviderDefinition(
                     'StringValueProvider',
@@ -1072,8 +1076,8 @@ private class DiTest {
         // Arrange: Test overrides temporarily hide definitions supplied by the injected source.
         Di.ApplicationContext context = Di.createContext(
             new InjectedMetadataSource(
-                new List<Di.GlobalModuleDefinition>{
-                    new Di.GlobalModuleDefinition(CmtGlobalModule.class.getName(), true)
+                new List<Di.MetadataModuleDefinition>{
+                    new Di.MetadataModuleDefinition('CmtGlobal', CmtGlobalModule.class.getName(), true, true)
                 },
                 new Map<String, Di.ProviderDefinition>{
                     'StringValueProvider' => new Di.ProviderDefinition(
@@ -1087,11 +1091,11 @@ private class DiTest {
                 }
             )
         );
-        context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        context.mockModules(new List<DI_Module__mdt>());
         context.mockProviders(new Map<String, DI_Provider__mdt>());
 
         // Act: Null test overrides restore delegation to the configured metadata source.
-        context.mockGlobalModules(null);
+        context.mockModules(null);
         context.mockProviders(null);
         Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
 
@@ -1114,7 +1118,7 @@ private class DiTest {
             )
         };
         Di.ApplicationContext context = Di.createContext(
-            new InjectedMetadataSource(new List<Di.GlobalModuleDefinition>(), definitions)
+            new InjectedMetadataSource(new List<Di.MetadataModuleDefinition>(), definitions)
         );
         Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
         Assert.areEqual('snapshot', ref.resolve('StringValue'));
@@ -1127,6 +1131,294 @@ private class DiTest {
 
         // Assert: Context behavior remains deterministic until its metadata state is explicitly reset.
         Assert.areEqual('snapshot', ref.resolve('StringValue'));
+    }
+
+    @IsTest
+    static void should_resolve_local_module_by_metadata_alias_without_global_visibility() {
+        // Arrange: An active local metadata alias selects a module class.
+        Di.ApplicationContext context = newTestContext();
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'SelectedLocal',
+                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = false
+                )
+            }
+        );
+        Di.ModuleRef consumer = context.getModuleRef(EmptyModule.class);
+
+        // Act: The module is absent from implicit global fallback, then selected explicitly by alias.
+        try {
+            consumer.get('metadataSelectedValue');
+            Assert.fail('Expected a local metadata module to remain unavailable through global fallback.');
+        } catch (Di.UnknownProviderException ex) {
+            Assert.isTrue(ex.getMessage().contains('metadataSelectedValue'));
+        }
+        Di.ModuleRef selected = context.getMetadataModuleRef('SelectedLocal');
+
+        // Assert
+        Assert.areEqual('selected', selected.get('metadataSelectedValue'));
+        try {
+            consumer.get('metadataSelectedValue');
+            Assert.fail('Expected external metadata installation to invalidate an open-context handle.');
+        } catch (Di.InvalidContextException ex) {
+            Assert.isTrue(ex.getMessage().contains('application context'));
+        }
+        Assert.areEqual(
+            new List<String>{ 'SelectedLocal' },
+            findModuleDescription(context.describe(), selected.getModule().getToken()).metadataAliases
+        );
+    }
+
+    @IsTest
+    static void should_materialize_metadata_import_without_invalidating_active_handle() {
+        // Arrange: A consumer is already open before its lazy metadata import is needed.
+        Di.ApplicationContext context = newTestContext();
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'SelectedImport',
+                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = false
+                )
+            }
+        );
+        Di.ModuleRef consumer = context.getModuleRef(MetadataImportConsumerModule.class);
+        Assert.areEqual('warm', consumer.get('metadataImportWarmup'));
+
+        // Act: Provider discovery installs the metadata-selected import internally after the context opened.
+        Object selected = consumer.get('metadataSelectedValue');
+
+        // Assert: Internal lazy discovery does not invalidate the in-flight or retained consumer handle.
+        Assert.areEqual('selected', selected);
+        Assert.areEqual('warm', consumer.get('metadataImportWarmup'));
+        Di.ModuleDescription consumerDescription = findModuleDescription(
+            context.describe(),
+            consumer.getModule().getToken()
+        );
+        Assert.areEqual('SelectedImport', consumerDescription.imports[0].metadataAlias);
+    }
+
+    @IsTest
+    static void should_load_only_global_metadata_modules_during_global_discovery() {
+        // Arrange: Metadata contains one global module and one local module with an observable constructor.
+        metadataModuleInstantiationCount = 0;
+        Di.ApplicationContext context = newTestContext();
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'GlobalSelection',
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                ),
+                new DI_Module__mdt(
+                    DeveloperName = 'LocalSelection',
+                    ModuleClass__c = MetadataConstructionCountingModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = false
+                )
+            }
+        );
+
+        // Act: Global fallback triggers metadata bootstrap.
+        Object globalValue = context.getModuleRef(EmptyModule.class).get('cmtGlobalVal');
+
+        // Assert: The local alias is indexed without constructing its module until explicitly selected.
+        Assert.areEqual('helloFromCmt', globalValue);
+        Assert.areEqual(
+            new CmtGlobalModule().getToken(),
+            context.getMetadataModuleRef('GlobalSelection').getModule().getToken()
+        );
+        Assert.areEqual(0, metadataModuleInstantiationCount);
+        context.getMetadataModuleRef('LocalSelection');
+        Assert.areEqual(1, metadataModuleInstantiationCount);
+    }
+
+    @IsTest
+    static void should_converge_metadata_aliases_on_one_canonical_module_ref() {
+        // Arrange: Two local aliases select the same module class.
+        Di.ApplicationContext context = newTestContext();
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'SelectedA',
+                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = false
+                ),
+                new DI_Module__mdt(
+                    DeveloperName = 'SelectedB',
+                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = false
+                )
+            }
+        );
+
+        // Act
+        Di.ModuleRef first = context.getMetadataModuleRef('SelectedA');
+        Di.ModuleRef second = context.getMetadataModuleRef('SelectedB');
+
+        // Assert: Alias identity remains diagnostic metadata over one canonical registration.
+        Assert.areEqual(first, second);
+        Assert.areEqual(
+            new List<String>{ 'SelectedA', 'SelectedB' },
+            findModuleDescription(context.describe(), first.getModule().getToken()).metadataAliases
+        );
+    }
+
+    @IsTest
+    static void should_reject_metadata_and_code_visibility_conflict_for_same_token() {
+        // Arrange: Metadata owns a canonical token globally.
+        Di.ApplicationContext context = newTestContext();
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'GlobalConflict',
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
+            }
+        );
+
+        // Act: Direct code registration attempts to claim the same token locally.
+        try {
+            context.addModule(new CmtGlobalModule());
+            Assert.fail('Expected metadata and code visibility conflict to be rejected.');
+        } catch (Di.InvalidModuleException ex) {
+            // Assert
+            Assert.isTrue(ex.getMessage().contains('already registered as global'));
+        }
+        Assert.areEqual('helloFromCmt', context.getModuleRef(EmptyModule.class).get('cmtGlobalVal'));
+    }
+
+    @IsTest
+    static void should_report_missing_and_inactive_metadata_module_aliases() {
+        // Arrange: One metadata alias exists but is inactive.
+        Di.ApplicationContext context = newTestContext();
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'InactiveModule',
+                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    IsActive__c = false,
+                    IsGlobal__c = false
+                )
+            }
+        );
+        Integer rejectedAliases = 0;
+
+        // Act and Assert: Missing and inactive aliases fail with distinct diagnostics.
+        try {
+            context.getMetadataModuleRef('MissingModule');
+            Assert.fail('Expected a missing metadata alias to fail.');
+        } catch (Di.UnknownModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('MissingModule'));
+            rejectedAliases++;
+        }
+        try {
+            context.getMetadataModuleRef('InactiveModule');
+            Assert.fail('Expected an inactive metadata alias to fail.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('inactive'));
+            rejectedAliases++;
+        }
+        Assert.areEqual(2, rejectedAliases);
+    }
+
+    @IsTest
+    static void should_release_failed_metadata_module_registration_for_retry() {
+        // Arrange: A local metadata alias selects a module whose definition cannot compile.
+        Di.ApplicationContext context = newTestContext();
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'BrokenSelection',
+                    ModuleClass__c = LocalErrorModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = false
+                )
+            }
+        );
+
+        // Act: Registration fails before the alias can be committed.
+        try {
+            context.getMetadataModuleRef('BrokenSelection');
+            Assert.fail('Expected invalid metadata-selected module registration to fail.');
+        } catch (Di.UnknownExportException ex) {
+            Assert.isTrue(ex.getMessage().contains('missing'));
+        }
+        Di.DynamicModule retry = new Di.DynamicModule(new LocalErrorModule().getToken());
+        retry.addProvider(retry.provide('retry').useValue('recovered'));
+
+        // Assert: The failed candidate released context ownership, registry state, and alias state.
+        Assert.areEqual('recovered', context.addModule(retry).get('retry'));
+    }
+
+    @IsTest
+    static void should_restore_existing_global_aliases_when_metadata_bootstrap_fails() {
+        // Arrange: A programmatic global exists before metadata bootstrap is reset with two records.
+        Di.ApplicationContext context = newTestContext();
+        Di.ModuleRef globalRef = context.addGlobalModule(new CmtGlobalModule());
+        context.addModule(new EmptyModule());
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'AExistingAlias',
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                ),
+                new DI_Module__mdt(
+                    DeveloperName = 'ZMissingAlias',
+                    ModuleClass__c = 'DiTest.MissingMetadataModule',
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
+            }
+        );
+
+        // Act: The first row attaches an alias to the existing global, then the second row fails.
+        try {
+            context.getModuleRef(EmptyModule.class).get('missingAfterBootstrap');
+            Assert.fail('Expected global metadata bootstrap to fail atomically.');
+        } catch (Di.UnknownModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('MissingMetadataModule'));
+        }
+
+        // Assert: Registry rollback also restores metadata aliases on retained runtimes.
+        Assert.areEqual(
+            new List<String>(),
+            findModuleDescription(context.describe(), globalRef.getModule().getToken()).metadataAliases
+        );
+    }
+
+    @IsTest
+    static void should_use_static_metadata_module_facades() {
+        // Arrange: The default context has one active local metadata alias.
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    DeveloperName = 'StaticSelection',
+                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = false
+                )
+            }
+        );
+
+        // Act
+        Di.ModuleRef selected = Di.getMetadataModuleRef('StaticSelection');
+        Di.ModuleImport moduleImport = Di.importMetadataModule('StaticSelection');
+
+        // Assert
+        Assert.areEqual('selected', selected.get('metadataSelectedValue'));
+        Assert.areEqual(selected.getModule(), moduleImport.resolve());
     }
 
     @IsTest
@@ -1324,7 +1616,7 @@ private class DiTest {
     static void should_read_unmocked_metadata_when_using_application_context() {
         // Arrange: Use a context without provider mocks, so it falls through to DI_Provider__mdt.getAll().
         Di.ApplicationContext context = Di.createContext();
-        context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        context.mockModules(new List<DI_Module__mdt>());
         Di.ModuleRef ref = context.getModuleRef(MetadataModule.class);
 
         // Act: No packaged metadata records exist for this test token, so the framework error is raised.
@@ -1798,33 +2090,25 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_preserve_global_provider_owner_when_local_module_has_same_token() {
-        // Arrange: A local and global module share a token, but the exported provider belongs to the global module.
-        Di.ModuleRef localRef = Di.addModule(new TokenCollisionLocalModule());
-        Di.addModule(new TokenCollisionGlobalOwnerModule());
+    static void should_reject_local_and_global_registrations_with_same_canonical_token() {
+        // Arrange: A global module owns the canonical token and a private provider dependency.
+        Di.addGlobalModule(new TokenCollisionGlobalOwnerModule());
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
 
-        // Act: Resolve the global provider from unrelated and same-token consumers.
+        // Act: A local registration attempts to claim the same canonical token.
+        try {
+            Di.addModule(new TokenCollisionLocalModule());
+            Assert.fail('Expected conflicting module visibility to be rejected.');
+        } catch (Di.InvalidModuleException ex) {
+            Assert.isTrue(ex.getMessage().contains('already registered as global'));
+        }
         ExportedPrivateFacade facade = (ExportedPrivateFacade) consumerRef.get(ExportedPrivateFacade.class);
-        ExportedPrivateFacade sameTokenFacade = (ExportedPrivateFacade) localRef.get(ExportedPrivateFacade.class);
-        ExportedPrivateFacade scopedSameTokenFacade = (ExportedPrivateFacade) localRef.createScope()
-            .get(ExportedPrivateFacade.class);
 
-        // Assert: The provider should autowire against its global owner, not the same-token local module.
+        // Assert: The failed collision leaves global owner routing intact.
         Assert.areEqual(
             'private-dependency',
             facade.getDependencyValue(),
-            'Global provider ownership should not be confused by a local module with the same token.'
-        );
-        Assert.areEqual(
-            'private-dependency',
-            sameTokenFacade.getDependencyValue(),
-            'Root owner routing should use ModuleRef identity rather than module token equality.'
-        );
-        Assert.areEqual(
-            'private-dependency',
-            scopedSameTokenFacade.getDependencyValue(),
-            'Scoped owner routing should use ModuleRef identity rather than module token equality.'
+            'Global provider ownership should remain intact after rejecting a local collision.'
         );
     }
 
@@ -2022,7 +2306,7 @@ private class DiTest {
         LocalErrorModule failingModule = new LocalErrorModule();
         String failedToken = failingModule.getToken();
         try {
-            Di.addModule(failingModule);
+            Di.addGlobalModule(failingModule);
             Assert.fail('Expected an exception for an unknown export.');
         } catch (Di.UnknownExportException ex) {
             Assert.isTrue(
@@ -2060,10 +2344,10 @@ private class DiTest {
         }
 
         // Act: Retry registration with a valid global module using the same token.
-        Di.DynamicModule validRetry = new Di.DynamicModule(failedToken).setGlobal();
+        Di.DynamicModule validRetry = new Di.DynamicModule(failedToken);
         validRetry.addProvider(validRetry.provide('globalRetryValue').useValue('registered'))
             .addExport('globalRetryValue');
-        Di.addModule(validRetry);
+        Di.addGlobalModule(validRetry);
 
         // Assert: The failed global attempt did not poison the global module registry.
         Assert.areEqual(
@@ -2091,8 +2375,8 @@ private class DiTest {
         // Arrange: A local module and a global module are registered.
         Di.Module localMod = new ValueModule();
         Di.ModuleRef localRef1 = Di.addModule(localMod);
-        Di.DynamicModule globalMod = new Di.DynamicModule('G').setGlobal();
-        Di.ModuleRef globalRef1 = Di.addModule(globalMod);
+        Di.DynamicModule globalMod = new Di.DynamicModule('G');
+        Di.ModuleRef globalRef1 = Di.addGlobalModule(globalMod);
 
         // Act: getModuleRef is called again with the same instances.
         Di.ModuleRef localRef2 = Di.getModuleRef(localMod);
@@ -2369,9 +2653,13 @@ private class DiTest {
     static void should_resolve_global_provider_when_application_context_graph_is_compiled() {
         // Arrange: A context has a global metadata module and a local consumer.
         Di.ApplicationContext context = newTestContext();
-        context.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        context.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
         context.addModule(new EmptyModule());
@@ -2561,9 +2849,13 @@ private class DiTest {
     @IsTest
     static void should_load_and_resolve_provider_when_global_module_is_defined_in_metadata() {
         // Arrange: A mock CMT record is created to define a global module.
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
@@ -2578,7 +2870,7 @@ private class DiTest {
     @IsTest
     static void should_share_global_singleton_when_multiple_consumers_resolve_it() {
         // Arrange: A global module owns and exports a singleton provider.
-        Di.addModule(new GlobalSharedSingletonModule());
+        Di.addGlobalModule(new GlobalSharedSingletonModule());
         Di.ModuleRef leftRef = Di.getModuleRef(GlobalSingletonConsumerLeftModule.class);
         Di.ModuleRef rightRef = Di.getModuleRef(GlobalSingletonConsumerRightModule.class);
 
@@ -2597,12 +2889,12 @@ private class DiTest {
     @IsTest
     static void should_reject_global_export_when_token_has_different_owner() {
         // Arrange: One global module already publishes a token.
-        Di.addModule(new DuplicateGlobalExportLeftModule());
+        Di.addGlobalModule(new DuplicateGlobalExportLeftModule());
         DuplicateGlobalExportRightModule rejectedModule = new DuplicateGlobalExportRightModule();
 
         // Act: Another global module attempts to publish the same token.
         try {
-            Di.addModule(rejectedModule);
+            Di.addGlobalModule(rejectedModule);
             Assert.fail('Expected InvalidProviderException for duplicate global export token.');
         } catch (Di.InvalidProviderException ex) {
             // Assert: The ambiguity is rejected with a framework exception.
@@ -2631,10 +2923,10 @@ private class DiTest {
     @IsTest
     static void should_allow_global_reexports_when_bindings_share_owner() {
         // Arrange: Two global modules re-export the same provider owned by a shared common module.
-        Di.addModule(new SharedGlobalReexportLeftModule());
+        Di.addGlobalModule(new SharedGlobalReexportLeftModule());
 
         // Act: The second global module republishes the same owner binding.
-        Di.addModule(new SharedGlobalReexportRightModule());
+        Di.addGlobalModule(new SharedGlobalReexportRightModule());
 
         // Assert: Identical owner bindings are not ambiguous and remain globally resolvable.
         Assert.areEqual(
@@ -2647,7 +2939,7 @@ private class DiTest {
     @IsTest
     static void should_allow_long_class_names_when_global_module_is_stored_in_metadata() {
         // Arrange: Namespaced and inner Apex class names can exceed short text limits.
-        Integer moduleClassLength = DI_GlobalModule__mdt.ModuleClass__c.getDescribe().getLength();
+        Integer moduleClassLength = DI_Module__mdt.ModuleClass__c.getDescribe().getLength();
 
         // Act: The metadata field should support long fully-qualified class names.
         // Assert: Verify the expected outcome.
@@ -2661,10 +2953,18 @@ private class DiTest {
     static void should_rollback_and_retry_when_global_metadata_load_fails() {
         // Arrange: A consumer exists before global metadata loading is triggered.
         Di.ModuleRef consumerRef = Di.addModule(new EmptyModule());
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true),
-                new DI_GlobalModule__mdt(ModuleClass__c = 'DiTest.MissingGlobalModule', IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                ),
+                new DI_Module__mdt(
+                    ModuleClass__c = 'DiTest.MissingGlobalModule',
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
 
@@ -2691,9 +2991,13 @@ private class DiTest {
         }
 
         // Act: Corrected metadata in the same transaction should retry and load successfully.
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
         Di.getModuleRef(CmtGlobalModule.class.getName());
@@ -2709,9 +3013,13 @@ private class DiTest {
     @IsTest
     static void should_prioritize_local_provider_when_global_token_conflicts() {
         // Arrange: A global module is defined via mocked CMT, and a local module provides a conflicting token.
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = OverrideGlobalModule.class.getName(), IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = OverrideGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
         Di.ModuleRef localRef = Di.getModuleRef(LocalOverrideModule.class);
@@ -2726,16 +3034,20 @@ private class DiTest {
     @IsTest
     static void should_throw_exception_when_adding_duplicate_global_module() {
         // Arrange: A global module is added via mocked CMT, and its providers are resolved to trigger loading.
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
         Di.getModuleRef(EmptyModule.class).get('cmtGlobalVal');
 
         // Act: An attempt is made to add another global module with the same token programmatically.
         try {
-            Di.addModule(new CmtGlobalModule());
+            Di.addGlobalModule(new CmtGlobalModule());
             Assert.fail('Expected InvalidModuleException was not thrown.');
         } catch (Di.InvalidModuleException ex) {
             // Assert: The correct exception is thrown.
@@ -2749,9 +3061,13 @@ private class DiTest {
     @IsTest
     static void should_return_existing_ref_when_global_module_token_is_registered() {
         // Arrange: A global module is loaded via CMT mock, and its ref is retrieved once to ensure it's in the registry.
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
         Di.ModuleRef ref1 = Di.getModuleRef(CmtGlobalModule.class.getName());
@@ -2766,9 +3082,13 @@ private class DiTest {
     @IsTest
     static void should_reject_distinct_global_instance_when_metadata_token_is_registered() {
         // Arrange: A global module is defined via CMT mock, but lookup passes a separate equivalent instance.
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
 
@@ -2791,7 +3111,7 @@ private class DiTest {
     static void should_expose_provider_globally_when_global_module_reexports_it() {
         // Arrange: A global module re-exports the ValueModule's 'val' provider.
         // It does NOT explicitly list it in exports(), relying on re-export logic.
-        Di.addModule(new GlobalReexportModule());
+        Di.addGlobalModule(new GlobalReexportModule());
 
         // Act: A consumer requests the re-exported global provider.
         Di.ModuleRef consumer = Di.getModuleRef(EmptyModule.class);
@@ -2804,10 +3124,8 @@ private class DiTest {
     @IsTest
     static void should_reset_global_loading_flag_when_context_is_cleared() {
         // Arrange: Mock and Load
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(DeveloperName = 'M', ModuleClass__c = 'DiTest.EmptyModule')
-            }
+        Di.mockModules(
+            new List<DI_Module__mdt>{ new DI_Module__mdt(DeveloperName = 'M', ModuleClass__c = 'DiTest.EmptyModule') }
         );
         Di.getModuleRef(EmptyModule.class);
 
@@ -2823,7 +3141,7 @@ private class DiTest {
     @IsTest
     static void should_remove_reexported_providers_when_global_module_is_replaced() {
         // Arrange: Start with a global module that re-exports 'val'
-        Di.addModule(new GlobalReexportModule());
+        Di.addGlobalModule(new GlobalReexportModule());
 
         Di.ModuleRef consumer = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('hello', consumer.get('val'), 'Should resolve re-exported global provider initially');
@@ -2908,10 +3226,8 @@ private class DiTest {
     static void should_register_dynamic_module_when_marked_global() {
         // Arrange: A dynamic module is configured and marked as global.
         Di.DynamicModule dynGlobal = new Di.DynamicModule('MyDynamicGlobal');
-        dynGlobal.setGlobal()
-            .addProvider(dynGlobal.provide('dynGlobalVal').useValue('is-global'))
-            .addExport('dynGlobalVal');
-        Di.addModule(dynGlobal);
+        dynGlobal.addProvider(dynGlobal.provide('dynGlobalVal').useValue('is-global')).addExport('dynGlobalVal');
+        Di.addGlobalModule(dynGlobal);
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
 
         // Act: A separate consumer module requests the provider from the dynamic global module.
@@ -2958,14 +3274,7 @@ private class DiTest {
             Assert.isTrue(ex.getMessage().contains('sealed'));
             rejectedMutationCount++;
         }
-        try {
-            module.setGlobal();
-            Assert.fail('Expected setGlobal() to reject a sealed module.');
-        } catch (Di.InvalidModuleException ex) {
-            Assert.isTrue(ex.getMessage().contains('sealed'));
-            rejectedMutationCount++;
-        }
-        Assert.areEqual(5, rejectedMutationCount, 'Every DynamicModule mutator should share the seal contract.');
+        Assert.areEqual(4, rejectedMutationCount, 'Every DynamicModule mutator should share the seal contract.');
     }
 
     @IsTest
@@ -3042,15 +3351,15 @@ private class DiTest {
     @IsTest
     static void should_update_global_dynamic_module_exports_when_replaced() {
         // Arrange: A global dynamic module is registered with one exported provider.
-        Di.DynamicModule dynGlobal = new Di.DynamicModule('RefreshableGlobalDynamic').setGlobal();
+        Di.DynamicModule dynGlobal = new Di.DynamicModule('RefreshableGlobalDynamic');
         dynGlobal.addProvider(dynGlobal.provide('globalRefreshValue').useValue('initial'))
             .addExport('globalRefreshValue');
-        Di.addModule(dynGlobal);
+        Di.addGlobalModule(dynGlobal);
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('initial', consumerRef.get('globalRefreshValue'), 'Pre-condition: global export is visible.');
 
         // Act: A new same-token module replaces the committed global definition.
-        Di.DynamicModule replacement = new Di.DynamicModule(dynGlobal.getToken()).setGlobal();
+        Di.DynamicModule replacement = new Di.DynamicModule(dynGlobal.getToken());
         replacement.addProvider(replacement.provide('globalRefreshValue').useValue('updated'));
         replacement.addProvider(replacement.provide('globalRefreshAdded').useValue('added'))
             .addExport('globalRefreshAdded');
@@ -3074,19 +3383,19 @@ private class DiTest {
     @IsTest
     static void should_restore_global_module_definition_when_replacement_validation_fails() {
         // Arrange: Two global modules own distinct exports.
-        Di.DynamicModule originalModule = new Di.DynamicModule('AtomicRefreshGlobal').setGlobal();
+        Di.DynamicModule originalModule = new Di.DynamicModule('AtomicRefreshGlobal');
         originalModule.addProvider(originalModule.provide('atomicRefreshValue').useValue('stable'))
             .addExport('atomicRefreshValue');
-        Di.ModuleRef originalRef = Di.addModule(originalModule);
-        Di.DynamicModule conflictOwner = new Di.DynamicModule('AtomicRefreshConflictOwner').setGlobal();
+        Di.ModuleRef originalRef = Di.addGlobalModule(originalModule);
+        Di.DynamicModule conflictOwner = new Di.DynamicModule('AtomicRefreshConflictOwner');
         conflictOwner.addProvider(conflictOwner.provide('atomicRefreshConflict').useValue('owner'))
             .addExport('atomicRefreshConflict');
-        Di.addModule(conflictOwner);
+        Di.addGlobalModule(conflictOwner);
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('stable', consumerRef.get('atomicRefreshValue'));
 
         // Act: A same-token replacement attempts to claim another global owner's export.
-        Di.DynamicModule replacement = new Di.DynamicModule(originalModule.getToken()).setGlobal();
+        Di.DynamicModule replacement = new Di.DynamicModule(originalModule.getToken());
         replacement.addProvider(replacement.provide('atomicRefreshValue').useValue('replacement'))
             .addExport('atomicRefreshValue');
         replacement.addProvider(replacement.provide('atomicRefreshConflict').useValue('candidate'))
@@ -3107,10 +3416,10 @@ private class DiTest {
     @IsTest
     static void should_update_global_export_when_global_provider_is_replaced() {
         // Arrange: A global module exports a provider, and a consumer resolves it through the global fallback.
-        Di.DynamicModule dynGlobal = new Di.DynamicModule('ReplaceableGlobalDynamic').setGlobal();
+        Di.DynamicModule dynGlobal = new Di.DynamicModule('ReplaceableGlobalDynamic');
         dynGlobal.addProvider(dynGlobal.provide('globalReplaceValue').useValue('initial'))
             .addExport('globalReplaceValue');
-        Di.addModule(dynGlobal);
+        Di.addGlobalModule(dynGlobal);
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
         Assert.areEqual('initial', consumerRef.get('globalReplaceValue'), 'Pre-condition: global export is visible.');
 
@@ -3129,7 +3438,7 @@ private class DiTest {
     static void should_reuse_global_binding_index_when_graph_is_unchanged() {
         // Arrange: A global re-export exposes a traversal counter for binding-index construction.
         GlobalBindingIndexCountingModule globalModule = new GlobalBindingIndexCountingModule();
-        Di.addModule(globalModule);
+        Di.addGlobalModule(globalModule);
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
 
         // Act: Resolve the same global binding twice without mutating the graph.
@@ -3309,9 +3618,13 @@ private class DiTest {
     static void should_clear_registries_and_caches_when_di_is_cleared() {
         // Arrange: A local module is added and a global module is loaded and verified.
         Di.addModule(new ValueModule());
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
         Assert.areEqual(
@@ -3322,7 +3635,7 @@ private class DiTest {
 
         // Act: The clear() method is called.
         Di.clear();
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        Di.mockModules(new List<DI_Module__mdt>());
 
         // Assert: After clearing, getting the global provider fails.
         Di.ModuleRef ref = Di.getModuleRef(EmptyModule.class);
@@ -3584,9 +3897,13 @@ private class DiTest {
         // Arrange: Only the left context has a mocked global module.
         Di.ApplicationContext leftContext = newTestContext();
         Di.ApplicationContext rightContext = newTestContext();
-        leftContext.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        leftContext.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
 
@@ -3614,7 +3931,7 @@ private class DiTest {
     static void should_resolve_imports_when_application_context_owns_consumer() {
         // Arrange: The default context and an application context register different modules under ValueModule's token.
         Di.clear();
-        Di.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        Di.mockModules(new List<DI_Module__mdt>());
         Di.mockProviders(new Map<String, DI_Provider__mdt>());
         Di.addModule(new ValueModule());
         Di.ApplicationContext context = newTestContext();
@@ -3831,26 +4148,21 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_reject_global_scope_change_after_dynamic_module_is_sealed() {
-        // Arrange: A dynamic module has committed to the local registry and is permanently sealed.
-        Di.DynamicModule module = new Di.DynamicModule('RegisteredLocalModule');
-        module.addProvider(module.provide('registeredLocal').useValue('local'));
-        Di.ModuleRef ref = Di.addModule(module);
+    static void should_reject_conflicting_programmatic_module_visibility() {
+        // Arrange: A canonical module token is committed to the local registry.
+        Di.DynamicModule localModule = new Di.DynamicModule('RegisteredVisibilityModule');
+        localModule.addProvider(localModule.provide('registeredLocal').useValue('local'));
+        Di.ModuleRef ref = Di.addModule(localModule);
 
-        // Act: Registry identity cannot be changed through the retained module object.
+        // Act: A global registration attempts to claim the same canonical token.
         try {
-            module.setGlobal();
-            Assert.fail('Expected global scope mutation after registration to be rejected.');
+            Di.addGlobalModule(new Di.DynamicModule(localModule.getToken()));
+            Assert.fail('Expected conflicting module visibility to be rejected.');
         } catch (Di.InvalidModuleException ex) {
-            Assert.isTrue(
-                ex.getMessage().contains('sealed'),
-                'Exception should explain permanent module-definition immutability.'
-            );
+            // Assert: Visibility is registration-owned and unique per token.
+            Assert.isTrue(ex.getMessage().contains('already registered as local'));
         }
-
-        // Assert: The registered local module remains intact.
         Assert.areEqual('local', ref.get('registeredLocal'));
-        Assert.isFalse(module.isGlobal());
     }
 
     @IsTest
@@ -3927,35 +4239,35 @@ private class DiTest {
     }
 
     @IsTest
-    static void should_throw_exception_when_replacing_module_with_scope_mismatch() {
-        // Arrange: A local module is registered.
-        SingleModule module = new SingleModule();
-        Di.addModule(module);
-        Di.DynamicModule globalReplacement = new Di.DynamicModule(module.getToken()).setGlobal();
+    static void should_preserve_registration_visibility_when_module_is_replaced() {
+        // Arrange: A global module is registered independently of its declaration.
+        Di.DynamicModule module = new Di.DynamicModule('VisibilityReplacementModule');
+        module.addProvider(module.provide('visible').useValue('before')).addExport('visible');
+        Di.addGlobalModule(module);
+        Di.DynamicModule replacement = new Di.DynamicModule(module.getToken());
+        replacement.addProvider(replacement.provide('visible').useValue('after')).addExport('visible');
 
-        // Act: An attempt is made to replace the local module with a global one.
-        try {
-            Di.replaceModule(module.getToken(), globalReplacement);
-            Assert.fail('Expected InvalidModuleException was not thrown.');
-        } catch (Di.InvalidModuleException ex) {
-            // Assert: The correct exception is thrown.
-            Assert.isTrue(
-                ex.getMessage().contains('must have the same scope'),
-                'Error should indicate a scope mismatch.'
-            );
-        }
+        // Act: Replacement supplies only a definition; the registration retains global visibility.
+        Di.replaceModule(module.getToken(), replacement);
+
+        // Assert
+        Assert.areEqual('after', Di.getModuleRef(EmptyModule.class).get('visible'));
     }
 
     @IsTest
     static void should_update_global_providers_when_global_module_is_replaced() {
         // Arrange: A global module is loaded via CMT mock and its provider is verified.
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = true)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = true,
+                    IsGlobal__c = true
+                )
             }
         );
         Assert.areEqual('helloFromCmt', Di.getModuleRef(EmptyModule.class).get('cmtGlobalVal'));
-        Di.DynamicModule newGlobalModule = new Di.DynamicModule(CmtGlobalModule.class.getName()).setGlobal();
+        Di.DynamicModule newGlobalModule = new Di.DynamicModule(CmtGlobalModule.class.getName());
         newGlobalModule.addProvider(newGlobalModule.provide('cmtGlobalVal').useValue('new-value'));
         newGlobalModule.addExport('cmtGlobalVal');
 
@@ -3969,17 +4281,17 @@ private class DiTest {
     @IsTest
     static void should_rollback_global_module_replacement_when_exports_conflict() {
         // Arrange: Two global modules own distinct exports.
-        Di.DynamicModule original = new Di.DynamicModule('ReplacementRollbackGlobal').setGlobal();
+        Di.DynamicModule original = new Di.DynamicModule('ReplacementRollbackGlobal');
         original.addProvider(original.provide('replacementRollbackValue').useValue('original'))
             .addExport('replacementRollbackValue');
-        Di.addModule(original);
-        Di.DynamicModule conflictOwner = new Di.DynamicModule('ReplacementConflictGlobal').setGlobal();
+        Di.addGlobalModule(original);
+        Di.DynamicModule conflictOwner = new Di.DynamicModule('ReplacementConflictGlobal');
         conflictOwner.addProvider(conflictOwner.provide('replacementConflictValue').useValue('owner'))
             .addExport('replacementConflictValue');
-        Di.addModule(conflictOwner);
+        Di.addGlobalModule(conflictOwner);
 
         // Act: A same-token replacement attempts to claim the other global module's export.
-        Di.DynamicModule replacement = new Di.DynamicModule(original.getToken()).setGlobal();
+        Di.DynamicModule replacement = new Di.DynamicModule(original.getToken());
         replacement.addProvider(replacement.provide('replacementRollbackValue').useValue('replacement'))
             .addProvider(replacement.provide('replacementConflictValue').useValue('conflict'))
             .addExport('replacementRollbackValue')
@@ -4007,9 +4319,13 @@ private class DiTest {
     @IsTest
     static void should_ignore_global_module_when_metadata_is_inactive() {
         // Arrange: A global module is defined as inactive in a mocked CMT record.
-        Di.mockGlobalModules(
-            new List<DI_GlobalModule__mdt>{
-                new DI_GlobalModule__mdt(ModuleClass__c = CmtGlobalModule.class.getName(), IsActive__c = false)
+        Di.mockModules(
+            new List<DI_Module__mdt>{
+                new DI_Module__mdt(
+                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    IsActive__c = false,
+                    IsGlobal__c = true
+                )
             }
         );
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
@@ -4197,7 +4513,7 @@ private class DiTest {
     static void should_explain_implicit_global_provider() {
         // Arrange: A global module exports a value to an unrelated consumer.
         OverrideGlobalModule globalModule = new OverrideGlobalModule();
-        Di.addModule(globalModule);
+        Di.addGlobalModule(globalModule);
         Di.ModuleRef consumer = Di.getModuleRef(EmptyModule.class);
 
         // Act: Explain the globally visible token.
@@ -4411,7 +4727,7 @@ private class DiTest {
         context.addModule(new DescriptionProviderModule());
         context.addModule(new MetadataExistingModule());
         DescriptionGlobalModule globalModule = new DescriptionGlobalModule();
-        context.addModule(globalModule);
+        context.addGlobalModule(globalModule);
 
         // Act: Snapshot the committed definitions.
         Di.ContextDescription description = context.describe();
@@ -4789,7 +5105,7 @@ private class DiTest {
 
     private static Di.ApplicationContext newTestContext() {
         Di.ApplicationContext context = Di.createContext();
-        context.mockGlobalModules(new List<DI_GlobalModule__mdt>());
+        context.mockModules(new List<DI_Module__mdt>());
         context.mockProviders(new Map<String, DI_Provider__mdt>());
         return context;
     }
@@ -5004,9 +5320,6 @@ private class DiTest {
         }
     }
     public class DescriptionGlobalModule extends EmptyModule {
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('descriptionGlobal').useValue('global') };
         }
@@ -5395,7 +5708,6 @@ private class DiTest {
     public class TokenCollisionGlobalOwnerModule extends Di.Module {
         public TokenCollisionGlobalOwnerModule() {
             super('TokenCollisionModule');
-            isGlobal = true;
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{
@@ -5542,9 +5854,6 @@ private class DiTest {
         }
     }
     public class GlobalErrorModule extends EmptyModule {
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<String> exports() {
             return new Set<String>{ 'missingGlobal' };
         }
@@ -5639,9 +5948,6 @@ private class DiTest {
 
     // --- Modules for Global CMT Tests ---
     public class CmtGlobalModule extends EmptyModule {
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('cmtGlobalVal').useValue('helloFromCmt') };
         }
@@ -5650,9 +5956,6 @@ private class DiTest {
         }
     }
     public class GlobalSharedSingletonModule extends EmptyModule {
-        public GlobalSharedSingletonModule() {
-            isGlobal = true;
-        }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide(SharedSingletonService.class).useClass(SharedSingletonService.class) };
         }
@@ -5665,9 +5968,6 @@ private class DiTest {
     public class GlobalSingletonConsumerRightModule extends EmptyModule {
     }
     public class DuplicateGlobalExportLeftModule extends EmptyModule {
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('duplicateGlobalVal').useValue('left') };
         }
@@ -5676,9 +5976,6 @@ private class DiTest {
         }
     }
     public class DuplicateGlobalExportRightModule extends EmptyModule {
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('duplicateGlobalVal').useValue('right') };
         }
@@ -5695,35 +5992,23 @@ private class DiTest {
         }
     }
     public class SharedGlobalReexportLeftModule extends EmptyModule {
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<Di.ModuleImport> reexports() {
             return new Set<Di.ModuleImport>{ Di.import(SharedGlobalReexportCommonModule.class) };
         }
     }
     public class SharedGlobalReexportRightModule extends EmptyModule {
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<Di.ModuleImport> reexports() {
             return new Set<Di.ModuleImport>{ Di.import(SharedGlobalReexportCommonModule.class) };
         }
     }
     public class GlobalBindingIndexCountingModule extends EmptyModule {
         public Integer bindingTraversalCount = 0;
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<Di.ModuleImport> reexports() {
             bindingTraversalCount++;
             return new Set<Di.ModuleImport>{ Di.import(SharedGlobalReexportCommonModule.class) };
         }
     }
     public class OverrideGlobalModule extends EmptyModule {
-        public override Boolean isGlobal() {
-            return true;
-        }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('val').useValue('global') };
         }
@@ -5769,19 +6054,26 @@ private class DiTest {
     public class ArgsValidationObject {
     }
     public class InjectedMetadataSource implements Di.MetadataSource {
-        private final Iterable<Di.GlobalModuleDefinition> globalModules;
+        private final Iterable<Di.MetadataModuleDefinition> globalModules;
         private final Map<String, Di.ProviderDefinition> providers;
 
         public InjectedMetadataSource(
-            final Iterable<Di.GlobalModuleDefinition> globalModules,
+            final Iterable<Di.MetadataModuleDefinition> globalModules,
             final Map<String, Di.ProviderDefinition> providers
         ) {
             this.globalModules = globalModules;
             this.providers = providers;
         }
 
-        public Iterable<Di.GlobalModuleDefinition> getGlobalModules() {
-            return globalModules;
+        public Map<String, Di.MetadataModuleDefinition> getModules() {
+            if (globalModules == null) {
+                return null;
+            }
+            Map<String, Di.MetadataModuleDefinition> modules = new Map<String, Di.MetadataModuleDefinition>();
+            for (Di.MetadataModuleDefinition definition : globalModules) {
+                modules.put(definition.developerName, definition);
+            }
+            return modules;
         }
 
         public Map<String, Di.ProviderDefinition> getProviders() {
@@ -5802,6 +6094,27 @@ private class DiTest {
         }
         public override Set<String> exports() {
             return new Set<String>();
+        }
+    }
+    public class MetadataSelectedModule extends EmptyModule {
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('metadataSelectedValue').useValue('selected') };
+        }
+        public override Set<String> exports() {
+            return new Set<String>{ 'metadataSelectedValue' };
+        }
+    }
+    public class MetadataImportConsumerModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.importMetadataModule('SelectedImport') };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{ provide('metadataImportWarmup').useValue('warm') };
+        }
+    }
+    public class MetadataConstructionCountingModule extends EmptyModule {
+        public MetadataConstructionCountingModule() {
+            metadataModuleInstantiationCount++;
         }
     }
     public class MetadataExistingModule extends Di.Module {
@@ -6107,9 +6420,6 @@ private class DiTest {
     }
 
     public class GlobalReexportModule extends Di.Module {
-        public GlobalReexportModule() {
-            isGlobal = true;
-        }
         public override Set<Di.ModuleImport> reexports() {
             return new Set<Di.ModuleImport>{ Di.import(ValueModule.class) };
         }
@@ -6121,7 +6431,6 @@ private class DiTest {
     public class GlobalReexportModule2 extends Di.Module {
         public GlobalReexportModule2() {
             super(GlobalReexportModule.class.getName());
-            isGlobal = true;
         }
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>();

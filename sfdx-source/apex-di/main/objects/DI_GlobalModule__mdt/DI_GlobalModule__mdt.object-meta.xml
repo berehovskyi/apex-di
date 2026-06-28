@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
-    <description>Defines modules that are globally available across the entire Dependency Injection (DI) container without requiring explicit imports. Global modules are automatically loaded when the DI framework initializes, and their exported providers can be accessed from any module. Use this to register cross-cutting concerns like logging, configuration, and error handling that should be available everywhere in the application.</description>
-    <label>DI Global Module</label>
-    <pluralLabel>DI Global Modules</pluralLabel>
-    <visibility>Public</visibility>
-</CustomObject>

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
-    <fullName>IsActive__c</fullName>
+    <fullName>IsGlobal__c</fullName>
     <defaultValue>false</defaultValue>
-    <description>Controls whether this global module is loaded. Useful for enabling/disabling features without deployment.</description>
+    <description>Registers the module globally and makes its exported providers available without explicit imports.</description>
     <fieldManageability>DeveloperControlled</fieldManageability>
-    <label>Is Active</label>
+    <label>Is Global</label>
     <type>Checkbox</type>
 </CustomField>

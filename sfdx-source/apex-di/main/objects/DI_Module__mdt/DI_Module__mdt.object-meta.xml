@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Defines Apex DI modules selected by metadata. Global modules are loaded automatically; local modules are installed only through an explicit metadata module import or reference.</description>
+    <label>DI Module</label>
+    <pluralLabel>DI Modules</pluralLabel>
+    <visibility>Public</visibility>
+</CustomObject>
