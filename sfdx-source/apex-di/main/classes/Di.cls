@@ -1009,7 +1009,7 @@ public virtual inherited sharing class Di {
                     );
                     return getInstanceFrom(getResolutionContainer(plan.owner), plan.provider, args);
                 }
-                ProviderBinding binding = getRuntimeModule().getProviderBinding(token);
+                ProviderBinding binding = getRuntimeProviderBinding(token);
                 Provider provider = binding.getProvider();
                 isTrue(
                     getProviderScope(provider) !== Scope.PROTOTYPE,
@@ -1042,7 +1042,7 @@ public virtual inherited sharing class Di {
                 if (plan != null) {
                     return resolveInstanceFrom(getResolutionContainer(plan.owner), plan.provider, args);
                 }
-                ProviderBinding binding = getRuntimeModule().getProviderBinding(token);
+                ProviderBinding binding = getRuntimeProviderBinding(token);
                 Provider provider = binding.getProvider();
                 Container resolutionContainer = getResolutionContainer(binding.getOwner());
                 if (provider instanceof ExistingProvider) {
@@ -1108,6 +1108,15 @@ public virtual inherited sharing class Di {
 
         private Boolean hasSingleton(final String token) {
             return runtime.singletonCache.containsKey(token);
+        }
+
+        private ProviderBinding getRuntimeProviderBinding(final String token) {
+            try {
+                return getRuntimeModule().getProviderBinding(token);
+            } catch (UnknownProviderException exc) {
+                exc.setMessage(exc.getMessage() + '\nResolution path: ' + String.join(resolutionPath, ' -> '));
+                throw exc;
+            }
         }
 
         private Object getSingleton(final String token) {

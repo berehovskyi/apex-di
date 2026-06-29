@@ -129,10 +129,14 @@ private class DiTest {
             ref.get('unknown');
             Assert.fail('Expected UnknownProviderException was not thrown.');
         } catch (Di.UnknownProviderException ex) {
-            // Assert: The correct exception is thrown.
+            // Assert: The exception identifies both the missing provider and its resolution path.
             Assert.isTrue(
                 ex.getMessage().contains('Could not find "unknown" provider'),
                 'Exception message should identify the missing provider.'
+            );
+            Assert.isTrue(
+                ex.getMessage().contains('Resolution path: unknown'),
+                'Exception message should identify the direct resolution path.'
             );
         }
     }
@@ -218,8 +222,18 @@ private class DiTest {
             ref.tryGet(ExportedConsumerOnlyFacade.class);
             Assert.fail('Expected a missing transitive dependency to remain an error.');
         } catch (Di.UnknownProviderException ex) {
-            // Assert: The nested missing dependency is not converted into an optional null result.
+            // Assert: The nested missing dependency remains an error and includes the consumer chain.
             Assert.isTrue(ex.getMessage().contains(ConsumerOnlyDependencyService.class.getName()));
+            Assert.isTrue(
+                ex.getMessage()
+                    .contains(
+                        'Resolution path: ' +
+                            ExportedConsumerOnlyFacade.class.getName() +
+                            ' -> ' +
+                            ConsumerOnlyDependencyService.class.getName()
+                    ),
+                'Exception message should identify the nested resolution path.'
+            );
         }
     }
 
@@ -235,8 +249,12 @@ private class DiTest {
             ref.tryResolve('optionalAlias');
             Assert.fail('Expected a visible alias with a missing target to remain an error.');
         } catch (Di.UnknownProviderException ex) {
-            // Assert: Only absence of the requested alias itself could have returned null.
+            // Assert: Only absence of the requested alias itself could return null; redirects retain their path.
             Assert.isTrue(ex.getMessage().contains('missingAliasTarget'));
+            Assert.isTrue(
+                ex.getMessage().contains('Resolution path: optionalAlias -> missingAliasTarget'),
+                'Exception message should identify the alias resolution path.'
+            );
         }
     }
 
