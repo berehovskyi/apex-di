@@ -588,7 +588,7 @@ public virtual inherited sharing class Di {
                 new List<String>{ token, getToken() }
             );
 
-            return discoverProviderBinding(token, includeGlobals, null, true);
+            return discoverProviderBinding(token, includeGlobals, null, true, true);
         }
 
         private BindingExplanation explainProviderBinding(final String token) {
@@ -598,19 +598,29 @@ public virtual inherited sharing class Di {
             if (getContext().hasCompiledGraph() && getContext().getVisibleProviderBinding(this, token) == null) {
                 return explanation;
             }
-            try {
-                discoverProviderBinding(token, true, explanation, false);
-            } catch (UnknownProviderException exc) {
-                return explanation;
-            }
+            discoverProviderBinding(token, true, explanation, false, false);
             return explanation;
+        }
+
+        private Boolean hasVisibleProviderBinding(final String token) {
+            isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
+
+            ProviderBinding visibleProvider = getContext().getVisibleProviderBinding(this, token);
+            if (visibleProvider != null) {
+                return true;
+            }
+            if (getContext().hasCompiledGraph()) {
+                return false;
+            }
+            return discoverProviderBinding(token, true, null, true, false) != null;
         }
 
         private ProviderBinding discoverProviderBinding(
             final String token,
             final Boolean includeGlobals,
             final BindingExplanation explanation,
-            final Boolean shouldIndex
+            final Boolean shouldIndex,
+            final Boolean shouldThrowWhenMissing
         ) {
             // First check local definitions
             if (hasProvider(token)) {
@@ -692,9 +702,13 @@ public virtual inherited sharing class Di {
                 }
             }
 
-            throw new UnknownProviderException(
-                String.format(UNKNOWN_PROVIDER_MESSAGE, new List<String>{ token, getToken() })
+            isTrue(
+                !shouldThrowWhenMissing,
+                UnknownProviderException.class,
+                UNKNOWN_PROVIDER_MESSAGE,
+                new List<String>{ token, getToken() }
             );
+            return null;
         }
 
         private ModuleDefinition compileDefinition() {
@@ -853,6 +867,23 @@ public virtual inherited sharing class Di {
             return get(token?.getName(), null);
         }
 
+        public virtual Object tryGet(final String token) {
+            if (inCall) {
+                return getRuntimeModule().hasVisibleProviderBinding(token) ? getInternal(token, null) : null;
+            }
+
+            startResolution();
+            try {
+                return getRuntimeModule().hasVisibleProviderBinding(token) ? getInternal(token, null) : null;
+            } finally {
+                endResolution();
+            }
+        }
+
+        public virtual Object tryGet(final Type token) {
+            return tryGet(token?.getName());
+        }
+
         public virtual Object resolve(final String token, final Object args) {
             if (inCall) {
                 return resolveInternal(token, args);
@@ -876,6 +907,31 @@ public virtual inherited sharing class Di {
 
         public virtual Object resolve(final Type token) {
             return resolve(token?.getName(), null);
+        }
+
+        public virtual Object tryResolve(final String token, final Object args) {
+            if (inCall) {
+                return getRuntimeModule().hasVisibleProviderBinding(token) ? resolveInternal(token, args) : null;
+            }
+
+            startResolution();
+            try {
+                return getRuntimeModule().hasVisibleProviderBinding(token) ? resolveInternal(token, args) : null;
+            } finally {
+                endResolution();
+            }
+        }
+
+        public virtual Object tryResolve(final Type token, final Object args) {
+            return tryResolve(token?.getName(), args);
+        }
+
+        public virtual Object tryResolve(final String token) {
+            return tryResolve(token, null);
+        }
+
+        public virtual Object tryResolve(final Type token) {
+            return tryResolve(token?.getName(), null);
         }
 
         public virtual ResolutionExplanation explain(final String token) {
@@ -2860,6 +2916,36 @@ public virtual inherited sharing class Di {
             }
             try {
                 return super.resolve(token, args);
+            } finally {
+                if (isTopLevelResolution) {
+                    scopeContext.acceptCurrentRevision();
+                }
+            }
+        }
+
+        public override Object tryGet(final String token) {
+            validateContextGeneration();
+            Boolean isTopLevelResolution = !inCall;
+            if (isTopLevelResolution) {
+                synchronizeScopeContext();
+            }
+            try {
+                return super.tryGet(token);
+            } finally {
+                if (isTopLevelResolution) {
+                    scopeContext.acceptCurrentRevision();
+                }
+            }
+        }
+
+        public override Object tryResolve(final String token, final Object args) {
+            validateContextGeneration();
+            Boolean isTopLevelResolution = !inCall;
+            if (isTopLevelResolution) {
+                synchronizeScopeContext();
+            }
+            try {
+                return super.tryResolve(token, args);
             } finally {
                 if (isTopLevelResolution) {
                     scopeContext.acceptCurrentRevision();

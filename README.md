@@ -99,6 +99,17 @@ Compiled graphs require acyclic module imports. Graph mutations invalidate compi
 
 The first top-level `get()` / `resolve()` opens an application context lifecycle. Setup-time module additions before that point keep their issued handles valid. Successful external graph mutations after that point, such as `addModule`, `replaceProvider`, metadata mock changes in tests, or `replaceModule`, invalidate previously issued `ModuleRef` and `ScopeRef` handles. Reacquire refs/scopes from the context after a mutation. Framework-controlled lazy import/global discovery during resolution remains handle-safe.
 
+### Optional Resolution
+
+Use `tryGet()` and `tryResolve()` when the requested top-level provider is genuinely optional:
+
+```apex
+Telemetry cachedTelemetry = (Telemetry) ref.tryGet(Telemetry.class);
+Telemetry freshTelemetry = (Telemetry) ref.tryResolve(Telemetry.class);
+```
+
+Both methods return `null` only when the requested token is not visible. A visible but broken provider still throws normally: ambiguity, missing transitive or alias dependencies, invalid metadata, circular dependencies, scope violations, and factory failures are not suppressed. `tryGet()` preserves `get()` caching, while `tryResolve()` preserves fresh resolution and supports runtime arguments through `tryResolve(token, args)`.
+
 ---
 
 ## Feature Modules

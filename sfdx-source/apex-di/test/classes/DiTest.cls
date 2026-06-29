@@ -138,6 +138,183 @@ private class DiTest {
     }
     // </editor-fold>
 
+    // <editor-fold desc="Optional Resolution">
+    @IsTest
+    static void should_return_null_when_optional_provider_is_not_visible() {
+        // Arrange: A lazy context contains one unrelated provider.
+        Di.ApplicationContext context = Di.createContext();
+        Di.ModuleRef ref = context.getModuleRef(SingleModule.class);
+
+        // Act: Missing String and Type tokens are requested through every optional API shape.
+        Object missingGetByString = ref.tryGet('missingOptionalProvider');
+        Object missingGetByType = ref.tryGet(NotFactory.class);
+        Object missingResolveByString = ref.tryResolve('missingOptionalProvider');
+        Object missingResolveByType = ref.tryResolve(NotFactory.class);
+        Object missingResolveWithArgs = ref.tryResolve('missingOptionalProvider', 'ignored');
+
+        // Assert: Only absence of the requested top-level token produces null.
+        Assert.isNull(missingGetByString);
+        Assert.isNull(missingGetByType);
+        Assert.isNull(missingResolveByString);
+        Assert.isNull(missingResolveByType);
+        Assert.isNull(missingResolveWithArgs);
+    }
+
+    @IsTest
+    static void should_preserve_get_and_resolve_semantics_when_provider_is_visible() {
+        // Arrange: Type-based singleton and argument-aware factory providers are registered.
+        Di.ModuleRef typedRef = Di.getModuleRef(TypeModule.class);
+        Di.ModuleRef argsRef = Di.getModuleRef(ArgsTypeModule.class);
+
+        // Act: Optional get is repeated, while optional resolve creates fresh instances and forwards arguments.
+        Object cached = typedRef.tryGet(TestService.class);
+        Object repeated = typedRef.tryGet(TestService.class);
+        Object fresh = typedRef.tryResolve(TestService.class);
+        Object otherFresh = typedRef.tryResolve(TestService.class);
+        Object resolvedWithArgs = argsRef.tryResolve(TestServiceImpl.class, new List<Object>{ 'optional' });
+
+        // Assert: Optional APIs retain the caching and freshness contracts of their strict counterparts.
+        Assert.areEqual(cached, repeated);
+        Assert.areNotEqual(cached, fresh);
+        Assert.areNotEqual(fresh, otherFresh);
+        Assert.areEqual('arg:optional', resolvedWithArgs);
+    }
+
+    @IsTest
+    static void should_resolve_optional_dependencies_during_nested_factory_resolution() {
+        // Arrange: A factory provider uses both optional APIs while its enclosing resolution is active.
+        Di.ModuleRef ref = Di.getModuleRef(NestedOptionalResolutionModule.class);
+
+        // Act: Resolving the factory invokes the nested in-call paths of tryGet and tryResolve.
+        List<Object> resolved = (List<Object>) ref.get('nestedOptionalResolution');
+
+        // Assert: Nested optional resolution preserves normal owner visibility and provider behavior.
+        Assert.areEqual(new List<Object>{ 'hello', 'hello' }, resolved);
+    }
+
+    @IsTest
+    static void should_return_null_when_optional_provider_is_absent_from_compiled_graph() {
+        // Arrange: A context is compiled as a closed graph containing only SingleModule providers.
+        Di.ApplicationContext context = Di.createContext();
+        Di.ModuleRef ref = context.getModuleRef(SingleModule.class);
+        context.compile();
+
+        // Act: An absent token and an indexed token are requested after compilation.
+        Object missing = ref.tryGet('compiledOptionalMissing');
+        Object resolved = ref.tryGet('TestService');
+
+        // Assert: Compiled closed-world lookup returns null only for the absent token.
+        Assert.isNull(missing);
+        Assert.isTrue(resolved instanceof TestServiceImpl);
+    }
+
+    @IsTest
+    static void should_throw_when_optional_provider_has_missing_transitive_dependency() {
+        // Arrange: The requested facade is visible, but its owner cannot see the consumer-only dependency.
+        Di.ModuleRef ref = Di.getModuleRef(ConsumerOnlyDependencyConsumerModule.class);
+
+        // Act: Optional resolution reaches the visible facade and fails while injecting its dependency.
+        try {
+            ref.tryGet(ExportedConsumerOnlyFacade.class);
+            Assert.fail('Expected a missing transitive dependency to remain an error.');
+        } catch (Di.UnknownProviderException ex) {
+            // Assert: The nested missing dependency is not converted into an optional null result.
+            Assert.isTrue(ex.getMessage().contains(ConsumerOnlyDependencyService.class.getName()));
+        }
+    }
+
+    @IsTest
+    static void should_throw_when_optional_existing_alias_targets_missing_provider() {
+        // Arrange: A visible alias redirects to a token that is not registered.
+        Di.DynamicModule module = new Di.DynamicModule('OptionalMissingAliasModule');
+        module.addProvider(new Di.ExistingProvider('optionalAlias', 'missingAliasTarget'));
+        Di.ModuleRef ref = Di.addModule(module);
+
+        // Act: Optional resolution follows the visible alias to its missing target.
+        try {
+            ref.tryResolve('optionalAlias');
+            Assert.fail('Expected a visible alias with a missing target to remain an error.');
+        } catch (Di.UnknownProviderException ex) {
+            // Assert: Only absence of the requested alias itself could have returned null.
+            Assert.isTrue(ex.getMessage().contains('missingAliasTarget'));
+        }
+    }
+
+    @IsTest
+    static void should_throw_when_optional_metadata_provider_definition_is_missing() {
+        // Arrange: MetadataModule declares the provider, while the metadata source contains no definition.
+        Di.ModuleRef ref = Di.getModuleRef(MetadataModule.class);
+
+        // Act: Optional resolution reaches the visible metadata provider.
+        try {
+            ref.tryGet(IMetadataService.class);
+            Assert.fail('Expected invalid metadata configuration to remain an error.');
+        } catch (Di.InvalidProviderException ex) {
+            // Assert: Missing metadata is diagnosed rather than treated as an absent top-level token.
+            Assert.isTrue(ex.getMessage().contains('ConfigurableService'));
+        }
+    }
+
+    @IsTest
+    static void should_throw_when_optional_provider_is_ambiguous() {
+        // Arrange: Two imported modules export the same token from different owners.
+        Di.ModuleRef ref = Di.getModuleRef(AmbiguousImportConsumerModule.class);
+
+        // Act: Optional resolution discovers both conflicting bindings.
+        try {
+            ref.tryGet('ambiguousImportVal');
+            Assert.fail('Expected ambiguous optional resolution to remain an error.');
+        } catch (Di.InvalidProviderException ex) {
+            // Assert: Ambiguity is not treated as provider absence.
+            Assert.isTrue(ex.getMessage().contains('ambiguousImportVal'));
+        }
+    }
+
+    @IsTest
+    static void should_preserve_scope_rules_when_resolving_optionally() {
+        // Arrange: Prototype and scoped providers are available through their respective module handles.
+        Di.ModuleRef prototypeRef = Di.getModuleRef(PrototypeModule.class);
+        Di.ModuleRef scopedRef = Di.getModuleRef(ScopedModule.class);
+        Di.ScopeRef scope = scopedRef.createScope();
+
+        // Act: Invalid root access remains strict, while a scope resolves and caches its provider.
+        try {
+            prototypeRef.tryGet('p');
+            Assert.fail('Expected optional get of a prototype provider to remain invalid.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(ex.getMessage().contains('Use resolve()'));
+        }
+        try {
+            scopedRef.tryResolve(ScopedService.class);
+            Assert.fail('Expected optional root resolve of a scoped provider to remain invalid.');
+        } catch (Di.InvalidScopeException ex) {
+            Assert.isTrue(ex.getMessage().contains('createScope()'));
+        }
+        Object scoped = scope.tryGet(ScopedService.class);
+        Object repeated = scope.tryGet(ScopedService.class);
+        Object fresh = scope.tryResolve(ScopedService.class);
+
+        // Assert: ScopeRef optional APIs retain scoped caching and fresh resolve behavior.
+        Assert.areEqual(scoped, repeated);
+        Assert.areNotEqual(scoped, fresh);
+    }
+
+    @IsTest
+    static void should_propagate_circular_dependency_when_resolving_optionally() {
+        // Arrange: Two visible factory providers form a dependency cycle.
+        Di.ModuleRef ref = Di.getModuleRef(FactoryCircularAModule.class);
+
+        // Act: Optional resolution begins from an existing top-level provider.
+        try {
+            ref.tryGet(ServiceA.class);
+            Assert.fail('Expected a circular dependency to remain an error.');
+        } catch (Di.CircularDependencyException ex) {
+            // Assert: The cycle is diagnosed rather than converted into null.
+            Assert.isTrue(ex.getMessage().contains(ServiceA.class.getName()));
+        }
+    }
+    // </editor-fold>
+
     // <editor-fold desc="Scoped Lifetimes">
     @IsTest
     static void should_return_same_instance_when_resolving_within_one_scope() {
@@ -5191,6 +5368,11 @@ private class DiTest {
             return ref.inject(new FooInjectable());
         }
     }
+    public class NestedOptionalResolutionFactory implements Di.Factory {
+        public Object newInstance(Di.Container ref, Object args) {
+            return new List<Object>{ ref.tryGet('val'), ref.tryResolve('val') };
+        }
+    }
     public class DependentProviderFactory implements Di.Factory {
         public Object newInstance(Di.Container ref, Object args) {
             String importedValue = (String) ref.get('val');
@@ -5356,6 +5538,16 @@ private class DiTest {
     public class NestedInjectModule extends EmptyModule {
         public override Set<Di.Provider> providers() {
             return new Set<Di.Provider>{ provide('NestedInject').useFactory(new NestedInjectFactory()) };
+        }
+    }
+    public class NestedOptionalResolutionModule extends EmptyModule {
+        public override Set<Di.ModuleImport> imports() {
+            return new Set<Di.ModuleImport>{ Di.import(ValueModule.class) };
+        }
+        public override Set<Di.Provider> providers() {
+            return new Set<Di.Provider>{
+                provide('nestedOptionalResolution').useFactory(new NestedOptionalResolutionFactory())
+            };
         }
     }
     public class TypeModule extends EmptyModule {
