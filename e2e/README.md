@@ -9,6 +9,7 @@ under `e2e/` is part of the published package.
 e2e/
   benchmarks/             # apex-di execute-anonymous scenarios
   main/classes/           # DiBenchmarkCanonical only
+  main/cachePartitions/   # portable zero-capacity benchmark partition
   .artifacts/apex-di/     # ignored local results
   run_benchmark.sh
 ```
@@ -36,9 +37,17 @@ e2e/
 | `class_module_cold`         | Class-module cold totals at 25, 100, and 575 providers         |
 | `dynamic_module_cold_split` | Dynamic construct, registration, and first-get phases          |
 | `class_module_cold_split`   | Class construct, registration, and first-get phases            |
+| `context_cache_hypothesis`  | Multi-module bootstrap versus serialized-spec hydration        |
 
 The two cold split scenarios are diagnostics that attribute apex-di cost to
 individual construction phases.
+
+`context_cache_hypothesis` is also diagnostic rather than a library comparison.
+It models 20 class modules with 10 providers each and reports normal bootstrap,
+spec serialization/deserialization, an optimistic prevalidated-hydration lower
+bound, hydration through the current safe registration path, and the equivalent
+operations using the `local.DiBenchmark` Platform Cache partition. The committed
+partition allocates 1 MB of org-cache capacity.
 
 ## Deploy
 
@@ -64,6 +73,7 @@ bash e2e/run_benchmark.sh --scenario provider_width --iterations 200
 bash e2e/run_benchmark.sh --target-org YOUR_ORG_ALIAS --scenario cold_split --iterations 20
 bash e2e/run_benchmark.sh --scenario dynamic_module_cold --iterations 10 --samples 5
 bash e2e/run_benchmark.sh --scenario class_module_cold --iterations 10 --samples 5
+bash e2e/run_benchmark.sh --scenario context_cache_hypothesis --iterations 10 --samples 5
 ```
 
 ## Artifacts

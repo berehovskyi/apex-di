@@ -5,6 +5,12 @@ public without sharing class DiBenchmarkCanonical {
     private static final Integer PROVIDER_WIDTH_LARGE = 575;
     private static final Integer MODULE_FANOUT_COUNT = 25;
     private static final Integer MODULE_FANOUT_PROVIDER_COUNT = 5;
+    private static final Integer CONTEXT_CACHE_MODULE_COUNT = 20;
+    private static final Integer CONTEXT_CACHE_PROVIDERS_PER_MODULE = 10;
+    private static final Integer CONTEXT_CACHE_TTL_SECONDS = 300;
+    private static final String CONTEXT_CACHE_PARTITION = 'local.DiBenchmark';
+    private static final String CONTEXT_CACHE_SPEC_KEY = 'contextCacheSpec';
+    private static final String CONTEXT_CACHE_WRITE_KEY = 'contextCacheSpecWrite';
     private static final Integer DEPENDENCY_DEPTH = 10;
     private static final Integer MODULE_IMPORT_DEPTH = 10;
     private static final Integer MAX_COLD_ITERATIONS = 20;
@@ -97,6 +103,11 @@ public without sharing class DiBenchmarkCanonical {
             report.moduleCount = 1;
             report.providerCount = PROVIDER_WIDTH_LARGE;
             report.metrics.addAll(measureClassModuleColdSplitProfile(cap(iterations, MAX_COLD_PROFILE_ITERATIONS)));
+        } else if (scenario == 'context_cache_hypothesis') {
+            report.moduleCount = CONTEXT_CACHE_MODULE_COUNT + 1;
+            report.providerCount = CONTEXT_CACHE_MODULE_COUNT * CONTEXT_CACHE_PROVIDERS_PER_MODULE;
+            report.note += ' Platform Cache metrics use the local.DiBenchmark org-cache partition.';
+            report.metrics.addAll(measureContextCacheHypothesis(cap(iterations, MAX_COLD_PROFILE_ITERATIONS)));
         } else if (scenario == 'dependency_depth') {
             report.moduleCount = 1;
             report.providerCount = DEPENDENCY_DEPTH;
@@ -415,6 +426,272 @@ public without sharing class DiBenchmarkCanonical {
         };
     }
 
+    private static List<BenchmarkMetric> measureContextCacheHypothesis(final Integer iterations) {
+        ContextCacheSpec spec = newContextCacheSpec();
+        String serializedSpec = JSON.serialize(spec);
+        Cache.OrgPartition partition = contextCachePartition(serializedSpec);
+        List<BenchmarkMetric> metrics = new List<BenchmarkMetric>();
+        metrics.add(measureMultiModuleClassGraphTotal(iterations));
+        metrics.addAll(measureMultiModuleClassGraphSplit(iterations));
+        metrics.add(measureContextSpecSerialization(spec, iterations));
+        metrics.add(measureContextSpecDeserialization(serializedSpec, iterations));
+        metrics.add(measureOptimisticContextHydration(serializedSpec, iterations));
+        metrics.add(measureSafeContextHydration(serializedSpec, iterations));
+        metrics.add(measurePlatformCachePut(partition, serializedSpec, iterations));
+        metrics.add(measurePlatformCacheGet(partition, iterations));
+        metrics.add(measurePlatformCacheDeserialization(partition, iterations));
+        metrics.add(measurePlatformCacheOptimisticHydration(partition, iterations));
+        metrics.add(measurePlatformCacheSafeHydration(partition, iterations));
+        return metrics;
+    }
+
+    private static BenchmarkMetric measureMultiModuleClassGraphTotal(final Integer iterations) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            Di.ApplicationContext context = newContext();
+            checksum += (Integer) buildMultiModuleClassGraph(context, i).get(contextCacheTargetToken());
+        }
+        return finish('context_cache_normal_total', iterations, sample, checksum);
+    }
+
+    private static List<BenchmarkMetric> measureMultiModuleClassGraphSplit(final Integer iterations) {
+        Integer constructCpu = 0;
+        Integer registerCpu = 0;
+        Integer firstGetCpu = 0;
+        Integer checksum = 0;
+        for (Integer i = 0; i < iterations; i++) {
+            Di.ApplicationContext context = newContext();
+            Integer t0 = Limits.getCpuTime();
+            ContextCacheAppModule app = newContextCacheAppModule(context, i);
+            Integer t1 = Limits.getCpuTime();
+            Di.ModuleRef ref = context.addModule(app);
+            Integer t2 = Limits.getCpuTime();
+            checksum += (Integer) ref.get(contextCacheTargetToken());
+            Integer t3 = Limits.getCpuTime();
+
+            constructCpu += t1 - t0;
+            registerCpu += t2 - t1;
+            firstGetCpu += t3 - t2;
+        }
+        return new List<BenchmarkMetric>{
+            new BenchmarkMetric('context_cache_normal_construct', iterations, constructCpu, 0, ''),
+            new BenchmarkMetric('context_cache_normal_register_root', iterations, registerCpu, 0, ''),
+            new BenchmarkMetric('context_cache_normal_first_get', iterations, firstGetCpu, 0, String.valueOf(checksum))
+        };
+    }
+
+    private static BenchmarkMetric measureContextSpecSerialization(
+        final ContextCacheSpec spec,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            checksum += JSON.serialize(spec).length();
+        }
+        return finish('context_cache_miss_serialize', iterations, sample, checksum);
+    }
+
+    private static BenchmarkMetric measureContextSpecDeserialization(
+        final String serializedSpec,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            ContextCacheSpec spec = (ContextCacheSpec) JSON.deserialize(serializedSpec, ContextCacheSpec.class);
+            checksum += spec.modules.size();
+        }
+        return finish('context_cache_hit_deserialize', iterations, sample, checksum);
+    }
+
+    private static BenchmarkMetric measureOptimisticContextHydration(
+        final String serializedSpec,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            ContextCacheSpec spec = (ContextCacheSpec) JSON.deserialize(serializedSpec, ContextCacheSpec.class);
+            for (ContextCacheModuleSpec moduleSpec : spec.modules) {
+                ContextCacheHydratedModule module = new ContextCacheHydratedModule(moduleSpec);
+                checksum += module.providers().size();
+            }
+        }
+        return finish('context_cache_hit_optimistic_hydration', iterations, sample, checksum);
+    }
+
+    private static BenchmarkMetric measureSafeContextHydration(final String serializedSpec, final Integer iterations) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            ContextCacheSpec spec = (ContextCacheSpec) JSON.deserialize(serializedSpec, ContextCacheSpec.class);
+            Di.ApplicationContext context = newContext();
+            List<Di.Module> modules = new List<Di.Module>();
+            for (ContextCacheModuleSpec moduleSpec : spec.modules) {
+                modules.add(new ContextCacheHydratedModule(moduleSpec));
+            }
+            ContextCacheAppModule app = new ContextCacheAppModule(
+                'ApexCachedContextApp' + i,
+                contextCacheImports(context, modules)
+            );
+            checksum += (Integer) context.addModule(app).get(contextCacheTargetToken());
+        }
+        return finish('context_cache_hit_safe_hydrate_register', iterations, sample, checksum);
+    }
+
+    private static BenchmarkMetric measurePlatformCachePut(
+        final Cache.OrgPartition partition,
+        final String serializedSpec,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            partition.put(CONTEXT_CACHE_WRITE_KEY, serializedSpec, CONTEXT_CACHE_TTL_SECONDS);
+            checksum += serializedSpec.length();
+        }
+        partition.remove(CONTEXT_CACHE_WRITE_KEY);
+        return finish('context_cache_miss_platform_put', iterations, sample, checksum);
+    }
+
+    private static BenchmarkMetric measurePlatformCacheGet(
+        final Cache.OrgPartition partition,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            checksum += ((String) partition.get(CONTEXT_CACHE_SPEC_KEY)).length();
+        }
+        return finish('context_cache_hit_platform_get', iterations, sample, checksum);
+    }
+
+    private static BenchmarkMetric measurePlatformCacheDeserialization(
+        final Cache.OrgPartition partition,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            String serializedSpec = (String) partition.get(CONTEXT_CACHE_SPEC_KEY);
+            ContextCacheSpec spec = (ContextCacheSpec) JSON.deserialize(serializedSpec, ContextCacheSpec.class);
+            checksum += spec.modules.size();
+        }
+        return finish('context_cache_hit_platform_deserialize', iterations, sample, checksum);
+    }
+
+    private static BenchmarkMetric measurePlatformCacheOptimisticHydration(
+        final Cache.OrgPartition partition,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            String serializedSpec = (String) partition.get(CONTEXT_CACHE_SPEC_KEY);
+            ContextCacheSpec spec = (ContextCacheSpec) JSON.deserialize(serializedSpec, ContextCacheSpec.class);
+            for (ContextCacheModuleSpec moduleSpec : spec.modules) {
+                ContextCacheHydratedModule module = new ContextCacheHydratedModule(moduleSpec);
+                checksum += module.providers().size();
+            }
+        }
+        return finish('context_cache_hit_platform_optimistic_hydration', iterations, sample, checksum);
+    }
+
+    private static BenchmarkMetric measurePlatformCacheSafeHydration(
+        final Cache.OrgPartition partition,
+        final Integer iterations
+    ) {
+        Integer checksum = 0;
+        Sample sample = new Sample();
+        for (Integer i = 0; i < iterations; i++) {
+            String serializedSpec = (String) partition.get(CONTEXT_CACHE_SPEC_KEY);
+            ContextCacheSpec spec = (ContextCacheSpec) JSON.deserialize(serializedSpec, ContextCacheSpec.class);
+            Di.ApplicationContext context = newContext();
+            List<Di.Module> modules = new List<Di.Module>();
+            for (ContextCacheModuleSpec moduleSpec : spec.modules) {
+                modules.add(new ContextCacheHydratedModule(moduleSpec));
+            }
+            ContextCacheAppModule app = new ContextCacheAppModule(
+                'ApexPlatformCachedContextApp' + i,
+                contextCacheImports(context, modules)
+            );
+            checksum += (Integer) context.addModule(app).get(contextCacheTargetToken());
+        }
+        return finish('context_cache_hit_platform_safe_hydrate_register', iterations, sample, checksum);
+    }
+
+    private static Cache.OrgPartition contextCachePartition(final String serializedSpec) {
+        Cache.OrgPartition partition = Cache.Org.getPartition(CONTEXT_CACHE_PARTITION);
+        String cachedSpec = (String) partition.get(CONTEXT_CACHE_SPEC_KEY);
+        if (cachedSpec == null) {
+            partition.put(CONTEXT_CACHE_SPEC_KEY, serializedSpec, CONTEXT_CACHE_TTL_SECONDS);
+            cachedSpec = (String) partition.get(CONTEXT_CACHE_SPEC_KEY);
+        }
+        isTrue(cachedSpec != null, 'The local.DiBenchmark partition did not retain the cached context specification.');
+        return partition;
+    }
+
+    private static Di.ModuleRef buildMultiModuleClassGraph(
+        final Di.ApplicationContext context,
+        final Integer iteration
+    ) {
+        return context.addModule(newContextCacheAppModule(context, iteration));
+    }
+
+    private static ContextCacheAppModule newContextCacheAppModule(
+        final Di.ApplicationContext context,
+        final Integer iteration
+    ) {
+        List<Di.Module> modules = new List<Di.Module>();
+        for (Integer i = 0; i < CONTEXT_CACHE_MODULE_COUNT; i++) {
+            modules.add(new ContextCacheClassModule(i, CONTEXT_CACHE_PROVIDERS_PER_MODULE));
+        }
+        return new ContextCacheAppModule('ApexContextCacheApp' + iteration, contextCacheImports(context, modules));
+    }
+
+    private static Set<Di.ModuleImport> contextCacheImports(
+        final Di.ApplicationContext context,
+        final List<Di.Module> modules
+    ) {
+        Set<Di.ModuleImport> imports = new Set<Di.ModuleImport>();
+        for (Di.Module module : modules) {
+            imports.add(context.import(module));
+        }
+        return imports;
+    }
+
+    private static ContextCacheSpec newContextCacheSpec() {
+        ContextCacheSpec spec = new ContextCacheSpec();
+        for (Integer moduleIndex = 0; moduleIndex < CONTEXT_CACHE_MODULE_COUNT; moduleIndex++) {
+            ContextCacheModuleSpec moduleSpec = new ContextCacheModuleSpec();
+            moduleSpec.token = contextCacheModuleToken(moduleIndex);
+            moduleSpec.exportedToken = contextCacheExportedToken(moduleIndex);
+            for (Integer providerIndex = 0; providerIndex < CONTEXT_CACHE_PROVIDERS_PER_MODULE; providerIndex++) {
+                moduleSpec.providerTokens.add(contextCacheProviderToken(moduleIndex, providerIndex));
+            }
+            spec.modules.add(moduleSpec);
+        }
+        return spec;
+    }
+
+    private static String contextCacheModuleToken(final Integer moduleIndex) {
+        return 'ApexContextCacheModule' + moduleIndex;
+    }
+
+    private static String contextCacheProviderToken(final Integer moduleIndex, final Integer providerIndex) {
+        return 'context_cache_' + moduleIndex + '_' + providerIndex;
+    }
+
+    private static String contextCacheExportedToken(final Integer moduleIndex) {
+        return contextCacheProviderToken(moduleIndex, CONTEXT_CACHE_PROVIDERS_PER_MODULE - 1);
+    }
+
+    private static String contextCacheTargetToken() {
+        return contextCacheExportedToken(CONTEXT_CACHE_MODULE_COUNT - 1);
+    }
+
     private static BenchmarkMetric measureDependencyDepth(final Integer iterations) {
         Di.ApplicationContext context = newContext();
         Di.DynamicModule module = new Di.DynamicModule('ApexDepthModule');
@@ -629,6 +906,13 @@ public without sharing class DiBenchmarkCanonical {
         return value > maxValue ? maxValue : value;
     }
 
+    private static void isTrue(final Boolean condition, final String message) {
+        if (condition ?? false) {
+            return;
+        }
+        throw new ContextCacheUnavailableException(message);
+    }
+
     private class EmptyMetadataSource implements Di.MetadataSource {
         public Map<String, Di.MetadataModuleDefinition> getModules() {
             return new Map<String, Di.MetadataModuleDefinition>();
@@ -636,6 +920,76 @@ public without sharing class DiBenchmarkCanonical {
 
         public Map<String, Di.ProviderDefinition> getProviders() {
             return new Map<String, Di.ProviderDefinition>();
+        }
+    }
+
+    private class ContextCacheSpec {
+        public List<ContextCacheModuleSpec> modules = new List<ContextCacheModuleSpec>();
+    }
+
+    private class ContextCacheUnavailableException extends Exception {
+    }
+
+    private class ContextCacheModuleSpec {
+        public String token;
+        public String exportedToken;
+        public List<String> providerTokens = new List<String>();
+    }
+
+    private class ContextCacheAppModule extends Di.Module {
+        private final Set<Di.ModuleImport> moduleImports;
+
+        private ContextCacheAppModule(final String token, final Set<Di.ModuleImport> moduleImports) {
+            super(token);
+            this.moduleImports = moduleImports;
+        }
+
+        public override Set<Di.ModuleImport> imports() {
+            return moduleImports;
+        }
+    }
+
+    private class ContextCacheClassModule extends Di.Module {
+        private final Integer moduleIndex;
+        private final Integer providerCount;
+
+        private ContextCacheClassModule(final Integer moduleIndex, final Integer providerCount) {
+            super(contextCacheModuleToken(moduleIndex));
+            this.moduleIndex = moduleIndex;
+            this.providerCount = providerCount;
+        }
+
+        public override Set<Di.Provider> providers() {
+            Set<Di.Provider> providers = new Set<Di.Provider>();
+            for (Integer providerIndex = 0; providerIndex < providerCount; providerIndex++) {
+                providers.add(provide(contextCacheProviderToken(moduleIndex, providerIndex)).useValue(1));
+            }
+            return providers;
+        }
+
+        public override Set<String> exports() {
+            return new Set<String>{ contextCacheExportedToken(moduleIndex) };
+        }
+    }
+
+    private class ContextCacheHydratedModule extends Di.Module {
+        private final ContextCacheModuleSpec spec;
+
+        private ContextCacheHydratedModule(final ContextCacheModuleSpec spec) {
+            super(spec.token);
+            this.spec = spec;
+        }
+
+        public override Set<Di.Provider> providers() {
+            Set<Di.Provider> providers = new Set<Di.Provider>();
+            for (String providerToken : spec.providerTokens) {
+                providers.add(provide(providerToken).useValue(1));
+            }
+            return providers;
+        }
+
+        public override Set<String> exports() {
+            return new Set<String>{ spec.exportedToken };
         }
     }
 
