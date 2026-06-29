@@ -2,7 +2,7 @@
 
 A modular, NestJS-inspired dependency injection framework for Salesforce Apex.
 
-Apex DI lets you organize application code into modules, bind tokens to providers, and resolve services through a module-aware container. It is designed for Apex's transaction model: setup happens inside one transaction, provider instances are cached only inside that transaction, and module graphs can be isolated with explicit application contexts.
+Apex DI lets you organize application code into modules, bind tokens to providers, and resolve services through a module-aware container. It is designed for Apex's transaction model: setup happens inside one transaction, provider instances are cached only inside that transaction, and module graphs can be isolated with explicit [application contexts](#application-context).
 
 ## Table of Contents
 
@@ -21,7 +21,7 @@ Apex DI lets you organize application code into modules, bind tokens to provider
 - [Dynamic Modules](#dynamic-modules)
 - [Providers](#providers)
     - [Provider Tokens](#provider-tokens)
-    - [Standard Providers](#standard-providers)
+    - [Class Providers](#class-providers)
     - [Value Providers](#value-providers)
     - [Factory Providers](#factory-providers)
     - [Alias Providers](#alias-providers)
@@ -98,7 +98,7 @@ public with sharing class AccountController {
 }
 ```
 
-`Di.getModuleRef(...)` uses the default application context. This is the simplest entry-point pattern for controllers, trigger handlers, and other top-level Apex code.
+`Di.getModuleRef(...)` uses the default [application context](#application-context). This is the simplest entry-point pattern for controllers, trigger handlers, and other top-level Apex code.
 
 ## Modules
 
@@ -106,12 +106,12 @@ A module is a class that extends `Di.Module`. It groups a cohesive set of provid
 
 Every module can declare four things:
 
-| Method        | Purpose                                                            |
-| ------------- | ------------------------------------------------------------------ |
-| `providers()` | Providers owned by this module                                     |
-| `imports()`   | Other modules whose exported providers are visible to this module  |
-| `exports()`   | Provider tokens this module exposes as its public API              |
-| `reexports()` | Imported modules whose exports should be exposed again by this one |
+| Method        | Purpose                                                                       |
+| ------------- | ----------------------------------------------------------------------------- |
+| `providers()` | Providers owned by this module                                                |
+| `imports()`   | Other modules whose [exported](#exports) providers are visible to this module |
+| `exports()`   | Provider tokens this module exposes as its public API                         |
+| `reexports()` | Imported modules whose exports should be exposed again by this one            |
 
 By default, providers are private to the module that declares them. Another module can use them only when they are exported and imported.
 
@@ -279,12 +279,13 @@ Globalness belongs to the registration, not the module class. `addModule()` regi
 
 Custom Metadata can select modules without hard-coding their class in Apex. `DI_Module__mdt` contains:
 
-| Field           | Meaning                                     |
-| --------------- | ------------------------------------------- |
-| `DeveloperName` | Metadata alias used by Apex DI              |
-| `Class__c`      | Fully qualified Apex module class name      |
-| `IsActive__c`   | Whether the metadata module can be selected |
-| `IsGlobal__c`   | Whether the active module loads as global   |
+| Field            | Meaning                                              |
+| ---------------- | ---------------------------------------------------- |
+| `DeveloperName`  | Metadata alias used by Apex DI                       |
+| `Class__c`       | Fully qualified Apex module class name               |
+| `IsActive__c`    | Whether the metadata module can be selected          |
+| `IsGlobal__c`    | Whether the active module loads as global            |
+| `Description__c` | Optional documentation ignored by runtime resolution |
 
 `Class__c` uses Apex class naming, for example `MyNamespace.LoggingModule` or `OuterClass.InnerModule`.
 
@@ -315,7 +316,7 @@ Use metadata globals for infrastructure modules that should be configured outsid
 
 ## Dynamic Modules
 
-Dynamic modules are useful when a module definition must be assembled in Apex, especially in tests or configurable composition code. Configure the module first, then register it with `addModule()`.
+Dynamic modules are useful when a module definition must be assembled in Apex, especially in tests or configurable composition code. Configure the module first, then register it with [`addModule()`](#graph-mutation).
 
 ```apex
 Di.DynamicModule module = new Di.DynamicModule('CalloutConfigModule');
@@ -390,7 +391,7 @@ ILogger logger = (ILogger) ref.get(ILogger.class);
 
 String tokens are exact and case-sensitive. `provide('Foo')` and `get('foo')` are different tokens. Prefer `Type` tokens for Apex classes and interfaces. Use string tokens for configuration keys or deliberate aliases.
 
-### Standard Providers
+### Class Providers
 
 `useClass()` binds a token to a class. The class must be instantiable by Apex.
 
@@ -398,7 +399,7 @@ String tokens are exact and case-sensitive. `provide('Foo')` and `get('foo')` ar
 provide(ILogger.class).useClass(ConsoleLogger.class);
 ```
 
-If the created object implements `Di.Injectable`, Apex DI calls `inject(container)` after construction.
+If the created object implements `Di.Injectable`, Apex DI calls [`inject(container)`](#automatic-injection) after construction.
 
 ### Value Providers
 
@@ -425,7 +426,7 @@ public class HttpClientFactory implements Di.Factory {
 provide(HttpClient.class).useFactory(new HttpClientFactory());
 ```
 
-Factories receive the container and optional runtime arguments. Only factory providers support runtime arguments, and arguments must be passed through `resolve(token, args)` or `tryResolve(token, args)`.
+Factories receive the container and optional runtime arguments. Only factory providers support runtime arguments, and arguments must be passed through [`resolve(token, args)`](#resolve) or [`tryResolve(token, args)`](#tryget-and-tryresolve).
 
 ```apex
 HttpClient client = (HttpClient) ref.resolve(HttpClient.class, new Map<String, Object>{
@@ -443,7 +444,7 @@ HttpClient client = (HttpClient) ref.resolve(HttpClient.class, new Map<String, O
 provide('Logger').useExisting(ILogger.class);
 ```
 
-The alias follows the target provider's scope. If the target is `PROTOTYPE`, use `resolve()` instead of `get()`.
+The alias follows the target provider's [scope](#scopes). If the target is `PROTOTYPE`, use [`resolve()`](#resolve) instead of [`get()`](#get).
 
 Resolve aliases through the container. Calling an `ExistingProvider`'s `resolve()` method directly is invalid.
 
@@ -458,11 +459,22 @@ Resolve aliases through the container. Calling an `ExistingProvider`'s `resolve(
 provide('EmailService').useMetadata('EmailService_Config');
 ```
 
-The metadata record defines provider type, value, optional arguments, scope, and active state. Invalid metadata configuration is surfaced as a framework exception.
+The `DI_Provider__mdt` record defines provider type, value, optional arguments, scope, active state, and optional documentation:
+
+| Field            | Meaning                                                   |
+| ---------------- | --------------------------------------------------------- |
+| `Type__c`        | Provider kind: class, value, factory, existing            |
+| `Value__c`       | Class name, literal value, factory class, or alias target |
+| `Args__c`        | Optional factory arguments                                |
+| `Scope__c`       | Optional provider scope                                   |
+| `IsActive__c`    | Whether the metadata provider can resolve                 |
+| `Description__c` | Optional documentation ignored by runtime resolution      |
+
+Invalid metadata configuration is surfaced as a framework exception.
 
 ### Metadata Sources
 
-`Di.CustomMetadataSource` is the default adapter for `DI_Module__mdt` and `DI_Provider__mdt`. Use a custom `Di.MetadataSource` to isolate a context from Custom Metadata or provide definitions from another source:
+`Di.CustomMetadataSource` is the default adapter for `DI_Module__mdt` and `DI_Provider__mdt`. Use a custom `Di.MetadataSource` to isolate an [application context](#application-context) from Custom Metadata or provide definitions from another source:
 
 ```apex
 public class AppMetadataSource implements Di.MetadataSource {
@@ -613,7 +625,7 @@ If factories recursively request providers that are still being constructed, res
 
 #### Module Import Cycles
 
-Lazy module imports can exist until a requested provider path needs them. However, `compile()` requires an acyclic module-import graph:
+Lazy module imports can exist until a requested provider path needs them. However, [`compile()`](#compiled-graphs) requires an acyclic module-import graph:
 
 ```apex
 Di.ApplicationContext context = Di.createContext();
@@ -933,7 +945,7 @@ Use `replaceModule()` only when the module is already registered by setup code y
 
 Use `Di.clear()` in tests that intentionally reset or reuse the default context inside the same test flow.
 
-For metadata-heavy tests, prefer a custom `MetadataSource`:
+For metadata-heavy tests, prefer a custom [`MetadataSource`](#metadata-sources):
 
 > [!TIP]
 > A fake `MetadataSource` is clearer than relying on org Custom Metadata records. It keeps tests local to the context and avoids shared metadata state.

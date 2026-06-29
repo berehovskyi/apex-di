@@ -1,3 +1,21 @@
+/**
+ * NestJS-inspired dependency injection framework for Apex. `Di` is the single public facade:
+ * it organizes code into modules, binds tokens to providers, and resolves services through
+ * module-aware containers. Static methods delegate to a shared default `ApplicationContext`;
+ * use `createContext()` to isolate independent graphs in the same transaction.
+ *
+ * Designed for Apex's transaction model: module setup runs inside one transaction and provider
+ * instances are cached only within it. Durable configuration lives in `DI_Module__mdt` and
+ * `DI_Provider__mdt`, read only through the default `CustomMetadataSource`.
+ *
+ * @see Di.Module
+ * @see Di.ApplicationContext
+ * @see Di.ModuleRef
+ * @see Di.Provider
+ * @example
+ * Di.ModuleRef ref = Di.getModuleRef(AccountsModule.class);
+ * AccountService service = (AccountService) ref.get(AccountService.class);
+ */
 public virtual inherited sharing class Di {
     private static final String INVALID_CLASS_MESSAGE = 'Cannot instantiate class "{0}". Please ensure this class exists and is accessible.';
     private static final String INVALID_PROVIDER_TYPE_MESSAGE = 'Cannot create provider for "{0}". The provider type cannot be null.';
@@ -106,74 +124,218 @@ public virtual inherited sharing class Di {
     }
 
     // <editor-fold desc="Static API">
+    /**
+     * Creates a new, isolated application context backed by the default Custom Metadata source.
+     * Use it to keep independent module graphs from interfering within one transaction.
+     *
+     * @return new application context
+     */
     public static ApplicationContext createContext() {
         return new ApplicationContext();
     }
 
+    /**
+     * Creates a new application context backed by a custom metadata source, for example a test
+     * fake that supplies module and provider definitions without Custom Metadata.
+     *
+     * @param metadataSource source of normalized module and provider definitions
+     * @return new application context
+     * @throws InvalidModuleException when metadataSource is null
+     */
     public static ApplicationContext createContext(final MetadataSource metadataSource) {
         return new ApplicationContext(metadataSource);
     }
 
+    /**
+     * Registers the module instance in the default context if it is not already registered and
+     * returns its runtime handle.
+     *
+     * @param module module instance to bind
+     * @return runtime handle for the module
+     * @throws InvalidModuleException when a different instance is already registered under the same token
+     */
     public static ModuleRef getModuleRef(final Module module) {
         return DEFAULT_CONTEXT.getModuleRef(module);
     }
 
+    /**
+     * Returns the default-context handle for the module token, instantiating and registering the
+     * module class on first use.
+     *
+     * @param token module token, typically an Apex class name
+     * @return runtime handle for the module
+     * @throws InvalidModuleException when token is null or the class is not a `Di.Module`
+     * @throws UnknownModuleException when no Apex type matches token
+     */
     public static ModuleRef getModuleRef(final String token) {
         return DEFAULT_CONTEXT.getModuleRef(token);
     }
 
+    /**
+     * Returns the default-context handle for the module type, registering it on first use. This is
+     * the typical entry point for controllers and trigger handlers.
+     *
+     * @param moduleType module class
+     * @return runtime handle for the module
+     * @throws InvalidModuleException when moduleType is null or does not name a `Di.Module`
+     * @throws UnknownModuleException when the type cannot be resolved
+     * @example
+     * Di.ModuleRef ref = Di.getModuleRef(AppModule.class);
+     */
     public static ModuleRef getModuleRef(final Type moduleType) {
         return DEFAULT_CONTEXT.getModuleRef(moduleType);
     }
 
+    /**
+     * Registers a module locally in the default context and returns its handle. Registering after
+     * resolution has begun invalidates previously issued handles.
+     *
+     * @param module module instance to register
+     * @return runtime handle for the module
+     * @throws InvalidModuleException when module is null or conflicts with an existing registration
+     */
     public static ModuleRef addModule(final Module module) {
         return DEFAULT_CONTEXT.addModule(module);
     }
 
+    /**
+     * Registers a module globally in the default context so its exports become implicit fallback
+     * providers for every module. Use sparingly for infrastructure such as logging or config.
+     *
+     * @param module module instance to register globally
+     * @return runtime handle for the module
+     * @throws InvalidModuleException when module is null or conflicts with an existing registration
+     */
     public static ModuleRef addGlobalModule(final Module module) {
         return DEFAULT_CONTEXT.addGlobalModule(module);
     }
 
+    /**
+     * Resolves the handle for a metadata-selected module by its `DI_Module__mdt` DeveloperName
+     * alias. The alias selects an Apex module class; normal token identity rules then apply.
+     *
+     * @param developerName `DI_Module__mdt` DeveloperName of an active module
+     * @return runtime handle for the selected module
+     * @throws InvalidModuleException when the selected metadata module is inactive or invalid
+     * @throws UnknownModuleException when no active metadata module matches developerName
+     */
     public static ModuleRef getMetadataModuleRef(final String developerName) {
         return DEFAULT_CONTEXT.getMetadataModuleRef(developerName);
     }
 
+    /**
+     * Atomically replaces the module registered under token with a new definition, preserving its
+     * visibility and invalidating previously issued handles.
+     *
+     * @param token token of the module to replace
+     * @param newModule replacement module definition
+     * @throws InvalidModuleException when token or newModule is null
+     * @throws UnknownModuleException when no module is registered under token
+     */
     public static void replaceModule(final String token, final Module newModule) {
         DEFAULT_CONTEXT.replaceModule(token, newModule);
     }
 
+    /**
+     * Atomically replaces the module registered under token with a new definition, preserving its
+     * visibility and invalidating previously issued handles.
+     *
+     * @param token type of the module to replace
+     * @param newModule replacement module definition
+     * @throws InvalidModuleException when token or newModule is null
+     * @throws UnknownModuleException when no module is registered under token
+     */
     public static void replaceModule(final Type token, final Module newModule) {
         DEFAULT_CONTEXT.replaceModule(token, newModule);
     }
 
+    /**
+     * Atomically replaces one provider in a registered module, invalidating previously issued
+     * handles. The provider's own token selects the binding it overrides.
+     *
+     * @param moduleToken token of the module that owns the provider
+     * @param newProvider replacement provider, keyed by its own token
+     * @throws InvalidModuleException when moduleToken is null
+     * @throws InvalidProviderException when newProvider is null
+     * @throws UnknownModuleException when no module is registered under moduleToken
+     */
     public static void replaceProvider(final String moduleToken, final Provider newProvider) {
         DEFAULT_CONTEXT.replaceProvider(moduleToken, newProvider);
     }
 
+    /**
+     * Atomically replaces one provider in a registered module, invalidating previously issued
+     * handles. The provider's own token selects the binding it overrides.
+     *
+     * @param moduleToken type of the module that owns the provider
+     * @param newProvider replacement provider, keyed by its own token
+     * @throws InvalidModuleException when moduleToken is null
+     * @throws InvalidProviderException when newProvider is null
+     * @throws UnknownModuleException when no module is registered under moduleToken
+     */
     public static void replaceProvider(final Type moduleToken, final Provider newProvider) {
         DEFAULT_CONTEXT.replaceProvider(moduleToken, newProvider);
     }
 
+    /**
+     * Creates an import marker that binds the module instance into the importing module's graph.
+     * Markers are inert until the owning module is registered.
+     *
+     * @param module module instance to import
+     * @return import marker
+     */
     public static ModuleImport import(final Module module) {
         return new ModuleImport(module);
     }
 
+    /**
+     * Creates an import marker for the module identified by token.
+     *
+     * @param token token of the module to import
+     * @return import marker
+     */
     public static ModuleImport import(final String token) {
         return new ModuleImport(token);
     }
 
+    /**
+     * Creates an import marker for the given module type.
+     *
+     * @param token type of the module to import
+     * @return import marker
+     * @example
+     * return new Set<Di.ModuleImport>{ Di.import(AccountsModule.class) };
+     */
     public static ModuleImport import(final Type token) {
         return DEFAULT_CONTEXT.import(token);
     }
 
+    /**
+     * Creates an import marker for a metadata-selected module, identified by its `DI_Module__mdt`
+     * DeveloperName alias.
+     *
+     * @param developerName `DI_Module__mdt` DeveloperName of the module to import
+     * @return import marker
+     */
     public static ModuleImport importMetadataModule(final String developerName) {
         return DEFAULT_CONTEXT.importMetadataModule(developerName);
     }
 
+    /**
+     * Clears the default context: removes all registered modules, metadata overrides, and caches,
+     * and starts a new lifecycle generation that invalidates previously issued handles.
+     */
     public static void clear() {
         DEFAULT_CONTEXT.clear();
     }
 
+    /**
+     * Returns a deterministic, defensively-copied snapshot of the default context's registered
+     * modules and providers without instantiating any provider.
+     *
+     * @return snapshot of the current graph
+     * @see Di.ContextDescription
+     */
     public static ContextDescription describe() {
         return DEFAULT_CONTEXT.describe();
     }
@@ -353,37 +515,71 @@ public virtual inherited sharing class Di {
     }
     // </editor-fold>
 
+    /**
+     * Provider lifetime. Controls how long a resolved instance is reused.
+     */
     public enum Scope {
+        /** One instance per owning module runtime, shared for the whole transaction. */
         SINGLETON,
+        /** A new instance on every `resolve()` call. */
         PROTOTYPE,
+        /** One instance per active scope and provider owner. */
         SCOPED
     }
 
+    /**
+     * Outcome of binding discovery reported by `Container.explain()`.
+     */
     public enum ResolutionStatus {
+        /** The token resolves to exactly one visible provider. */
         RESOLVED,
+        /** No visible provider declares the token. */
         NOT_FOUND,
+        /** Two or more imported providers from different owners declare the token. */
         AMBIGUOUS
     }
 
+    /**
+     * Where a resolved binding becomes visible to the requesting module, reported by `explain()`.
+     */
     public enum ResolutionSource {
+        /** Declared in the requesting module's own providers. */
         LOCAL,
+        /** Exported by an imported or re-exported module. */
         IMPORTED,
+        /** Provided by a global module as an implicit fallback. */
         IMPLICIT_GLOBAL,
+        /** No binding was found. */
         NONE
     }
 
+    /**
+     * Discriminator for the five built-in provider strategies, reported by `describe()`.
+     */
     public enum ProviderKind {
+        /** Binds a token to a class constructor (`useClass`). */
         CLASS_PROVIDER,
+        /** Binds a token to a literal value (`useValue`). */
         VALUE_PROVIDER,
+        /** Binds a token to a `Di.Factory` output (`useFactory`). */
         FACTORY_PROVIDER,
+        /** Aliases a token to another provider token (`useExisting`). */
         EXISTING_PROVIDER,
+        /** Resolves provider configuration from `DI_Provider__mdt` (`useMetadata`). */
         METADATA_PROVIDER
     }
 
+    /**
+     * Configuration health of a provider, reported by `describe()` for metadata-backed providers.
+     */
     public enum ProviderConfigurationStatus {
+        /** Provider configuration is present and usable. */
         VALID,
+        /** A referenced `DI_Provider__mdt` record does not exist. */
         MISSING_METADATA,
+        /** The referenced `DI_Provider__mdt` record is inactive. */
         INACTIVE_METADATA,
+        /** The referenced `DI_Provider__mdt` record is present but malformed. */
         INVALID_METADATA
     }
 
@@ -392,24 +588,87 @@ public virtual inherited sharing class Di {
         GLOBAL_MODULE
     }
 
+    /**
+     * Supplies normalized module and provider definitions to an `ApplicationContext`. Implement it
+     * to feed definitions from somewhere other than Custom Metadata, such as a test fake. The
+     * default `CustomMetadataSource` is the only adapter that reads `DI_Module__mdt` and
+     * `DI_Provider__mdt`.
+     *
+     * @see Di.CustomMetadataSource
+     */
     public interface MetadataSource {
+        /**
+         * Returns metadata module definitions keyed by DeveloperName alias.
+         *
+         * @return module definitions by DeveloperName
+         */
         Map<String, MetadataModuleDefinition> getModules();
+
+        /**
+         * Returns metadata provider definitions keyed by DeveloperName.
+         *
+         * @return provider definitions by DeveloperName
+         */
         Map<String, ProviderDefinition> getProviders();
     }
 
+    /**
+     * Creates instances for a `useFactory` provider. Implement it to encapsulate construction that
+     * needs other providers, runtime arguments, or conditional logic.
+     *
+     * @example
+     * public class HttpClientFactory implements Di.Factory {
+     *     public Object newInstance(Di.Container container, Object args) {
+     *         return new HttpClient((String) container.get('API_URL'));
+     *     }
+     * }
+     */
     public interface Factory {
+        /**
+         * Builds the instance for the bound token.
+         *
+         * @param ref container to resolve collaborating providers from
+         * @param args runtime arguments passed to `resolve(token, args)`, or null
+         * @return constructed instance
+         */
         Object newInstance(final Container ref, final Object args);
     }
 
+    /**
+     * Receives dependencies after construction. Automatic autowiring calls `inject()` after a class
+     * provider is built, and `Container.inject()` wires externally created objects. Enables
+     * two-phase construction for circular references between singleton class providers.
+     */
     public interface Injectable {
         /**
-         * @description Called immediately after instantiation to inject dependencies.
+         * Resolves and assigns dependencies. Called once, immediately after instantiation.
          *
-         * @param container The module reference to resolve dependencies from
+         * @param container container to resolve dependencies from
          */
         void inject(final Container container);
     }
 
+    /**
+     * Base class for modules. Extend it to group a cohesive set of providers and declare which are
+     * visible to other modules through `imports()`, `providers()`, `exports()`, and `reexports()`.
+     * Providers are private to their declaring module unless exported and imported.
+     *
+     * A module is identified by a token: its Apex class name by default, or a custom token passed
+     * to the constructor. Register a module with `Di.getModuleRef()`, `addModule()`, or
+     * `addGlobalModule()`.
+     *
+     * @see Di.DynamicModule
+     * @see Di.ModuleRef
+     * @example
+     * public class AccountsModule extends Di.Module {
+     *     public override Set<Di.Provider> providers() {
+     *         return new Set<Di.Provider>{ provide(AccountService.class).useClass(AccountService.class) };
+     *     }
+     *     public override Set<String> exports() {
+     *         return new Set<String>{ AccountService.class.getName() };
+     *     }
+     * }
+     */
     public abstract inherited sharing class Module {
         protected final String token;
         private ModuleDefinition definition = new ModuleDefinition(
@@ -421,10 +680,20 @@ public virtual inherited sharing class Di {
         private ApplicationContext context;
         private Boolean isSealed = false;
 
+        /**
+         * Creates a module whose token is its Apex class name.
+         */
         protected Module() {
             token = String.valueOf(this).substringBefore(':');
         }
 
+        /**
+         * Creates a module with an explicit token. Use it for dynamic or configuration-keyed
+         * modules.
+         *
+         * @param token module token
+         * @throws InvalidModuleException when token is null
+         */
         protected Module(final String token) {
             isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
 
@@ -432,34 +701,86 @@ public virtual inherited sharing class Di {
         }
 
         // <editor-fold desc="Module API">
+        /**
+         * Override to declare the modules whose exported providers this module can resolve. Returns
+         * no imports by default.
+         *
+         * @return import markers for modules this module depends on
+         */
         public virtual Set<ModuleImport> imports() {
             return new Set<ModuleImport>();
         }
 
+        /**
+         * Override to declare the providers this module owns. Returns no providers by default.
+         *
+         * @return providers owned by this module
+         */
         public virtual Set<Provider> providers() {
             return new Set<Provider>();
         }
 
+        /**
+         * Override to declare the provider tokens this module exposes as its public API. Returns no
+         * exports by default.
+         *
+         * @return exported provider tokens
+         */
         public virtual Set<String> exports() {
             return new Set<String>();
         }
 
+        /**
+         * Override to re-expose the exports of imported modules as this module's own. Returns
+         * nothing by default.
+         *
+         * @return import markers whose exports are re-exported
+         */
         public virtual Set<ModuleImport> reexports() {
             return new Set<ModuleImport>();
         }
 
+        /**
+         * Returns the provider definition bound to the token within this registered module, without
+         * instantiating it.
+         *
+         * @param token provider token
+         * @return provider definition bound to token
+         * @throws InvalidContextException when the module is not registered in a context
+         * @throws UnknownProviderException when no visible provider matches token
+         */
         public virtual Provider getProvider(final String token) {
             return getProviderBinding(token).getProvider();
         }
 
+        /**
+         * Starts a fluent provider definition for the given type token. Use it inside `providers()`.
+         *
+         * @param token provider type token
+         * @return provider builder for token
+         * @example
+         * provide(ILogger.class).useClass(ConsoleLogger.class);
+         */
         public virtual ProviderBuilder provide(final Type token) {
             return provide(token?.getName());
         }
 
+        /**
+         * Starts a fluent provider definition for the given string token. Use it for configuration
+         * keys or deliberate aliases.
+         *
+         * @param token provider string token
+         * @return provider builder for token
+         */
         public virtual ProviderBuilder provide(final String token) {
             return new ProviderBuilder(token);
         }
 
+        /**
+         * Returns this module's token.
+         *
+         * @return module token
+         */
         public String getToken() {
             return token;
         }
@@ -468,6 +789,12 @@ public virtual inherited sharing class Di {
             return String.valueOf(this).substringBefore(':');
         }
 
+        /**
+         * Returns whether this module declares an import for the given module token.
+         *
+         * @param token imported module token
+         * @return true when this module imports token
+         */
         public Boolean hasImport(final String token) {
             for (ModuleImport moduleImport : definition.imports) {
                 if (moduleImport.getToken().equals(token)) {
@@ -477,14 +804,32 @@ public virtual inherited sharing class Di {
             return false;
         }
 
+        /**
+         * Returns whether this module owns a provider for the given token.
+         *
+         * @param token provider token
+         * @return true when this module declares a provider for token
+         */
         public Boolean hasProvider(final String token) {
             return definition.providers.containsKey(token);
         }
 
+        /**
+         * Returns whether this module exports the given provider token.
+         *
+         * @param token provider token
+         * @return true when token is exported
+         */
         public Boolean hasExport(final String token) {
             return definition.exports.contains(token);
         }
 
+        /**
+         * Compares modules by token: two modules are equal when their tokens match.
+         *
+         * @param obj object to compare
+         * @return true when obj is a module with the same token
+         */
         public Boolean equals(final Object obj) {
             if (!(obj instanceof Module)) {
                 return false;
@@ -492,6 +837,11 @@ public virtual inherited sharing class Di {
             return ((Module) obj).getToken().equals(token);
         }
 
+        /**
+         * Returns a token-based hash code consistent with `equals()`.
+         *
+         * @return hash code derived from the module token
+         */
         public Integer hashCode() {
             return System.hashCode(token);
         }
@@ -755,6 +1105,18 @@ public virtual inherited sharing class Di {
         // </editor-fold>
     }
 
+    /**
+     * Base class for the built-in provider strategies (`ClassProvider`, `ValueProvider`,
+     * `FactoryProvider`, `ExistingProvider`, `CustomMetadataTypesProvider`). A provider maps a
+     * token to a creation strategy and a `Scope`. The model is closed: custom construction belongs
+     * in a `Di.Factory`, not a custom subclass.
+     *
+     * Build providers fluently with `Module.provide(token).use*()`, or instantiate the concrete
+     * provider classes directly for replacement or focused tests.
+     *
+     * @see Di.ProviderBuilder
+     * @see Di.Factory
+     */
     public abstract inherited sharing class Provider {
         protected final String token;
         private Boolean isCommitted = false;
@@ -766,12 +1128,36 @@ public virtual inherited sharing class Di {
             this.token = token;
         }
 
+        /**
+         * Produces the instance for the bound token. Called by the container, not by application
+         * code; resolve providers through `Container.get()` or `Container.resolve()`.
+         *
+         * @param container owning container that supplies collaborating providers
+         * @param args runtime arguments, supported only by factory providers
+         * @return resolved instance
+         */
         public abstract Object resolve(final Container container, final Object args);
 
+        /**
+         * Returns this provider's lifetime.
+         *
+         * @return configured scope
+         */
         public virtual Scope getScope() {
             return scopeType;
         }
 
+        /**
+         * Sets this provider's lifetime. Configure scope before registration; a committed provider
+         * rejects further changes.
+         *
+         * @param scopeType lifetime to assign
+         * @return this provider for fluent chaining
+         * @throws InvalidScopeException when scopeType is null
+         * @throws InvalidProviderException when the provider is already committed
+         * @example
+         * provide(UnitOfWork.class).useClass(UnitOfWork.class).scope(Di.Scope.SCOPED);
+         */
         public virtual Provider scope(final Scope scopeType) {
             isTrue(scopeType != null, InvalidScopeException.class, NULL_PROVIDER_SCOPE_MESSAGE);
             isTrue(!isCommitted, InvalidProviderException.class, COMMITTED_PROVIDER_SCOPE_MESSAGE);
@@ -779,10 +1165,21 @@ public virtual inherited sharing class Di {
             return this;
         }
 
+        /**
+         * Returns the token this provider is bound to.
+         *
+         * @return provider token
+         */
         public String getToken() {
             return token;
         }
 
+        /**
+         * Compares providers by token: two providers are equal when their tokens match.
+         *
+         * @param obj object to compare
+         * @return true when obj is a provider with the same token
+         */
         public Boolean equals(final Object obj) {
             if (!(obj instanceof Provider)) {
                 return false;
@@ -790,6 +1187,11 @@ public virtual inherited sharing class Di {
             return ((Provider) obj).getToken().equals(token);
         }
 
+        /**
+         * Returns a token-based hash code consistent with `equals()`.
+         *
+         * @return hash code derived from the provider token
+         */
         public Integer hashCode() {
             return System.hashCode(token);
         }
@@ -805,6 +1207,15 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Base class for dependency resolution. Exposes the resolution API — `get()`, `resolve()`,
+     * `tryGet()`, `tryResolve()`, `inject()`, and the `explain()` diagnostic — shared by the root
+     * `ModuleRef` and short-lived `ScopeRef`. Resolution is owner-aware: an exported provider
+     * resolves in its owner module's context.
+     *
+     * @see Di.ModuleRef
+     * @see Di.ScopeRef
+     */
     public abstract inherited sharing class Container {
         protected ApplicationContext context;
         protected Container parent;
@@ -814,7 +1225,7 @@ public virtual inherited sharing class Di {
         private ModuleRuntime runtime;
         private Map<String, ResolvedPlan> resolutionMemo;
 
-        protected Container(
+        private Container(
             final ApplicationContext context,
             final Container parent,
             final Module module,
@@ -827,6 +1238,18 @@ public virtual inherited sharing class Di {
         }
 
         // <editor-fold desc="Resolution API">
+        /**
+         * Returns the cached instance for the token. `get()` is the cached retrieval path: it
+         * reuses the singleton (or scoped, within a `ScopeRef`) instance and rejects runtime
+         * arguments.
+         *
+         * @param token provider token to resolve
+         * @param args must be null; runtime arguments are supported only by `resolve(token, args)`
+         * @return cached instance bound to token
+         * @throws InvalidProviderException when args is not null
+         * @throws UnknownProviderException when no visible provider matches token
+         * @throws InvalidScopeException when the provider is `PROTOTYPE`
+         */
         public virtual Object get(final String token, final Object args) {
             isTrue(args == null, InvalidProviderException.class, GET_ARGS_NOT_SUPPORTED_MESSAGE);
             if (inCall) {
@@ -855,18 +1278,49 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Type-token overload of `get(String, Object)`.
+         *
+         * @param token provider type token
+         * @param args must be null
+         * @return cached instance bound to token
+         */
         public virtual Object get(final Type token, final Object args) {
             return get(token?.getName(), args);
         }
 
+        /**
+         * Returns the cached instance for the token.
+         *
+         * @param token provider token to resolve
+         * @return cached instance bound to token
+         * @throws UnknownProviderException when no visible provider matches token
+         * @throws InvalidScopeException when the provider is `PROTOTYPE`
+         */
         public virtual Object get(final String token) {
             return get(token, null);
         }
 
+        /**
+         * Returns the cached instance for the type token.
+         *
+         * @param token provider type token
+         * @return cached instance bound to token
+         * @example
+         * OrderService svc = (OrderService) ref.get(OrderService.class);
+         */
         public virtual Object get(final Type token) {
             return get(token?.getName(), null);
         }
 
+        /**
+         * Optional cached retrieval: returns the cached instance for the token, or null when no
+         * provider is visible. A visible but broken provider still throws — ambiguity, missing
+         * dependencies, invalid metadata, cycles, and scope violations are not suppressed.
+         *
+         * @param token provider token to resolve
+         * @return cached instance bound to token, or null when token is not visible
+         */
         public virtual Object tryGet(final String token) {
             if (inCall) {
                 return getRuntimeModule().hasVisibleProviderBinding(token) ? getInternal(token, null) : null;
@@ -880,10 +1334,29 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Type-token overload of `tryGet(String)`.
+         *
+         * @param token provider type token
+         * @return cached instance bound to token, or null when token is not visible
+         */
         public virtual Object tryGet(final Type token) {
             return tryGet(token?.getName());
         }
 
+        /**
+         * Creates a fresh instance for the token, passing optional runtime arguments to a factory
+         * provider. Returns the singleton for `SINGLETON` providers and a new instance for
+         * `PROTOTYPE`.
+         *
+         * @param token provider token to resolve
+         * @param args runtime arguments for a factory provider, or null
+         * @return resolved instance bound to token
+         * @throws UnknownProviderException when no visible provider matches token
+         * @throws InvalidProviderException when args is supplied to a non-factory provider
+         * @example
+         * HttpClient client = (HttpClient) ref.resolve(HttpClient.class, new Map<String, Object>{ 'timeoutMs' => 5000 });
+         */
         public virtual Object resolve(final String token, final Object args) {
             if (inCall) {
                 return resolveInternal(token, args);
@@ -897,18 +1370,47 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Type-token overload of `resolve(String, Object)`.
+         *
+         * @param token provider type token
+         * @param args runtime arguments for a factory provider, or null
+         * @return resolved instance bound to token
+         */
         public virtual Object resolve(final Type token, final Object args) {
             return resolve(token?.getName(), args);
         }
 
+        /**
+         * Creates a fresh instance for the token without runtime arguments.
+         *
+         * @param token provider token to resolve
+         * @return resolved instance bound to token
+         * @throws UnknownProviderException when no visible provider matches token
+         */
         public virtual Object resolve(final String token) {
             return resolve(token, null);
         }
 
+        /**
+         * Type-token overload of `resolve(String)`.
+         *
+         * @param token provider type token
+         * @return resolved instance bound to token
+         */
         public virtual Object resolve(final Type token) {
             return resolve(token?.getName(), null);
         }
 
+        /**
+         * Optional fresh resolution: resolves the token with optional runtime arguments, or returns
+         * null when no provider is visible. Like `tryGet()`, a visible but broken provider still
+         * throws.
+         *
+         * @param token provider token to resolve
+         * @param args runtime arguments for a factory provider, or null
+         * @return resolved instance bound to token, or null when token is not visible
+         */
         public virtual Object tryResolve(final String token, final Object args) {
             if (inCall) {
                 return getRuntimeModule().hasVisibleProviderBinding(token) ? resolveInternal(token, args) : null;
@@ -922,18 +1424,47 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Type-token overload of `tryResolve(String, Object)`.
+         *
+         * @param token provider type token
+         * @param args runtime arguments for a factory provider, or null
+         * @return resolved instance bound to token, or null when token is not visible
+         */
         public virtual Object tryResolve(final Type token, final Object args) {
             return tryResolve(token?.getName(), args);
         }
 
+        /**
+         * Optional fresh resolution without runtime arguments.
+         *
+         * @param token provider token to resolve
+         * @return resolved instance bound to token, or null when token is not visible
+         */
         public virtual Object tryResolve(final String token) {
             return tryResolve(token, null);
         }
 
+        /**
+         * Type-token overload of `tryResolve(String)`.
+         *
+         * @param token provider type token
+         * @return resolved instance bound to token, or null when token is not visible
+         */
         public virtual Object tryResolve(final Type token) {
             return tryResolve(token?.getName(), null);
         }
 
+        /**
+         * Returns structured binding diagnostics for the token without instantiating any provider.
+         * Reports whether it is resolved, missing, or ambiguous; the visibility source; owning
+         * module; declared scope; alias redirect; and conflicting owners.
+         *
+         * @param token provider token to explain
+         * @return resolution explanation for token
+         * @throws InvalidProviderException when token is null
+         * @see Di.ResolutionExplanation
+         */
         public virtual ResolutionExplanation explain(final String token) {
             isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
             validateContextGeneration();
@@ -959,10 +1490,27 @@ public virtual inherited sharing class Di {
             );
         }
 
+        /**
+         * Type-token overload of `explain(String)`.
+         *
+         * @param token provider type token
+         * @return resolution explanation for token
+         */
         public virtual ResolutionExplanation explain(final Type token) {
             return explain(token?.getName());
         }
 
+        /**
+         * Wires dependencies into an externally created object by calling its `Injectable.inject()`.
+         * Strict: the instance must implement `Di.Injectable`.
+         *
+         * @param instance object to inject dependencies into
+         * @return the same instance, wired
+         * @throws InvalidClassException when instance does not implement `Di.Injectable`
+         * @example
+         * OrderService service = new OrderService();
+         * ref.inject(service);
+         */
         public virtual Object inject(final Object instance) {
             validateContextGeneration();
             isTrue(instance instanceof Injectable, InvalidClassException.class, NOT_INJECTABLE_MESSAGE);
@@ -978,6 +1526,12 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Returns the module backing this container.
+         *
+         * @return backing module
+         * @throws InvalidContextException when the handle belongs to a cleared lifecycle generation
+         */
         public Module getModule() {
             validateContextGeneration();
             return runtime.module;
@@ -1281,22 +1835,53 @@ public virtual inherited sharing class Di {
         // </editor-fold>
     }
 
+    /**
+     * Default `MetadataSource` adapter. Normalizes module definitions from `DI_Module__mdt` and
+     * provider definitions from `DI_Provider__mdt` for an `ApplicationContext`. This is the only
+     * production path that reads Custom Metadata rows.
+     */
     public inherited sharing class CustomMetadataSource implements MetadataSource {
+        /**
+         * Returns module definitions normalized from all `DI_Module__mdt` records.
+         *
+         * @return module definitions by DeveloperName
+         */
         public Map<String, MetadataModuleDefinition> getModules() {
             return normalizeModuleDefinitions(DI_Module__mdt.getAll());
         }
 
+        /**
+         * Returns provider definitions normalized from all `DI_Provider__mdt` records.
+         *
+         * @return provider definitions by DeveloperName
+         */
         public Map<String, ProviderDefinition> getProviders() {
             return normalizeProviderDefinitions(DI_Provider__mdt.getAll());
         }
     }
 
+    /**
+     * Normalized definition of a metadata-selected module, decoupled from `DI_Module__mdt`. Supply
+     * these from a custom `MetadataSource`, for example in tests.
+     */
     public class MetadataModuleDefinition {
+        /** DeveloperName alias that selects this module. */
         public final String developerName;
+        /** Fully qualified Apex module class name. */
         public final String moduleClass;
+        /** Whether the module can be selected. */
         public final Boolean isActive;
+        /** Whether the module loads as a global module. */
         public final Boolean isGlobal;
 
+        /**
+         * Creates a metadata module definition.
+         *
+         * @param developerName DeveloperName alias
+         * @param moduleClass fully qualified Apex module class name
+         * @param isActive whether the module can be selected
+         * @param isGlobal whether the module loads as global
+         */
         public MetadataModuleDefinition(
             final String developerName,
             final String moduleClass,
@@ -1310,14 +1895,34 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Normalized definition of a metadata-backed provider, decoupled from `DI_Provider__mdt`.
+     * Supply these from a custom `MetadataSource`.
+     */
     public class ProviderDefinition {
+        /** DeveloperName of the provider configuration. */
         public final String developerName;
+        /** Provider kind keyword, for example `Class`, `Value`, `Factory`, or `Existing`. */
         public final String type;
+        /** Provider value or target, interpreted per type. */
         public final String value;
+        /** Optional serialized runtime arguments. */
         public final String args;
+        /** Declared scope keyword, or null for the default. */
         public final String scope;
+        /** Whether the provider configuration is active. */
         public final Boolean isActive;
 
+        /**
+         * Creates a provider definition.
+         *
+         * @param developerName DeveloperName of the provider configuration
+         * @param type provider kind keyword
+         * @param value provider value or target
+         * @param args optional serialized runtime arguments
+         * @param scope declared scope keyword, or null
+         * @param isActive whether the provider is active
+         */
         public ProviderDefinition(
             final String developerName,
             final String type,
@@ -1335,14 +1940,29 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Immutable result of `Container.explain()`. Describes how a token would resolve without
+     * instantiating any provider.
+     *
+     * @see Di.ResolutionStatus
+     * @see Di.ResolutionSource
+     */
     public class ResolutionExplanation {
+        /** Token that was explained. */
         public final String token;
+        /** Token of the module the explanation was requested from. */
         public final String requestingModule;
+        /** Whether the token is resolved, missing, or ambiguous. */
         public final ResolutionStatus status;
+        /** Where the binding becomes visible: local, imported, implicit global, or none. */
         public final ResolutionSource source;
+        /** Token of the module that owns the resolved provider, or null. */
         public final String ownerModule;
+        /** Declared scope of the resolved provider, or null. */
         public final Scope declaredScope;
+        /** Alias target token for alias or metadata-backed providers, or null. */
         public final String redirectToken;
+        /** Module tokens involved in an ambiguity. */
         public final List<String> conflictingModules;
 
         private ResolutionExplanation(
@@ -1366,8 +1986,13 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Immutable snapshot of a context's registered modules and providers, returned by `describe()`.
+     */
     public class ContextDescription {
+        /** Whether the context graph has been compiled. */
         public final Boolean isCompiled;
+        /** Descriptions of registered modules. */
         public final List<ModuleDescription> modules;
 
         private ContextDescription(final Boolean isCompiled, final List<ModuleDescription> modules) {
@@ -1376,13 +2001,23 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Immutable snapshot of one registered module within a `ContextDescription`.
+     */
     public class ModuleDescription {
+        /** Module token. */
         public final String token;
+        /** Whether the module is registered globally. */
         public final Boolean isGlobal;
+        /** Metadata DeveloperName aliases that select this module. */
         public final List<String> metadataAliases;
+        /** Descriptions of providers owned by this module. */
         public final List<ProviderDescription> providers;
+        /** Exported provider tokens. */
         public final List<String> exports;
+        /** Imported modules. */
         public final List<ModuleImportDescription> imports;
+        /** Re-exported modules. */
         public final List<ModuleImportDescription> reexports;
 
         private ModuleDescription(
@@ -1404,12 +2039,22 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Immutable snapshot of one provider within a `ModuleDescription`. Exposes structure only,
+     * never values, factory instances, or caches.
+     */
     public class ProviderDescription {
+        /** Provider token. */
         public final String token;
+        /** Provider strategy kind. */
         public final ProviderKind kind;
+        /** Configuration health, reported for metadata-backed providers. */
         public final ProviderConfigurationStatus configurationStatus;
+        /** Declared scope. */
         public final Scope declaredScope;
+        /** Alias target token for alias or metadata-backed providers, or null. */
         public final String redirectToken;
+        /** Whether the provider is exported by its module. */
         public final Boolean isExported;
 
         private ProviderDescription(
@@ -1429,9 +2074,15 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Immutable snapshot of one module import or re-export within a `ModuleDescription`.
+     */
     public class ModuleImportDescription {
+        /** Imported module token. */
         public final String token;
+        /** Whether the import is marked for eager registration. */
         public final Boolean isEager;
+        /** Metadata DeveloperName alias when the import is metadata-selected, or null. */
         public final String metadataAlias;
 
         private ModuleImportDescription(final String token, final Boolean isEager, final String metadataAlias) {
@@ -1441,6 +2092,19 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Runtime owner of a module graph: module registries, singleton runtimes, the global-binding
+     * and visible-provider indexes, and metadata cache state. The static `Di` facade delegates to a
+     * shared default context; create explicit contexts with `Di.createContext()` to isolate graphs
+     * or supply a custom metadata source.
+     *
+     * The first top-level `get()` or `resolve()` opens the lifecycle; afterwards, successful
+     * external mutations (`addModule`, `replaceProvider`, `replaceModule`, `clear`) start a new
+     * generation and invalidate previously issued handles.
+     *
+     * @see Di.ModuleRef
+     * @see Di.MetadataSource
+     */
     public virtual class ApplicationContext {
         private final Map<String, ModuleRef> moduleRegistry = new Map<String, ModuleRef>();
         private final Map<String, ModuleRef> globalModuleRegistry = new Map<String, ModuleRef>();
@@ -1469,15 +2133,31 @@ public virtual inherited sharing class Di {
         }
 
         // <editor-fold desc="Context API">
+        /**
+         * Creates a context backed by the default `CustomMetadataSource`.
+         */
         public ApplicationContext() {
             this(new CustomMetadataSource());
         }
 
+        /**
+         * Creates a context backed by a custom metadata source.
+         *
+         * @param metadataSource source of normalized module and provider definitions
+         * @throws InvalidModuleException when metadataSource is null
+         */
         public ApplicationContext(final MetadataSource metadataSource) {
             isTrue(metadataSource != null, InvalidModuleException.class, NULL_METADATA_SOURCE_MESSAGE);
             this.metadata = new MetadataState(metadataSource);
         }
 
+        /**
+         * Registers the module instance in this context if needed and returns its runtime handle.
+         *
+         * @param module module instance to bind
+         * @return runtime handle for the module
+         * @throws InvalidModuleException when a different instance is already registered under the same token
+         */
         public virtual ModuleRef getModuleRef(final Module module) {
             isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
 
@@ -1496,6 +2176,15 @@ public virtual inherited sharing class Di {
             return ref;
         }
 
+        /**
+         * Returns this context's handle for the module token, instantiating and registering the
+         * class on first use.
+         *
+         * @param token module token, typically an Apex class name
+         * @return runtime handle for the module
+         * @throws InvalidModuleException when token is null or the class is not a `Di.Module`
+         * @throws UnknownModuleException when no Apex type matches token
+         */
         public virtual ModuleRef getModuleRef(final String token) {
             isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
 
@@ -1509,22 +2198,64 @@ public virtual inherited sharing class Di {
                 installModule(module, ModuleVisibility.LOCAL_MODULE, isOpen, null);
         }
 
+        /**
+         * Returns this context's handle for the module type, registering it on first use.
+         *
+         * @param moduleType module class
+         * @return runtime handle for the module
+         * @throws InvalidModuleException when moduleType is null or does not name a `Di.Module`
+         * @throws UnknownModuleException when the type cannot be resolved
+         */
         public virtual ModuleRef getModuleRef(final Type moduleType) {
             return getModuleRef(moduleType?.getName());
         }
 
+        /**
+         * Registers a module locally in this context and returns its handle.
+         *
+         * @param module module instance to register
+         * @return runtime handle for the module
+         * @throws InvalidModuleException when module is null or conflicts with an existing registration
+         */
         public virtual ModuleRef addModule(final Module module) {
             return installModule(module, ModuleVisibility.LOCAL_MODULE, isOpen, null);
         }
 
+        /**
+         * Registers a module globally in this context so its exports become implicit fallback
+         * providers for every module.
+         *
+         * @param module module instance to register globally
+         * @return runtime handle for the module
+         * @throws InvalidModuleException when module is null or conflicts with an existing registration
+         */
         public virtual ModuleRef addGlobalModule(final Module module) {
             return installModule(module, ModuleVisibility.GLOBAL_MODULE, isOpen, null);
         }
 
+        /**
+         * Resolves the handle for a metadata-selected module by its `DI_Module__mdt` DeveloperName
+         * alias.
+         *
+         * @param developerName DeveloperName of an active metadata module
+         * @return runtime handle for the selected module
+         * @throws InvalidModuleException when the selected metadata module is inactive or invalid
+         * @throws UnknownModuleException when no active metadata module matches developerName
+         */
         public virtual ModuleRef getMetadataModuleRef(final String developerName) {
             return getMetadataModuleRef(developerName, isOpen);
         }
 
+        /**
+         * Atomically replaces one provider in a registered module, invalidating previously issued
+         * handles. The provider's own token selects the binding it overrides.
+         *
+         * @param moduleToken token of the module that owns the provider
+         * @param newProvider replacement provider, keyed by its own token
+         * @throws InvalidModuleException when moduleToken is null
+         * @throws InvalidProviderException when newProvider is null
+         * @throws UnknownModuleException when no module is registered under moduleToken
+         */
         public virtual void replaceProvider(final String moduleToken, final Provider newProvider) {
             isTrue(moduleToken != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
             isTrue(newProvider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
@@ -1544,6 +2275,15 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Type-token overload of `replaceProvider(String, Provider)`.
+         *
+         * @param moduleToken type of the module that owns the provider
+         * @param newProvider replacement provider, keyed by its own token
+         * @throws InvalidModuleException when moduleToken is null
+         * @throws InvalidProviderException when newProvider is null
+         * @throws UnknownModuleException when no module is registered under moduleToken
+         */
         public virtual void replaceProvider(final Type moduleToken, final Provider newProvider) {
             replaceProvider(moduleToken?.getName(), newProvider);
         }
@@ -1613,6 +2353,15 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Atomically replaces the module registered under token with a new definition, preserving
+         * its visibility and invalidating previously issued handles.
+         *
+         * @param token token of the module to replace
+         * @param newModule replacement module definition
+         * @throws InvalidModuleException when token or newModule is null
+         * @throws UnknownModuleException when no module is registered under token
+         */
         public virtual void replaceModule(final String token, final Module newModule) {
             isTrue(newModule != null, InvalidModuleException.class, INVALID_MODULE_REPLACEMENT_MESSAGE);
             isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
@@ -1663,26 +2412,66 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Type-token overload of `replaceModule(String, Module)`.
+         *
+         * @param token type of the module to replace
+         * @param newModule replacement module definition
+         * @throws InvalidModuleException when token or newModule is null
+         * @throws UnknownModuleException when no module is registered under token
+         */
         public virtual void replaceModule(final Type token, final Module newModule) {
             replaceModule(token?.getName(), newModule);
         }
 
+        /**
+         * Creates an import marker for the module instance, bound to this context.
+         *
+         * @param module module instance to import
+         * @return import marker
+         */
         public virtual ModuleImport import(final Module module) {
             return new ModuleImport(this, module);
         }
 
+        /**
+         * Creates an import marker for the module token.
+         *
+         * @param token token of the module to import
+         * @return import marker
+         */
         public virtual ModuleImport import(final String token) {
             return new ModuleImport(this, token);
         }
 
+        /**
+         * Creates an import marker for the module type.
+         *
+         * @param token type of the module to import
+         * @return import marker
+         */
         public virtual ModuleImport import(final Type token) {
             return import(token?.getName());
         }
 
+        /**
+         * Creates an import marker for a metadata-selected module by its DeveloperName alias.
+         *
+         * @param developerName DeveloperName of the module to import
+         * @return import marker
+         */
         public virtual ModuleImport importMetadataModule(final String developerName) {
             return new ModuleImport(this, developerName, true);
         }
 
+        /**
+         * Eagerly resolves lazy imports, validates visibility, and completes the provider index for
+         * every registered module. Optional: resolution works lazily without it. Requires an acyclic
+         * module-import graph.
+         *
+         * @return this context for fluent chaining
+         * @throws InvalidModuleException when the module-import graph contains a cycle
+         */
         public virtual ApplicationContext compile() {
             invalidateCompiledGraph();
             Map<String, Map<String, ProviderBinding>> compiledProvidersByModuleKey = new Map<String, Map<String, ProviderBinding>>();
@@ -1701,6 +2490,14 @@ public virtual inherited sharing class Di {
             return this;
         }
 
+        /**
+         * Returns a deterministic, defensively-copied snapshot of registered modules and providers
+         * without instantiating any provider. Call `compile()` first to include the complete
+         * reachable graph.
+         *
+         * @return snapshot of the current graph
+         * @see Di.ContextDescription
+         */
         public virtual ContextDescription describe() {
             List<ModuleDescription> modules = new List<ModuleDescription>();
             addModuleDescriptions(modules, moduleRegistry);
@@ -1708,6 +2505,10 @@ public virtual inherited sharing class Di {
             return new ContextDescription(isCompiled, modules);
         }
 
+        /**
+         * Clears this context: removes all registered modules, metadata overrides, and caches, and
+         * starts a new lifecycle generation that invalidates previously issued handles.
+         */
         public virtual void clear() {
             markGraphChanged();
             clearModuleContexts(moduleRegistry);
@@ -2359,32 +3160,77 @@ public virtual inherited sharing class Di {
         // </editor-fold>
     }
 
+    /**
+     * Module assembled programmatically rather than by subclassing `Module`. Configure it with
+     * `addProvider`, `addImport`, `addExport`, and `addReexport`, then register it with
+     * `addModule()` or `replaceModule()`. Useful for tests and configurable composition. Successful
+     * registration seals it permanently.
+     *
+     * @example
+     * Di.DynamicModule module = new Di.DynamicModule('CalloutConfigModule');
+     * module.addProvider(module.provide('OrdersApiEndpoint').useValue('callout:OrdersApi/v1'));
+     * module.addExport('OrdersApiEndpoint');
+     * Di.ModuleRef ref = Di.addModule(module);
+     */
     public virtual inherited sharing class DynamicModule extends Module {
         private final Set<ModuleImport> dynamicImports = new Set<ModuleImport>();
         private final Map<String, Provider> dynamicProviders = new Map<String, Provider>();
         private final Set<String> dynamicExports = new Set<String>();
         private final Set<ModuleImport> dynamicReexports = new Set<ModuleImport>();
 
+        /**
+         * Creates an unsealed dynamic module with the given token.
+         *
+         * @param token module token
+         * @throws InvalidModuleException when token is null
+         */
         public DynamicModule(final String token) {
             super(token);
         }
 
+        /**
+         * Returns the imports added with `addImport`.
+         *
+         * @return configured imports
+         */
         public override Set<ModuleImport> imports() {
             return dynamicImports;
         }
 
+        /**
+         * Returns the providers added with `addProvider`.
+         *
+         * @return configured providers
+         */
         public override Set<Provider> providers() {
             return new Set<Provider>(dynamicProviders.values());
         }
 
+        /**
+         * Returns the export tokens added with `addExport`.
+         *
+         * @return configured export tokens
+         */
         public override Set<String> exports() {
             return dynamicExports;
         }
 
+        /**
+         * Returns the re-exports added with `addReexport`.
+         *
+         * @return configured re-exports
+         */
         public override Set<ModuleImport> reexports() {
             return dynamicReexports;
         }
 
+        /**
+         * Adds a module import. Allowed only before registration seals the module.
+         *
+         * @param moduleImport import marker to add
+         * @return this module for fluent chaining
+         * @throws InvalidModuleException when the module is sealed or moduleImport is null
+         */
         public DynamicModule addImport(final ModuleImport moduleImport) {
             validateConfigurable();
             isTrue(moduleImport != null, InvalidModuleException.class, NULL_MODULE_IMPORT_MESSAGE);
@@ -2393,6 +3239,14 @@ public virtual inherited sharing class Di {
             return this;
         }
 
+        /**
+         * Adds a provider, keyed by its token. Allowed only before registration seals the module.
+         *
+         * @param provider provider to add
+         * @return this module for fluent chaining
+         * @throws InvalidModuleException when the module is sealed
+         * @throws InvalidProviderException when provider is null
+         */
         public DynamicModule addProvider(final Provider provider) {
             validateConfigurable();
             isTrue(provider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
@@ -2401,6 +3255,14 @@ public virtual inherited sharing class Di {
             return this;
         }
 
+        /**
+         * Exports a provider token. Allowed only before registration seals the module.
+         *
+         * @param token provider token to export
+         * @return this module for fluent chaining
+         * @throws InvalidModuleException when the module is sealed
+         * @throws InvalidProviderException when token is null
+         */
         public DynamicModule addExport(final String token) {
             validateConfigurable();
             isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
@@ -2409,6 +3271,14 @@ public virtual inherited sharing class Di {
             return this;
         }
 
+        /**
+         * Re-exports an imported module's exports. Allowed only before registration seals the
+         * module.
+         *
+         * @param moduleImport import marker to re-export
+         * @return this module for fluent chaining
+         * @throws InvalidModuleException when the module is sealed or moduleImport is null
+         */
         public DynamicModule addReexport(final ModuleImport moduleImport) {
             validateConfigurable();
             isTrue(moduleImport != null, InvalidModuleException.class, NULL_MODULE_IMPORT_MESSAGE);
@@ -2422,55 +3292,133 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Fluent builder returned by `Module.provide(token)`. Terminal `use*` methods produce a typed
+     * provider bound to the token; chain `scope()` on the result to set its lifetime.
+     *
+     * @see Di.Provider
+     */
     public virtual inherited sharing class ProviderBuilder {
         protected final String token;
 
+        /**
+         * Creates a builder for the given token.
+         *
+         * @param token provider token
+         * @throws InvalidProviderException when token is null
+         */
         protected ProviderBuilder(final String token) {
             isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             this.token = token;
         }
 
+        /**
+         * Binds the token to a class by name.
+         *
+         * @param type fully qualified Apex class name to instantiate
+         * @return class provider for the token
+         */
         public virtual ClassProvider useClass(final String type) {
             return new ClassProvider(token, type);
         }
 
+        /**
+         * Binds the token to a class.
+         *
+         * @param type Apex class to instantiate
+         * @return class provider for the token
+         */
         public virtual ClassProvider useClass(final Type type) {
             return new ClassProvider(token, type);
         }
 
+        /**
+         * Binds the token to a literal value.
+         *
+         * @param value value to return on resolution
+         * @return value provider for the token
+         */
         public virtual ValueProvider useValue(final Object value) {
             return new ValueProvider(token, value);
         }
 
+        /**
+         * Binds the token to a factory instance.
+         *
+         * @param factory factory that constructs the instance
+         * @return factory provider for the token
+         */
         public virtual FactoryProvider useFactory(final Factory factory) {
             return new FactoryProvider(token, factory);
         }
 
+        /**
+         * Binds the token to a factory by class name.
+         *
+         * @param factoryType fully qualified `Di.Factory` class name
+         * @return factory provider for the token
+         */
         public virtual FactoryProvider useFactory(final String factoryType) {
             return new FactoryProvider(token, factoryType);
         }
 
+        /**
+         * Binds the token to a factory class.
+         *
+         * @param factoryType `Di.Factory` class
+         * @return factory provider for the token
+         */
         public virtual FactoryProvider useFactory(final Type factoryType) {
             return new FactoryProvider(token, factoryType);
         }
 
+        /**
+         * Aliases the token to another provider token.
+         *
+         * @param existingToken target provider token
+         * @return alias provider for the token
+         */
         public virtual ExistingProvider useExisting(final String existingToken) {
             return new ExistingProvider(token, existingToken);
         }
 
+        /**
+         * Aliases the token to another provider type.
+         *
+         * @param existingToken target provider type
+         * @return alias provider for the token
+         */
         public virtual ExistingProvider useExisting(final Type existingToken) {
             return new ExistingProvider(token, existingToken);
         }
 
+        /**
+         * Binds the token to a `DI_Provider__mdt` configuration by DeveloperName.
+         *
+         * @param developerName `DI_Provider__mdt` DeveloperName
+         * @return metadata provider for the token
+         */
         public virtual CustomMetadataTypesProvider useMetadata(final String developerName) {
             return new CustomMetadataTypesProvider(token, developerName);
         }
     }
 
+    /**
+     * Provider that binds a token to an Apex class and instantiates it on resolution. The class
+     * must have a public no-argument constructor. If the instance implements `Di.Injectable`, it is
+     * wired after construction.
+     */
     public virtual inherited sharing class ClassProvider extends Provider {
         protected final String typeName;
 
+        /**
+         * Creates a class provider binding a string token to a class name.
+         *
+         * @param token provider token
+         * @param type fully qualified Apex class name to instantiate
+         * @throws InvalidProviderException when token or type is null
+         */
         public ClassProvider(final String token, final String type) {
             super(token);
             isTrue(
@@ -2483,23 +3431,54 @@ public virtual inherited sharing class Di {
             typeName = type;
         }
 
+        /**
+         * Creates a class provider binding a string token to a class.
+         *
+         * @param token provider token
+         * @param type Apex class to instantiate
+         */
         public ClassProvider(final String token, final Type type) {
             this(token, type?.getName());
         }
 
+        /**
+         * Creates a class provider binding a type token to a class name.
+         *
+         * @param token provider type token
+         * @param type fully qualified Apex class name to instantiate
+         */
         public ClassProvider(final Type token, final String type) {
             this(token?.getName(), type);
         }
 
+        /**
+         * Creates a class provider binding a type token to a class.
+         *
+         * @param token provider type token
+         * @param type Apex class to instantiate
+         */
         public ClassProvider(final Type token, final Type type) {
             this(token?.getName(), type?.getName());
         }
 
+        /**
+         * Instantiates the bound class.
+         *
+         * @param container owning container
+         * @param args must be null; class providers do not accept runtime arguments
+         * @return new instance of the bound class
+         * @throws InvalidProviderException when args is not null
+         */
         public override Object resolve(final Container container, final Object args) {
             isTrue(args == null, InvalidProviderException.class, ARGS_NOT_SUPPORTED_MESSAGE);
             return instantiate(typeName);
         }
 
+        /**
+         * Returns the bound class name.
+         *
+         * @return fully qualified class name
+         */
         public String getType() {
             return typeName;
         }
@@ -2509,18 +3488,43 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Provider that binds a token to a literal value and returns it on every resolution. Useful for
+     * configuration, feature flags, and test doubles.
+     */
     public virtual inherited sharing class ValueProvider extends Provider {
         protected final Object value;
 
+        /**
+         * Creates a value provider binding a string token to a value.
+         *
+         * @param token provider token
+         * @param value value to return on resolution
+         * @throws InvalidProviderException when token is null
+         */
         public ValueProvider(final String token, final Object value) {
             super(token);
             this.value = value;
         }
 
+        /**
+         * Creates a value provider binding a type token to a value.
+         *
+         * @param token provider type token
+         * @param value value to return on resolution
+         */
         public ValueProvider(final Type token, final Object value) {
             this(token?.getName(), value);
         }
 
+        /**
+         * Returns the bound value.
+         *
+         * @param container owning container
+         * @param args must be null; value providers do not accept runtime arguments
+         * @return the bound value
+         * @throws InvalidProviderException when args is not null
+         */
         public override Object resolve(final Container container, final Object args) {
             isTrue(args == null, InvalidProviderException.class, ARGS_NOT_SUPPORTED_MESSAGE);
             return value;
@@ -2531,9 +3535,21 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Provider that delegates construction to a `Di.Factory`. The factory receives the owning
+     * container and optional runtime arguments, so it can resolve collaborators and build
+     * configured instances.
+     */
     public virtual inherited sharing class FactoryProvider extends Provider {
         protected final Factory factory;
 
+        /**
+         * Creates a factory provider from a factory instance.
+         *
+         * @param token provider token
+         * @param factory factory that constructs the instance
+         * @throws InvalidProviderException when factory is null
+         */
         public FactoryProvider(final String token, final Factory factory) {
             super(token);
             isTrue(factory != null, InvalidProviderException.class, NULL_PROVIDER_FACTORY_MESSAGE);
@@ -2541,26 +3557,64 @@ public virtual inherited sharing class Di {
             this.factory = factory;
         }
 
+        /**
+         * Creates a factory provider from a factory class name.
+         *
+         * @param token provider token
+         * @param factoryType fully qualified `Di.Factory` class name
+         * @throws InvalidClassException when factoryType cannot be instantiated as a `Di.Factory`
+         */
         public FactoryProvider(final String token, final String factoryType) {
             this(token, validateFactory(instantiate(factoryType), factoryType, token));
         }
 
+        /**
+         * Creates a factory provider from a factory class.
+         *
+         * @param token provider token
+         * @param factoryType `Di.Factory` class
+         */
         public FactoryProvider(final String token, final Type factoryType) {
             this(token, factoryType?.getName());
         }
 
+        /**
+         * Creates a factory provider from a factory instance, with a type token.
+         *
+         * @param token provider type token
+         * @param factory factory that constructs the instance
+         */
         public FactoryProvider(final Type token, final Factory factory) {
             this(token?.getName(), factory);
         }
 
+        /**
+         * Creates a factory provider from a factory class name, with a type token.
+         *
+         * @param token provider type token
+         * @param factoryType fully qualified `Di.Factory` class name
+         */
         public FactoryProvider(final Type token, final String factoryType) {
             this(token?.getName(), factoryType);
         }
 
+        /**
+         * Creates a factory provider from a factory class, with a type token.
+         *
+         * @param token provider type token
+         * @param factoryType `Di.Factory` class
+         */
         public FactoryProvider(final Type token, final Type factoryType) {
             this(token?.getName(), factoryType);
         }
 
+        /**
+         * Delegates to the factory's `newInstance`.
+         *
+         * @param container owning container, passed to the factory
+         * @param args runtime arguments passed to the factory, or null
+         * @return instance produced by the factory
+         */
         public override Object resolve(final Container container, final Object args) {
             return factory.newInstance(container, args);
         }
@@ -2570,9 +3624,21 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Alias provider that redirects a token to another provider token. It is a redirect, not an
+     * executable provider: the target's scope and instance behavior apply. Resolve aliases through
+     * the container, not by calling `resolve()` directly.
+     */
     public virtual inherited sharing class ExistingProvider extends Provider {
         protected final String existing;
 
+        /**
+         * Creates an alias from a string token to a target token.
+         *
+         * @param token alias token
+         * @param existing target provider token
+         * @throws InvalidProviderException when token or existing is null
+         */
         public ExistingProvider(final String token, final String existing) {
             super(token);
             isTrue(existing != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
@@ -2580,22 +3646,53 @@ public virtual inherited sharing class Di {
             this.existing = existing;
         }
 
+        /**
+         * Creates an alias from a string token to a target type.
+         *
+         * @param token alias token
+         * @param existing target provider type
+         */
         public ExistingProvider(final String token, final Type existing) {
             this(token, existing?.getName());
         }
 
+        /**
+         * Creates an alias from a type token to a target token.
+         *
+         * @param token alias type token
+         * @param existing target provider token
+         */
         public ExistingProvider(final Type token, final String existing) {
             this(token?.getName(), existing);
         }
 
+        /**
+         * Creates an alias from a type token to a target type.
+         *
+         * @param token alias type token
+         * @param existing target provider type
+         */
         public ExistingProvider(final Type token, final Type existing) {
             this(token?.getName(), existing?.getName());
         }
 
+        /**
+         * Always throws: aliases are redirects resolved by the container, not directly.
+         *
+         * @param container owning container
+         * @param args ignored
+         * @return never returns
+         * @throws InvalidProviderException always
+         */
         public override Object resolve(final Container container, final Object args) {
             throw new InvalidProviderException(INVALID_OPERATION_MESSAGE);
         }
 
+        /**
+         * Returns the alias target token.
+         *
+         * @return target provider token
+         */
         public String getExisting() {
             return existing;
         }
@@ -2605,10 +3702,22 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Provider that resolves its configuration from `DI_Provider__mdt` (or a custom
+     * `MetadataSource`) by DeveloperName at resolution time, then delegates to the matching class,
+     * value, or factory provider. Its scope follows the metadata configuration.
+     */
     public virtual inherited sharing class CustomMetadataTypesProvider extends Provider {
         protected final String developerName;
 
         // <editor-fold desc="Provider API">
+        /**
+         * Creates a metadata provider bound to a `DI_Provider__mdt` DeveloperName.
+         *
+         * @param token provider token
+         * @param developerName `DI_Provider__mdt` DeveloperName
+         * @throws InvalidProviderException when developerName is blank
+         */
         public CustomMetadataTypesProvider(final String token, final String developerName) {
             super(token);
             isTrue(!String.isBlank(developerName), InvalidProviderException.class, INVALID_DEVELOPER_NAME_MESSAGE);
@@ -2616,10 +3725,25 @@ public virtual inherited sharing class Di {
             this.developerName = developerName;
         }
 
+        /**
+         * Returns the scope declared in metadata for the default context, or the configured scope
+         * when metadata does not specify one.
+         *
+         * @return effective scope
+         */
         public override Scope getScope() {
             return getScope(DEFAULT_CONTEXT);
         }
 
+        /**
+         * Reads the metadata definition and delegates to the matching class, value, or factory
+         * provider.
+         *
+         * @param container owning container, whose context supplies the metadata definition
+         * @param args runtime arguments for a factory definition; override metadata args when present
+         * @return resolved instance
+         * @throws InvalidProviderException when the metadata configuration is missing or invalid
+         */
         public override Object resolve(final Container container, final Object args) {
             ProviderDefinition definition = getDefinition(container.context);
             Scope scopeType = !String.isBlank(definition.scope) ? parseMetadataScope(definition) : super.getScope();
@@ -2651,6 +3775,12 @@ public virtual inherited sharing class Di {
             return provider.scope(scopeType).resolve(container, factoryArgs);
         }
 
+        /**
+         * Returns the alias target token when the metadata definition is an alias, using the
+         * default context, or null otherwise.
+         *
+         * @return alias target token, or null
+         */
         public String getExisting() {
             return getExisting(DEFAULT_CONTEXT);
         }
@@ -2710,6 +3840,14 @@ public virtual inherited sharing class Di {
         // </editor-fold>
     }
 
+    /**
+     * Root runtime container for a registered module. Created only by an `ApplicationContext`
+     * (`getModuleRef` / `addModule`), so registration, graph ownership, and singleton caching are
+     * committed together. Adds `createScope()` and cache administration to the `Container`
+     * resolution API. Root resolution rejects scoped providers.
+     *
+     * @see Di.ScopeRef
+     */
     public virtual class ModuleRef extends Container {
         protected String registryToken;
 
@@ -2720,20 +3858,48 @@ public virtual inherited sharing class Di {
         }
 
         // <editor-fold desc="Module API">
+        /**
+         * Creates a child scope with a fresh `ScopeContext` for resolving `SCOPED` providers as one
+         * unit of work.
+         *
+         * @return new scope handle
+         */
         public virtual ScopeRef createScope() {
             return createScope(new ScopeContext());
         }
 
+        /**
+         * Creates a child scope that joins a shared `ScopeContext`, so module refs in the same
+         * application context can share `SCOPED` instances within one unit of work.
+         *
+         * @param scopeContext shared scope context to join
+         * @return new scope handle
+         * @throws InvalidScopeException when scopeContext is null
+         */
         public virtual ScopeRef createScope(final ScopeContext scopeContext) {
             isTrue(scopeContext != null, InvalidScopeException.class, NULL_SCOPE_CONTEXT_MESSAGE);
             validateContextGeneration();
             return new ScopeRef(this, scopeContext);
         }
 
+        /**
+         * Creates a fresh instance for the token at the module root. See
+         * `Container.resolve(String, Object)`.
+         *
+         * @param token provider token to resolve
+         * @param args runtime arguments for a factory provider, or null
+         * @return resolved instance bound to token
+         */
         public virtual override Object resolve(final String token, final Object args) {
             return super.resolve(token, args);
         }
 
+        /**
+         * Clears this module's singleton cache, forcing singletons to be rebuilt on next
+         * resolution.
+         *
+         * @throws InvalidContextException when the handle belongs to a cleared lifecycle generation
+         */
         public virtual void clearCache() {
             validateContextGeneration();
             clearSingletons();
@@ -2820,6 +3986,18 @@ public virtual inherited sharing class Di {
         }
     }
 
+    /**
+     * Explicit cache for one logical scope (unit of work). `ModuleRef.createScope()` creates a
+     * fresh context; passing the same `ScopeContext` to several module refs lets them share
+     * `SCOPED` instances by owner module and provider token. A scope context binds to one
+     * application context and rejects cross-context reuse.
+     *
+     * @see Di.ScopeRef
+     * @example
+     * Di.ScopeContext unitOfWork = new Di.ScopeContext();
+     * Di.ScopeRef salesScope = salesRef.createScope(unitOfWork);
+     * Di.ScopeRef accountsScope = accountsRef.createScope(unitOfWork);
+     */
     public virtual class ScopeContext {
         private final Map<String, Map<String, Object>> scopedCacheByOwner = new Map<String, Map<String, Object>>();
         private ApplicationContext context;
@@ -2827,6 +4005,9 @@ public virtual inherited sharing class Di {
         private Integer generation = 0;
 
         // <editor-fold desc="Scope API">
+        /**
+         * Resets the shared unit of work: discards all `SCOPED` instances cached in this context.
+         */
         public virtual void clear() {
             scopedCacheByOwner.clear();
             graphRevision = context?.graphRevision;
@@ -2888,6 +4069,14 @@ public virtual inherited sharing class Di {
         // </editor-fold>
     }
 
+    /**
+     * Short-lived child container for a unit of work, created by `ModuleRef.createScope()`. Shares
+     * singleton identity with its parent module and caches `SCOPED` providers in its `ScopeContext`.
+     * Overrides the resolution API to synchronize the scope before each top-level call. A successful
+     * external graph mutation makes a held scope stale.
+     *
+     * @see Di.ScopeContext
+     */
     public virtual class ScopeRef extends Container {
         protected final ScopeContext scopeContext;
         protected final Map<String, ScopeRef> ownerScopes = new Map<String, ScopeRef>();
@@ -2902,6 +4091,14 @@ public virtual inherited sharing class Di {
         }
 
         // <editor-fold desc="Scope API">
+        /**
+         * Returns the cached instance for the token within this scope, synchronizing the scope
+         * first. See `Container.get(String, Object)`.
+         *
+         * @param token provider token to resolve
+         * @param args must be null
+         * @return cached instance bound to token
+         */
         public override Object get(final String token, final Object args) {
             validateContextGeneration();
             Boolean isTopLevelResolution = !inCall;
@@ -2917,6 +4114,14 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Creates a fresh instance for the token within this scope, synchronizing the scope first.
+         * See `Container.resolve(String, Object)`.
+         *
+         * @param token provider token to resolve
+         * @param args runtime arguments for a factory provider, or null
+         * @return resolved instance bound to token
+         */
         public override Object resolve(final String token, final Object args) {
             validateContextGeneration();
             Boolean isTopLevelResolution = !inCall;
@@ -2932,6 +4137,13 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Optional cached retrieval within this scope, or null when the token is not visible. See
+         * `Container.tryGet(String)`.
+         *
+         * @param token provider token to resolve
+         * @return cached instance bound to token, or null when token is not visible
+         */
         public override Object tryGet(final String token) {
             validateContextGeneration();
             Boolean isTopLevelResolution = !inCall;
@@ -2947,6 +4159,14 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Optional fresh resolution within this scope, or null when the token is not visible. See
+         * `Container.tryResolve(String, Object)`.
+         *
+         * @param token provider token to resolve
+         * @param args runtime arguments for a factory provider, or null
+         * @return resolved instance bound to token, or null when token is not visible
+         */
         public override Object tryResolve(final String token, final Object args) {
             validateContextGeneration();
             Boolean isTopLevelResolution = !inCall;
@@ -2962,6 +4182,12 @@ public virtual inherited sharing class Di {
             }
         }
 
+        /**
+         * Clears this scope's `SCOPED` instances and child owner scopes, resetting the unit of
+         * work.
+         *
+         * @throws InvalidContextException when the handle belongs to a cleared lifecycle generation
+         */
         public virtual void clearCache() {
             validateContextGeneration();
             scopeContext.clear();
@@ -3034,6 +4260,13 @@ public virtual inherited sharing class Di {
         // </editor-fold>
     }
 
+    /**
+     * Marker that records an intent to import a module into another module's graph. Created by
+     * `Di.import()` / `Module.import()` and `importMetadataModule()`. Inert until its owning module
+     * is registered; `.immediately()` requests eager registration.
+     *
+     * @see Di.Module
+     */
     public virtual class ModuleImport {
         protected ApplicationContext context;
         protected final String token;
@@ -3070,15 +4303,31 @@ public virtual inherited sharing class Di {
             cachedModule = module;
         }
 
+        /**
+         * Marks this import for eager registration when its owning module is registered, instead of
+         * lazy resolution on first use. A no-op on a standalone marker.
+         *
+         * @return this marker for fluent chaining
+         */
         public virtual ModuleImport immediately() {
             isEager = true;
             return this;
         }
 
+        /**
+         * Resolves and returns the imported module, registering it in the bound context if needed.
+         *
+         * @return the imported module
+         */
         public virtual Module resolve() {
             return context.resolveImport(this);
         }
 
+        /**
+         * Returns the imported module's token.
+         *
+         * @return module token
+         */
         public String getToken() {
             return token;
         }
@@ -3091,6 +4340,12 @@ public virtual inherited sharing class Di {
             return metadataImport ? token : null;
         }
 
+        /**
+         * Compares imports by token and metadata-import flag.
+         *
+         * @param obj object to compare
+         * @return true when obj is an equivalent import
+         */
         public Boolean equals(Object obj) {
             if (!(obj instanceof ModuleImport)) {
                 return false;
@@ -3099,29 +4354,75 @@ public virtual inherited sharing class Di {
             return other.getToken().equals(token) && other.isMetadataImport() == metadataImport;
         }
 
+        /**
+         * Returns a hash code consistent with `equals()`.
+         *
+         * @return hash code for this import
+         */
         public Integer hashCode() {
             return System.hashCode((metadataImport ? 'metadata:' : 'module:') + token);
         }
     }
 
+    /**
+     * Base class for all framework exceptions. Catch it to handle any Apex DI error.
+     */
     public virtual class DiException extends Exception {
     }
+
+    /**
+     * Thrown when a module token, instance, or registration is invalid, missing, or conflicting.
+     */
     public virtual class InvalidModuleException extends DiException {
     }
+
+    /**
+     * Thrown when a module token does not resolve to a registered or instantiable module.
+     */
     public virtual class UnknownModuleException extends DiException {
     }
+
+    /**
+     * Thrown when no visible provider matches a requested token.
+     */
     public virtual class UnknownProviderException extends DiException {
     }
+
+    /**
+     * Thrown when a module exports or re-exports a token it does not provide.
+     */
     public virtual class UnknownExportException extends DiException {
     }
+
+    /**
+     * Thrown when a provider is misconfigured or misused, including ambiguous bindings and runtime
+     * arguments passed to a non-factory provider.
+     */
     public virtual class InvalidProviderException extends DiException {
     }
+
+    /**
+     * Thrown when a class or factory cannot be instantiated or is not the expected type.
+     */
     public virtual class InvalidClassException extends DiException {
     }
+
+    /**
+     * Thrown on scope violations, such as a null scope, getting a prototype, or resolving a scoped
+     * provider at the module root.
+     */
     public virtual class InvalidScopeException extends DiException {
     }
+
+    /**
+     * Thrown when a handle from a cleared or superseded lifecycle generation is used.
+     */
     public virtual class InvalidContextException extends DiException {
     }
+
+    /**
+     * Thrown when an unresolvable circular dependency is detected during resolution or compilation.
+     */
     public virtual class CircularDependencyException extends DiException {
     }
 
@@ -3204,10 +4505,20 @@ public virtual inherited sharing class Di {
             this.delegate = delegate;
         }
 
+        /**
+         * Returns overridden module definitions, or delegates when no override is active.
+         *
+         * @return normalized metadata module definitions
+         */
         public Map<String, MetadataModuleDefinition> getModules() {
             return modules ?? delegate.getModules();
         }
 
+        /**
+         * Returns overridden provider definitions, or delegates when no override is active.
+         *
+         * @return normalized metadata provider definitions
+         */
         public Map<String, ProviderDefinition> getProviders() {
             return providers ?? delegate.getProviders();
         }
