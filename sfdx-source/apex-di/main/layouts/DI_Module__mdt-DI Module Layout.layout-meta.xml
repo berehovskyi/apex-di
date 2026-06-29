@@ -24,7 +24,7 @@
             </layoutItems>
             <layoutItems>
                 <behavior>Required</behavior>
-                <field>ModuleClass__c</field>
+                <field>Class__c</field>
             </layoutItems>
         </layoutColumns>
         <layoutColumns>

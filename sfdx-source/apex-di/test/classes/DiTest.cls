@@ -1336,7 +1336,7 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'SelectedLocal',
-                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    Class__c = MetadataSelectedModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = false
                 )
@@ -1375,7 +1375,7 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'SelectedImport',
-                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    Class__c = MetadataSelectedModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = false
                 )
@@ -1406,13 +1406,13 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'GlobalSelection',
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    Class__c = CmtGlobalModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = true
                 ),
                 new DI_Module__mdt(
                     DeveloperName = 'LocalSelection',
-                    ModuleClass__c = MetadataConstructionCountingModule.class.getName(),
+                    Class__c = MetadataConstructionCountingModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = false
                 )
@@ -1441,13 +1441,13 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'SelectedA',
-                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    Class__c = MetadataSelectedModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = false
                 ),
                 new DI_Module__mdt(
                     DeveloperName = 'SelectedB',
-                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    Class__c = MetadataSelectedModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = false
                 )
@@ -1474,7 +1474,7 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'GlobalConflict',
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    Class__c = CmtGlobalModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = true
                 )
@@ -1500,7 +1500,7 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'InactiveModule',
-                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    Class__c = MetadataSelectedModule.class.getName(),
                     IsActive__c = false,
                     IsGlobal__c = false
                 )
@@ -1534,7 +1534,7 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'BrokenSelection',
-                    ModuleClass__c = LocalErrorModule.class.getName(),
+                    Class__c = LocalErrorModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = false
                 )
@@ -1565,13 +1565,13 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'AExistingAlias',
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
+                    Class__c = CmtGlobalModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = true
                 ),
                 new DI_Module__mdt(
                     DeveloperName = 'ZMissingAlias',
-                    ModuleClass__c = 'DiTest.MissingMetadataModule',
+                    Class__c = 'DiTest.MissingMetadataModule',
                     IsActive__c = true,
                     IsGlobal__c = true
                 )
@@ -1600,7 +1600,7 @@ private class DiTest {
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
                     DeveloperName = 'StaticSelection',
-                    ModuleClass__c = MetadataSelectedModule.class.getName(),
+                    Class__c = MetadataSelectedModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = false
                 )
@@ -2850,11 +2850,7 @@ private class DiTest {
         Di.ApplicationContext context = newTestContext();
         context.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
         context.addModule(new EmptyModule());
@@ -3046,11 +3042,7 @@ private class DiTest {
         // Arrange: A mock CMT record is created to define a global module.
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);
@@ -3134,14 +3126,11 @@ private class DiTest {
     @IsTest
     static void should_allow_long_class_names_when_global_module_is_stored_in_metadata() {
         // Arrange: Namespaced and inner Apex class names can exceed short text limits.
-        Integer moduleClassLength = DI_Module__mdt.ModuleClass__c.getDescribe().getLength();
+        Integer moduleClassLength = DI_Module__mdt.Class__c.getDescribe().getLength();
 
         // Act: The metadata field should support long fully-qualified class names.
         // Assert: Verify the expected outcome.
-        Assert.isTrue(
-            moduleClassLength >= 255,
-            'ModuleClass__c should allow long namespaced or inner module class names.'
-        );
+        Assert.isTrue(moduleClassLength >= 255, 'Class__c should allow long namespaced or inner module class names.');
     }
 
     @IsTest
@@ -3150,16 +3139,8 @@ private class DiTest {
         Di.ModuleRef consumerRef = Di.addModule(new EmptyModule());
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                ),
-                new DI_Module__mdt(
-                    ModuleClass__c = 'DiTest.MissingGlobalModule',
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true),
+                new DI_Module__mdt(Class__c = 'DiTest.MissingGlobalModule', IsActive__c = true, IsGlobal__c = true)
             }
         );
 
@@ -3188,11 +3169,7 @@ private class DiTest {
         // Act: Corrected metadata in the same transaction should retry and load successfully.
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
         Di.getModuleRef(CmtGlobalModule.class.getName());
@@ -3211,7 +3188,7 @@ private class DiTest {
         Di.mockModules(
             new List<DI_Module__mdt>{
                 new DI_Module__mdt(
-                    ModuleClass__c = OverrideGlobalModule.class.getName(),
+                    Class__c = OverrideGlobalModule.class.getName(),
                     IsActive__c = true,
                     IsGlobal__c = true
                 )
@@ -3231,11 +3208,7 @@ private class DiTest {
         // Arrange: A global module is added via mocked CMT, and its providers are resolved to trigger loading.
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
         Di.getModuleRef(EmptyModule.class).get('cmtGlobalVal');
@@ -3258,11 +3231,7 @@ private class DiTest {
         // Arrange: A global module is loaded via CMT mock, and its ref is retrieved once to ensure it's in the registry.
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
         Di.ModuleRef ref1 = Di.getModuleRef(CmtGlobalModule.class.getName());
@@ -3279,11 +3248,7 @@ private class DiTest {
         // Arrange: A global module is defined via CMT mock, but lookup passes a separate equivalent instance.
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
 
@@ -3320,7 +3285,7 @@ private class DiTest {
     static void should_reset_global_loading_flag_when_context_is_cleared() {
         // Arrange: Mock and Load
         Di.mockModules(
-            new List<DI_Module__mdt>{ new DI_Module__mdt(DeveloperName = 'M', ModuleClass__c = 'DiTest.EmptyModule') }
+            new List<DI_Module__mdt>{ new DI_Module__mdt(DeveloperName = 'M', Class__c = 'DiTest.EmptyModule') }
         );
         Di.getModuleRef(EmptyModule.class);
 
@@ -3815,11 +3780,7 @@ private class DiTest {
         Di.addModule(new ValueModule());
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
         Assert.areEqual(
@@ -4094,11 +4055,7 @@ private class DiTest {
         Di.ApplicationContext rightContext = newTestContext();
         leftContext.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
 
@@ -4454,11 +4411,7 @@ private class DiTest {
         // Arrange: A global module is loaded via CMT mock and its provider is verified.
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = true,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = true, IsGlobal__c = true)
             }
         );
         Assert.areEqual('helloFromCmt', Di.getModuleRef(EmptyModule.class).get('cmtGlobalVal'));
@@ -4516,11 +4469,7 @@ private class DiTest {
         // Arrange: A global module is defined as inactive in a mocked CMT record.
         Di.mockModules(
             new List<DI_Module__mdt>{
-                new DI_Module__mdt(
-                    ModuleClass__c = CmtGlobalModule.class.getName(),
-                    IsActive__c = false,
-                    IsGlobal__c = true
-                )
+                new DI_Module__mdt(Class__c = CmtGlobalModule.class.getName(), IsActive__c = false, IsGlobal__c = true)
             }
         );
         Di.ModuleRef consumerRef = Di.getModuleRef(EmptyModule.class);

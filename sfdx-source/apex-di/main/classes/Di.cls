@@ -251,7 +251,7 @@ public virtual inherited sharing class Di {
                 developerName,
                 new MetadataModuleDefinition(
                     row.DeveloperName ?? developerName,
-                    row.ModuleClass__c,
+                    row.Class__c,
                     row.IsActive__c,
                     row.IsGlobal__c
                 )
@@ -268,7 +268,7 @@ public virtual inherited sharing class Di {
         }
         Map<String, DI_Module__mdt> metadataByDeveloperName = new Map<String, DI_Module__mdt>();
         for (DI_Module__mdt row : metadata) {
-            String developerName = row.DeveloperName ?? row.ModuleClass__c;
+            String developerName = row.DeveloperName ?? row.Class__c;
             metadataByDeveloperName.put(developerName, row);
         }
         return normalizeModuleDefinitions(metadataByDeveloperName);
