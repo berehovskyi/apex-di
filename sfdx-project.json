@@ -1,12 +1,16 @@
 {
     "packageDirectories": [
         {
+            "versionName": "ver 0.1",
+            "versionNumber": "0.1.0.NEXT",
             "path": "sfdx-source/apex-di",
-            "package": "apex-di",
-            "versionName": "ver 0.0.1",
-            "versionNumber": "0.0.1.NEXT",
-            "default": true
+            "default": true,
+            "package": "apex-di"
         }
     ],
-    "name": "apex-di"
+    "name": "apex-di",
+    "packageAliases": {
+        "apex-di": "0Hofj00000025MzCAI",
+        "apex-di@latest": "04tfj000000LjuzAAC"
+    }
 }

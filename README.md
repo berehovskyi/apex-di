@@ -1,5 +1,9 @@
 # Apex DI
 
+![](https://img.shields.io/github/v/release/berehovskyi/apex-di?include_prereleases)
+[![build](https://github.com/berehovskyi/apex-di/actions/workflows/validate.yml/badge.svg?branch=main&event=push)](https://github.com/berehovskyi/apex-di/actions/workflows/validate.yml)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fberehovskyi%2Fapex-di%2Fcoverage%2Fcoverage.json)](https://github.com/berehovskyi/apex-di/actions/workflows/validate.yml)
+
 A modular, NestJS-inspired dependency injection framework for Salesforce Apex.
 
 Apex DI lets you organize application code into modules, bind tokens to providers, and resolve services through a module-aware container. It is designed for Apex's transaction model: setup happens inside one transaction, provider instances are cached only inside that transaction, and module graphs can be isolated with explicit [application contexts](#application-context).
@@ -56,6 +60,7 @@ Apex DI lets you organize application code into modules, bind tokens to provider
     - [Exceptions](#exceptions)
 - [Testing](#testing)
 - [Design Notes](#design-notes)
+- [Documentation](#documentation)
 
 ## Installation
 
@@ -68,7 +73,7 @@ sf project deploy start -d sfdx-source/apex-di -o <org-alias>
 Or install as an unlocked package:
 
 ```sh pkg::apex-di
-sf package install -p <package-version-id> -o <org-alias> -r -w 10
+sf package install -p 04tfj000000LjuzAAC -o <org-alias> -r -w 10
 ```
 
 ## Quick Start
@@ -1011,3 +1016,7 @@ Prefer explicit contexts for most metadata tests. Use default-context metadata m
 - Keep graph mutation at application boundaries. Once a context has started resolving providers, replace modules or providers only between top-level resolutions and reacquire refs afterward.
 - Keep provider tokens stable and intentional. Prefer `Type` tokens for Apex interfaces and classes, and use string tokens for configuration values or deliberate aliases.
 - Keep factories for construction that is genuinely dynamic. If a provider only needs other providers, a class provider with `Di.Injectable` is usually easier to validate, explain, and refactor.
+
+## Documentation
+
+- [Apex Documentation](/docs/index.md).

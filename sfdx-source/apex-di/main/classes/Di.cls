@@ -171,7 +171,7 @@ public inherited sharing class Di {
      *
      * @param token module token, typically an Apex class name
      * @return runtime handle for the module
-     * @throws InvalidModuleException when token is null or the class is not a `Di.Module`
+     * @throws InvalidModuleException when token is null or the class is not a Di.Module
      * @throws UnknownModuleException when no Apex type matches token
      */
     public static ModuleRef getModuleRef(final String token) {
@@ -184,7 +184,7 @@ public inherited sharing class Di {
      *
      * @param moduleType module class
      * @return runtime handle for the module
-     * @throws InvalidModuleException when moduleType is null or does not name a `Di.Module`
+     * @throws InvalidModuleException when moduleType is null or does not name a Di.Module
      * @throws UnknownModuleException when the type cannot be resolved
      * @example
      * Di.ModuleRef ref = Di.getModuleRef(AppModule.class);
@@ -1255,7 +1255,7 @@ public inherited sharing class Di {
          * @return cached instance bound to token
          * @throws InvalidProviderException when args is not null
          * @throws UnknownProviderException when no visible provider matches token
-         * @throws InvalidScopeException when the provider is `PROTOTYPE`
+         * @throws InvalidScopeException when the provider is PROTOTYPE
          */
         public virtual Object get(final String token, final Object args) {
             isTrue(args == null, InvalidProviderException.class, GET_ARGS_NOT_SUPPORTED_MESSAGE);
@@ -1283,7 +1283,7 @@ public inherited sharing class Di {
          * @param token provider token to resolve
          * @return cached instance bound to token
          * @throws UnknownProviderException when no visible provider matches token
-         * @throws InvalidScopeException when the provider is `PROTOTYPE`
+         * @throws InvalidScopeException when the provider is PROTOTYPE
          */
         public virtual Object get(final String token) {
             return get(token, null);
@@ -1467,7 +1467,7 @@ public inherited sharing class Di {
          *
          * @param instance object to inject dependencies into
          * @return the same instance, wired
-         * @throws InvalidClassException when instance does not implement `Di.Injectable`
+         * @throws InvalidClassException when instance does not implement Di.Injectable
          * @example
          * OrderService service = new OrderService();
          * ref.inject(service);
@@ -2162,7 +2162,7 @@ public inherited sharing class Di {
          *
          * @param token module token, typically an Apex class name
          * @return runtime handle for the module
-         * @throws InvalidModuleException when token is null or the class is not a `Di.Module`
+         * @throws InvalidModuleException when token is null or the class is not a Di.Module
          * @throws UnknownModuleException when no Apex type matches token
          */
         public ModuleRef getModuleRef(final String token) {
@@ -2183,7 +2183,7 @@ public inherited sharing class Di {
          *
          * @param moduleType module class
          * @return runtime handle for the module
-         * @throws InvalidModuleException when moduleType is null or does not name a `Di.Module`
+         * @throws InvalidModuleException when moduleType is null or does not name a Di.Module
          * @throws UnknownModuleException when the type cannot be resolved
          */
         public ModuleRef getModuleRef(final Type moduleType) {
@@ -3542,7 +3542,7 @@ public inherited sharing class Di {
          *
          * @param token provider token
          * @param factoryType fully qualified `Di.Factory` class name
-         * @throws InvalidClassException when factoryType cannot be instantiated as a `Di.Factory`
+         * @throws InvalidClassException when factoryType cannot be instantiated as a Di.Factory
          */
         public FactoryProvider(final String token, final String factoryType) {
             this(token, validateFactory(instantiate(factoryType), factoryType, token));
