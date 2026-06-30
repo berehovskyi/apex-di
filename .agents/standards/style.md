@@ -146,35 +146,37 @@ ctx.getTriggerId();
 
 - Keep class elements in this order:
 
-1. `public static final` constants
-2. `public static` fields
-3. `public final` fields
-4. `public` fields
-5. `private static final` constants
-6. `private static` fields
-7. `private final` fields
-8. `private` fields
-9. public accessors
-10. private accessors
-11. public constructors
-12. protected constructors
-13. private constructors
-14. public static methods
-15. public abstract methods
-16. public virtual methods
-17. public non-virtual methods
-18. protected abstract methods
-19. private static methods
-20. private virtual methods
-21. private non-virtual methods
-22. public enums
-23. public inner interfaces
-24. public abstract classes
-25. public classes
-26. private enums
-27. private inner interfaces
-28. private abstract classes
-29. private classes
+1. public static final constants
+2. public static fields
+3. public final fields
+4. public fields
+5. protected final fields
+6. protected fields
+7. private static final constants
+8. private static fields
+9. private final fields
+10. private fields
+11. public accessors
+12. private accessors
+13. public constructors
+14. protected constructors
+15. private constructors
+16. public static methods
+17. public abstract methods
+18. public virtual methods
+19. public non-virtual methods
+20. protected abstract methods
+21. private static methods
+22. private virtual methods
+23. private non-virtual methods
+24. public enums
+25. public inner interfaces
+26. public abstract classes
+27. public classes
+28. private enums
+29. private inner interfaces
+30. private abstract classes
+31. private classes
 
 - If a class has both public and private methods, separate them with named
   sections. Prefer specific public section names such as `Queries`, `DMLs`,

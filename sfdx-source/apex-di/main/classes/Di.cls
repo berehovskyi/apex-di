@@ -1,5 +1,5 @@
 /**
- * NestJS-inspired dependency injection framework for Apex. `Di` is the single public facade:
+ * `Di` is the single public facade:
  * it organizes code into modules, binds tokens to providers, and resolves services through
  * module-aware containers. Static methods delegate to a shared default `ApplicationContext`;
  * use `createContext()` to isolate independent graphs in the same transaction.
@@ -13,10 +13,18 @@
  * @see Di.ModuleRef
  * @see Di.Provider
  * @example
+ * public class AccountsModule extends Di.Module {
+ *     public override Set<Di.Provider> providers() {
+ *         return new Set<Di.Provider>{
+ *             provide(AccountService.class).useClass(StdAccountService.class)
+ *         };
+ *     }
+ * }
+ *
  * Di.ModuleRef ref = Di.getModuleRef(AccountsModule.class);
  * AccountService service = (AccountService) ref.get(AccountService.class);
  */
-public virtual inherited sharing class Di {
+public inherited sharing class Di {
     private static final String INVALID_CLASS_MESSAGE = 'Cannot instantiate class "{0}". Please ensure this class exists and is accessible.';
     private static final String INVALID_PROVIDER_TYPE_MESSAGE = 'Cannot create provider for "{0}". The provider type cannot be null.';
     private static final String INSTANTIATION_FAILED_MESSAGE =
@@ -43,8 +51,7 @@ public virtual inherited sharing class Di {
         'A module with name "{0}" has already been ' +
         'registered. Use replaceModule() to override an existing module.';
     private static final String MODULE_VISIBILITY_CONFLICT_MESSAGE = 'Cannot register module "{0}" as {1}. The canonical module token is already registered as {2}.';
-    private static final String MODULE_TOKEN_MISMATCH_MESSAGE =
-        'Cannot replace module "{0}" with module "{1}". ' + 'The replacement module token must match the target token.';
+    private static final String MODULE_TOKEN_MISMATCH_MESSAGE = 'Cannot replace module "{0}" with module "{1}". The replacement module token must match the target token.';
     private static final String MODULE_CONTEXT_MISMATCH_MESSAGE =
         'Module instance "{0}" is already registered in another application context. ' +
         'Create a separate module instance per context.';
@@ -1217,11 +1224,11 @@ public virtual inherited sharing class Di {
      * @see Di.ScopeRef
      */
     public abstract inherited sharing class Container {
+        protected final List<String> resolutionPath = new List<String>();
+        private final Integer contextGeneration;
         protected ApplicationContext context;
         protected Container parent;
-        protected final List<String> resolutionPath = new List<String>();
         protected Boolean inCall = false;
-        private final Integer contextGeneration;
         private ModuleRuntime runtime;
         private Map<String, ResolvedPlan> resolutionMemo;
 
@@ -1252,30 +1259,11 @@ public virtual inherited sharing class Di {
          */
         public virtual Object get(final String token, final Object args) {
             isTrue(args == null, InvalidProviderException.class, GET_ARGS_NOT_SUPPORTED_MESSAGE);
-            if (inCall) {
-                return getInternal(token, args);
+            if (!inCall && canUseCachedSingletonFastPath(token)) {
+                validateContextGeneration();
+                return getSingleton(token);
             }
-
-            if (resolutionMemo != null) {
-                ResolvedPlan plan = resolutionMemo.get(token);
-                if (
-                    plan != null &&
-                    plan.graphRevision == context.graphRevision &&
-                    plan.owner === this &&
-                    plan.scope == Scope.SINGLETON &&
-                    hasSingleton(token)
-                ) {
-                    validateContextGeneration();
-                    return getSingleton(token);
-                }
-            }
-
-            startResolution();
-            try {
-                return getInternal(token, args);
-            } finally {
-                endResolution();
-            }
+            return executeResolution(token, args, false, false);
         }
 
         /**
@@ -1322,16 +1310,7 @@ public virtual inherited sharing class Di {
          * @return cached instance bound to token, or null when token is not visible
          */
         public virtual Object tryGet(final String token) {
-            if (inCall) {
-                return getRuntimeModule().hasVisibleProviderBinding(token) ? getInternal(token, null) : null;
-            }
-
-            startResolution();
-            try {
-                return getRuntimeModule().hasVisibleProviderBinding(token) ? getInternal(token, null) : null;
-            } finally {
-                endResolution();
-            }
+            return executeResolution(token, null, false, true);
         }
 
         /**
@@ -1358,16 +1337,7 @@ public virtual inherited sharing class Di {
          * HttpClient client = (HttpClient) ref.resolve(HttpClient.class, new Map<String, Object>{ 'timeoutMs' => 5000 });
          */
         public virtual Object resolve(final String token, final Object args) {
-            if (inCall) {
-                return resolveInternal(token, args);
-            }
-
-            startResolution();
-            try {
-                return resolveInternal(token, args);
-            } finally {
-                endResolution();
-            }
+            return executeResolution(token, args, true, false);
         }
 
         /**
@@ -1412,16 +1382,7 @@ public virtual inherited sharing class Di {
          * @return resolved instance bound to token, or null when token is not visible
          */
         public virtual Object tryResolve(final String token, final Object args) {
-            if (inCall) {
-                return getRuntimeModule().hasVisibleProviderBinding(token) ? resolveInternal(token, args) : null;
-            }
-
-            startResolution();
-            try {
-                return getRuntimeModule().hasVisibleProviderBinding(token) ? resolveInternal(token, args) : null;
-            } finally {
-                endResolution();
-            }
+            return executeResolution(token, args, true, true);
         }
 
         /**
@@ -1551,65 +1512,42 @@ public virtual inherited sharing class Di {
         }
 
         protected virtual Object getInternal(final String token, final Object args) {
-            validateAndAddPath(token);
-            try {
-                ResolvedPlan plan = memoizedPlan(token);
-                if (plan != null) {
-                    isTrue(
-                        plan.scope !== Scope.PROTOTYPE,
-                        InvalidScopeException.class,
-                        PROTOTYPE_SCOPE_ERROR_MESSAGE,
-                        new List<String>{ token }
-                    );
-                    return getInstanceFrom(getResolutionContainer(plan.owner), plan.provider, args);
-                }
-                ProviderBinding binding = getRuntimeProviderBinding(token);
-                Provider provider = binding.getProvider();
-                isTrue(
-                    getProviderScope(provider) !== Scope.PROTOTYPE,
-                    InvalidScopeException.class,
-                    PROTOTYPE_SCOPE_ERROR_MESSAGE,
-                    new List<String>{ provider.getToken() }
-                );
-
-                Container resolutionContainer = getResolutionContainer(binding.getOwner());
-                if (provider instanceof ExistingProvider) {
-                    return getInternalFrom(resolutionContainer, ((ExistingProvider) provider).getExisting(), args);
-                }
-                if (provider instanceof CustomMetadataTypesProvider) {
-                    String existing = ((CustomMetadataTypesProvider) provider).getExisting(context);
-                    if (existing != null) {
-                        return getInternalFrom(resolutionContainer, existing, args);
-                    }
-                }
-                memoizePlan(token, provider, binding.getOwner());
-                return getInstanceFrom(resolutionContainer, provider, args);
-            } finally {
-                popIfMatches(token);
-            }
+            return resolveInternal(token, args, false);
         }
 
         protected virtual Object resolveInternal(final String token, final Object args) {
+            return resolveInternal(token, args, true);
+        }
+
+        private Object resolveInternal(final String token, final Object args, final Boolean isResolve) {
             validateAndAddPath(token);
             try {
                 ResolvedPlan plan = memoizedPlan(token);
                 if (plan != null) {
-                    return resolveInstanceFrom(getResolutionContainer(plan.owner), plan.provider, args);
+                    rejectPrototypeGet(token, plan.scope, isResolve);
+                    return resolveProviderFrom(getResolutionContainer(plan.owner), plan.provider, args, isResolve);
                 }
                 ProviderBinding binding = getRuntimeProviderBinding(token);
                 Provider provider = binding.getProvider();
+                Scope providerScope = getProviderScope(provider);
+                rejectPrototypeGet(provider.getToken(), providerScope, isResolve);
                 Container resolutionContainer = getResolutionContainer(binding.getOwner());
                 if (provider instanceof ExistingProvider) {
-                    return resolveInternalFrom(resolutionContainer, ((ExistingProvider) provider).getExisting(), args);
+                    return resolveInternalFrom(
+                        resolutionContainer,
+                        ((ExistingProvider) provider).getExisting(),
+                        args,
+                        isResolve
+                    );
                 }
                 if (provider instanceof CustomMetadataTypesProvider) {
                     String existing = ((CustomMetadataTypesProvider) provider).getExisting(context);
                     if (existing != null) {
-                        return resolveInternalFrom(resolutionContainer, existing, args);
+                        return resolveInternalFrom(resolutionContainer, existing, args, isResolve);
                     }
                 }
                 memoizePlan(token, provider, binding.getOwner());
-                return resolveInstanceFrom(resolutionContainer, provider, args);
+                return resolveProviderFrom(resolutionContainer, provider, args, isResolve);
             } finally {
                 popIfMatches(token);
             }
@@ -1736,65 +1674,107 @@ public virtual inherited sharing class Di {
             }
         }
 
-        private Object getInternalFrom(final Container target, final String token, final Object args) {
-            if (target === this) {
-                return getInternal(token, args);
+        private Object executeResolution(
+            final String token,
+            final Object args,
+            final Boolean isResolve,
+            final Boolean isOptional
+        ) {
+            if (inCall) {
+                return resolveCore(token, args, isResolve, isOptional);
             }
-            return target.getInternalWithContext(token, args, this);
+
+            startResolution();
+            try {
+                return resolveCore(token, args, isResolve, isOptional);
+            } finally {
+                endResolution();
+            }
         }
 
-        private Object resolveInternalFrom(final Container target, final String token, final Object args) {
-            if (target === this) {
-                return resolveInternal(token, args);
+        private Object resolveCore(
+            final String token,
+            final Object args,
+            final Boolean isResolve,
+            final Boolean isOptional
+        ) {
+            if (isOptional == true && !getRuntimeModule().hasVisibleProviderBinding(token)) {
+                return null;
             }
-            return target.resolveInternalWithContext(token, args, this);
+            return isResolve == true ? resolveInternal(token, args) : getInternal(token, args);
         }
 
-        private Object getInstanceFrom(final Container target, final Provider provider, final Object args) {
-            if (target === this) {
-                return getInstance(provider, args);
+        private Boolean canUseCachedSingletonFastPath(final String token) {
+            if (resolutionMemo == null) {
+                return false;
             }
-            return target.getInstanceWithContext(provider, args, this);
+            ResolvedPlan plan = resolutionMemo.get(token);
+            return plan != null &&
+                plan.graphRevision == context.graphRevision &&
+                plan.owner === this &&
+                plan.scope == Scope.SINGLETON &&
+                hasSingleton(token);
         }
 
-        private Object resolveInstanceFrom(final Container target, final Provider provider, final Object args) {
-            if (target === this) {
-                return resolveInstance(provider, args);
+        private void rejectPrototypeGet(final String token, final Scope scopeType, final Boolean isResolve) {
+            if (isResolve == true) {
+                return;
             }
-            return target.resolveInstanceWithContext(provider, args, this);
+            isTrue(
+                scopeType !== Scope.PROTOTYPE,
+                InvalidScopeException.class,
+                PROTOTYPE_SCOPE_ERROR_MESSAGE,
+                new List<String>{ token }
+            );
         }
 
-        private Object getInternalWithContext(final String token, final Object args, final Container source) {
+        private Object resolveInternalFrom(
+            final Container target,
+            final String token,
+            final Object args,
+            final Boolean isResolve
+        ) {
+            if (target === this) {
+                return isResolve == true ? resolveInternal(token, args) : getInternal(token, args);
+            }
+            return target.resolveInternalWithContext(token, args, this, isResolve);
+        }
+
+        private Object resolveProviderFrom(
+            final Container target,
+            final Provider provider,
+            final Object args,
+            final Boolean isResolve
+        ) {
+            if (target === this) {
+                return isResolve == true ? resolveInstance(provider, args) : getInstance(provider, args);
+            }
+            return target.resolveProviderWithContext(provider, args, this, isResolve);
+        }
+
+        private Object resolveInternalWithContext(
+            final String token,
+            final Object args,
+            final Container source,
+            final Boolean isResolve
+        ) {
             ResolutionContext previous = inheritResolutionContext(source);
             try {
-                return getInternal(token, args);
+                return isResolve == true ? resolveInternal(token, args) : getInternal(token, args);
             } finally {
                 restoreResolutionContext(previous);
             }
         }
 
-        private Object resolveInternalWithContext(final String token, final Object args, final Container source) {
+        private Object resolveProviderWithContext(
+            final Provider provider,
+            final Object args,
+            final Container source,
+            final Boolean isResolve
+        ) {
             ResolutionContext previous = inheritResolutionContext(source);
             try {
-                return resolveInternal(token, args);
-            } finally {
-                restoreResolutionContext(previous);
-            }
-        }
-
-        private Object getInstanceWithContext(final Provider provider, final Object args, final Container source) {
-            ResolutionContext previous = inheritResolutionContext(source);
-            try {
-                return getInstance(provider, args);
-            } finally {
-                restoreResolutionContext(previous);
-            }
-        }
-
-        private Object resolveInstanceWithContext(final Provider provider, final Object args, final Container source) {
-            ResolutionContext previous = inheritResolutionContext(source);
-            try {
-                return resolveInstance(provider, args);
+                return isResolve == true ? resolveInstance(provider, args) : getInstance(provider, args);
             } finally {
                 restoreResolutionContext(previous);
             }
@@ -1864,7 +1844,7 @@ public virtual inherited sharing class Di {
      * Normalized definition of a metadata-selected module, decoupled from `DI_Module__mdt`. Supply
      * these from a custom `MetadataSource`, for example in tests.
      */
-    public class MetadataModuleDefinition {
+    public inherited sharing class MetadataModuleDefinition {
         /** DeveloperName alias that selects this module. */
         public final String developerName;
         /** Fully qualified Apex module class name. */
@@ -1899,7 +1879,7 @@ public virtual inherited sharing class Di {
      * Normalized definition of a metadata-backed provider, decoupled from `DI_Provider__mdt`.
      * Supply these from a custom `MetadataSource`.
      */
-    public class ProviderDefinition {
+    public inherited sharing class ProviderDefinition {
         /** DeveloperName of the provider configuration. */
         public final String developerName;
         /** Provider kind keyword, for example `Class`, `Value`, `Factory`, or `Existing`. */
@@ -1947,7 +1927,7 @@ public virtual inherited sharing class Di {
      * @see Di.ResolutionStatus
      * @see Di.ResolutionSource
      */
-    public class ResolutionExplanation {
+    public inherited sharing class ResolutionExplanation {
         /** Token that was explained. */
         public final String token;
         /** Token of the module the explanation was requested from. */
@@ -1989,7 +1969,7 @@ public virtual inherited sharing class Di {
     /**
      * Immutable snapshot of a context's registered modules and providers, returned by `describe()`.
      */
-    public class ContextDescription {
+    public inherited sharing class ContextDescription {
         /** Whether the context graph has been compiled. */
         public final Boolean isCompiled;
         /** Descriptions of registered modules. */
@@ -2004,7 +1984,7 @@ public virtual inherited sharing class Di {
     /**
      * Immutable snapshot of one registered module within a `ContextDescription`.
      */
-    public class ModuleDescription {
+    public inherited sharing class ModuleDescription {
         /** Module token. */
         public final String token;
         /** Whether the module is registered globally. */
@@ -2043,7 +2023,7 @@ public virtual inherited sharing class Di {
      * Immutable snapshot of one provider within a `ModuleDescription`. Exposes structure only,
      * never values, factory instances, or caches.
      */
-    public class ProviderDescription {
+    public inherited sharing class ProviderDescription {
         /** Provider token. */
         public final String token;
         /** Provider strategy kind. */
@@ -2077,7 +2057,7 @@ public virtual inherited sharing class Di {
     /**
      * Immutable snapshot of one module import or re-export within a `ModuleDescription`.
      */
-    public class ModuleImportDescription {
+    public inherited sharing class ModuleImportDescription {
         /** Imported module token. */
         public final String token;
         /** Whether the import is marked for eager registration. */
@@ -2105,7 +2085,7 @@ public virtual inherited sharing class Di {
      * @see Di.ModuleRef
      * @see Di.MetadataSource
      */
-    public virtual class ApplicationContext {
+    public inherited sharing class ApplicationContext {
         private final Map<String, ModuleRef> moduleRegistry = new Map<String, ModuleRef>();
         private final Map<String, ModuleRef> globalModuleRegistry = new Map<String, ModuleRef>();
         private final Map<String, ProviderBinding> globalProviderBindings = new Map<String, ProviderBinding>();
@@ -2158,7 +2138,7 @@ public virtual inherited sharing class Di {
          * @return runtime handle for the module
          * @throws InvalidModuleException when a different instance is already registered under the same token
          */
-        public virtual ModuleRef getModuleRef(final Module module) {
+        public ModuleRef getModuleRef(final Module module) {
             isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
 
             String token = module.getToken();
@@ -2185,7 +2165,7 @@ public virtual inherited sharing class Di {
          * @throws InvalidModuleException when token is null or the class is not a `Di.Module`
          * @throws UnknownModuleException when no Apex type matches token
          */
-        public virtual ModuleRef getModuleRef(final String token) {
+        public ModuleRef getModuleRef(final String token) {
             isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
 
             ModuleRef ref = findModuleRef(token);
@@ -2206,7 +2186,7 @@ public virtual inherited sharing class Di {
          * @throws InvalidModuleException when moduleType is null or does not name a `Di.Module`
          * @throws UnknownModuleException when the type cannot be resolved
          */
-        public virtual ModuleRef getModuleRef(final Type moduleType) {
+        public ModuleRef getModuleRef(final Type moduleType) {
             return getModuleRef(moduleType?.getName());
         }
 
@@ -2217,7 +2197,7 @@ public virtual inherited sharing class Di {
          * @return runtime handle for the module
          * @throws InvalidModuleException when module is null or conflicts with an existing registration
          */
-        public virtual ModuleRef addModule(final Module module) {
+        public ModuleRef addModule(final Module module) {
             return installModule(module, ModuleVisibility.LOCAL_MODULE, isOpen, null);
         }
 
@@ -2229,7 +2209,7 @@ public virtual inherited sharing class Di {
          * @return runtime handle for the module
          * @throws InvalidModuleException when module is null or conflicts with an existing registration
          */
-        public virtual ModuleRef addGlobalModule(final Module module) {
+        public ModuleRef addGlobalModule(final Module module) {
             return installModule(module, ModuleVisibility.GLOBAL_MODULE, isOpen, null);
         }
 
@@ -2242,7 +2222,7 @@ public virtual inherited sharing class Di {
          * @throws InvalidModuleException when the selected metadata module is inactive or invalid
          * @throws UnknownModuleException when no active metadata module matches developerName
          */
-        public virtual ModuleRef getMetadataModuleRef(final String developerName) {
+        public ModuleRef getMetadataModuleRef(final String developerName) {
             return getMetadataModuleRef(developerName, isOpen);
         }
 
@@ -2256,7 +2236,7 @@ public virtual inherited sharing class Di {
          * @throws InvalidProviderException when newProvider is null
          * @throws UnknownModuleException when no module is registered under moduleToken
          */
-        public virtual void replaceProvider(final String moduleToken, final Provider newProvider) {
+        public void replaceProvider(final String moduleToken, final Provider newProvider) {
             isTrue(moduleToken != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
             isTrue(newProvider != null, InvalidProviderException.class, NULL_PROVIDER_MESSAGE);
 
@@ -2284,7 +2264,7 @@ public virtual inherited sharing class Di {
          * @throws InvalidProviderException when newProvider is null
          * @throws UnknownModuleException when no module is registered under moduleToken
          */
-        public virtual void replaceProvider(final Type moduleToken, final Provider newProvider) {
+        public void replaceProvider(final Type moduleToken, final Provider newProvider) {
             replaceProvider(moduleToken?.getName(), newProvider);
         }
 
@@ -2362,7 +2342,7 @@ public virtual inherited sharing class Di {
          * @throws InvalidModuleException when token or newModule is null
          * @throws UnknownModuleException when no module is registered under token
          */
-        public virtual void replaceModule(final String token, final Module newModule) {
+        public void replaceModule(final String token, final Module newModule) {
             isTrue(newModule != null, InvalidModuleException.class, INVALID_MODULE_REPLACEMENT_MESSAGE);
             isTrue(token != null, InvalidModuleException.class, INVALID_MODULE_TOKEN_MESSAGE);
             isTrue(
@@ -2420,7 +2400,7 @@ public virtual inherited sharing class Di {
          * @throws InvalidModuleException when token or newModule is null
          * @throws UnknownModuleException when no module is registered under token
          */
-        public virtual void replaceModule(final Type token, final Module newModule) {
+        public void replaceModule(final Type token, final Module newModule) {
             replaceModule(token?.getName(), newModule);
         }
 
@@ -2430,7 +2410,7 @@ public virtual inherited sharing class Di {
          * @param module module instance to import
          * @return import marker
          */
-        public virtual ModuleImport import(final Module module) {
+        public ModuleImport import(final Module module) {
             return new ModuleImport(this, module);
         }
 
@@ -2440,7 +2420,7 @@ public virtual inherited sharing class Di {
          * @param token token of the module to import
          * @return import marker
          */
-        public virtual ModuleImport import(final String token) {
+        public ModuleImport import(final String token) {
             return new ModuleImport(this, token);
         }
 
@@ -2450,7 +2430,7 @@ public virtual inherited sharing class Di {
          * @param token type of the module to import
          * @return import marker
          */
-        public virtual ModuleImport import(final Type token) {
+        public ModuleImport import(final Type token) {
             return import(token?.getName());
         }
 
@@ -2460,7 +2440,7 @@ public virtual inherited sharing class Di {
          * @param developerName DeveloperName of the module to import
          * @return import marker
          */
-        public virtual ModuleImport importMetadataModule(final String developerName) {
+        public ModuleImport importMetadataModule(final String developerName) {
             return new ModuleImport(this, developerName, true);
         }
 
@@ -2472,7 +2452,7 @@ public virtual inherited sharing class Di {
          * @return this context for fluent chaining
          * @throws InvalidModuleException when the module-import graph contains a cycle
          */
-        public virtual ApplicationContext compile() {
+        public ApplicationContext compile() {
             invalidateCompiledGraph();
             Map<String, Map<String, ProviderBinding>> compiledProvidersByModuleKey = new Map<String, Map<String, ProviderBinding>>();
             globalRegistry.size();
@@ -2498,7 +2478,7 @@ public virtual inherited sharing class Di {
          * @return snapshot of the current graph
          * @see Di.ContextDescription
          */
-        public virtual ContextDescription describe() {
+        public ContextDescription describe() {
             List<ModuleDescription> modules = new List<ModuleDescription>();
             addModuleDescriptions(modules, moduleRegistry);
             addModuleDescriptions(modules, globalModuleRegistry);
@@ -2509,7 +2489,7 @@ public virtual inherited sharing class Di {
          * Clears this context: removes all registered modules, metadata overrides, and caches, and
          * starts a new lifecycle generation that invalidates previously issued handles.
          */
-        public virtual void clear() {
+        public void clear() {
             markGraphChanged();
             clearModuleContexts(moduleRegistry);
             clearModuleContexts(globalModuleRegistry);
@@ -2530,7 +2510,7 @@ public virtual inherited sharing class Di {
         }
         // </editor-fold>
 
-        protected Module resolveImport(final ModuleImport moduleImport) {
+        private Module resolveImport(final ModuleImport moduleImport) {
             if (moduleImport.cachedModule != null) {
                 return getInternalModuleRef(moduleImport.cachedModule).getModule();
             }
@@ -2540,7 +2520,7 @@ public virtual inherited sharing class Di {
             return getInternalModuleRef(moduleImport.getToken()).getModule();
         }
 
-        protected Map<String, MetadataModuleDefinition> getModuleDefinitions() {
+        private Map<String, MetadataModuleDefinition> getModuleDefinitions() {
             if (metadata.moduleDefinitionByDeveloperName != null) {
                 return metadata.moduleDefinitionByDeveloperName;
             }
@@ -2552,7 +2532,7 @@ public virtual inherited sharing class Di {
             return metadata.moduleDefinitionByDeveloperName;
         }
 
-        protected Map<String, ProviderDefinition> getProviderDefinitions() {
+        private Map<String, ProviderDefinition> getProviderDefinitions() {
             if (metadata.providerDefinitionByDeveloperName != null) {
                 return metadata.providerDefinitionByDeveloperName;
             }
@@ -2564,12 +2544,12 @@ public virtual inherited sharing class Di {
             return metadata.providerDefinitionByDeveloperName;
         }
 
-        protected ModuleRef getRegisteredModuleRef(final Module module) {
+        private ModuleRef getRegisteredModuleRef(final Module module) {
             ModuleRef ref = findRegisteredModuleRef(module);
             return ref ?? getInternalModuleRef(module);
         }
 
-        protected void assertNoCircularReexport(final String token) {
+        private void assertNoCircularReexport(final String token) {
             isTrue(
                 !moduleRegistrationPath.contains(token),
                 InvalidModuleException.class,
@@ -2579,11 +2559,11 @@ public virtual inherited sharing class Di {
             );
         }
 
-        protected void pushRegistration(final String token) {
+        private void pushRegistration(final String token) {
             moduleRegistrationPath.add(token);
         }
 
-        protected void popRegistration() {
+        private void popRegistration() {
             moduleRegistrationPath.remove(moduleRegistrationPath.size() - 1);
         }
 
@@ -3172,7 +3152,7 @@ public virtual inherited sharing class Di {
      * module.addExport('OrdersApiEndpoint');
      * Di.ModuleRef ref = Di.addModule(module);
      */
-    public virtual inherited sharing class DynamicModule extends Module {
+    public inherited sharing class DynamicModule extends Module {
         private final Set<ModuleImport> dynamicImports = new Set<ModuleImport>();
         private final Map<String, Provider> dynamicProviders = new Map<String, Provider>();
         private final Set<String> dynamicExports = new Set<String>();
@@ -3298,8 +3278,8 @@ public virtual inherited sharing class Di {
      *
      * @see Di.Provider
      */
-    public virtual inherited sharing class ProviderBuilder {
-        protected final String token;
+    public inherited sharing class ProviderBuilder {
+        private final String token;
 
         /**
          * Creates a builder for the given token.
@@ -3307,7 +3287,7 @@ public virtual inherited sharing class Di {
          * @param token provider token
          * @throws InvalidProviderException when token is null
          */
-        protected ProviderBuilder(final String token) {
+        private ProviderBuilder(final String token) {
             isTrue(token != null, InvalidProviderException.class, INVALID_PROVIDER_TOKEN_MESSAGE);
 
             this.token = token;
@@ -3319,7 +3299,7 @@ public virtual inherited sharing class Di {
          * @param type fully qualified Apex class name to instantiate
          * @return class provider for the token
          */
-        public virtual ClassProvider useClass(final String type) {
+        public ClassProvider useClass(final String type) {
             return new ClassProvider(token, type);
         }
 
@@ -3329,7 +3309,7 @@ public virtual inherited sharing class Di {
          * @param type Apex class to instantiate
          * @return class provider for the token
          */
-        public virtual ClassProvider useClass(final Type type) {
+        public ClassProvider useClass(final Type type) {
             return new ClassProvider(token, type);
         }
 
@@ -3339,7 +3319,7 @@ public virtual inherited sharing class Di {
          * @param value value to return on resolution
          * @return value provider for the token
          */
-        public virtual ValueProvider useValue(final Object value) {
+        public ValueProvider useValue(final Object value) {
             return new ValueProvider(token, value);
         }
 
@@ -3349,7 +3329,7 @@ public virtual inherited sharing class Di {
          * @param factory factory that constructs the instance
          * @return factory provider for the token
          */
-        public virtual FactoryProvider useFactory(final Factory factory) {
+        public FactoryProvider useFactory(final Factory factory) {
             return new FactoryProvider(token, factory);
         }
 
@@ -3359,7 +3339,7 @@ public virtual inherited sharing class Di {
          * @param factoryType fully qualified `Di.Factory` class name
          * @return factory provider for the token
          */
-        public virtual FactoryProvider useFactory(final String factoryType) {
+        public FactoryProvider useFactory(final String factoryType) {
             return new FactoryProvider(token, factoryType);
         }
 
@@ -3369,7 +3349,7 @@ public virtual inherited sharing class Di {
          * @param factoryType `Di.Factory` class
          * @return factory provider for the token
          */
-        public virtual FactoryProvider useFactory(final Type factoryType) {
+        public FactoryProvider useFactory(final Type factoryType) {
             return new FactoryProvider(token, factoryType);
         }
 
@@ -3379,7 +3359,7 @@ public virtual inherited sharing class Di {
          * @param existingToken target provider token
          * @return alias provider for the token
          */
-        public virtual ExistingProvider useExisting(final String existingToken) {
+        public ExistingProvider useExisting(final String existingToken) {
             return new ExistingProvider(token, existingToken);
         }
 
@@ -3389,7 +3369,7 @@ public virtual inherited sharing class Di {
          * @param existingToken target provider type
          * @return alias provider for the token
          */
-        public virtual ExistingProvider useExisting(final Type existingToken) {
+        public ExistingProvider useExisting(final Type existingToken) {
             return new ExistingProvider(token, existingToken);
         }
 
@@ -3399,7 +3379,7 @@ public virtual inherited sharing class Di {
          * @param developerName `DI_Provider__mdt` DeveloperName
          * @return metadata provider for the token
          */
-        public virtual CustomMetadataTypesProvider useMetadata(final String developerName) {
+        public CustomMetadataTypesProvider useMetadata(final String developerName) {
             return new CustomMetadataTypesProvider(token, developerName);
         }
     }
@@ -3409,8 +3389,8 @@ public virtual inherited sharing class Di {
      * must have a public no-argument constructor. If the instance implements `Di.Injectable`, it is
      * wired after construction.
      */
-    public virtual inherited sharing class ClassProvider extends Provider {
-        protected final String typeName;
+    public inherited sharing class ClassProvider extends Provider {
+        private final String typeName;
 
         /**
          * Creates a class provider binding a string token to a class name.
@@ -3492,8 +3472,8 @@ public virtual inherited sharing class Di {
      * Provider that binds a token to a literal value and returns it on every resolution. Useful for
      * configuration, feature flags, and test doubles.
      */
-    public virtual inherited sharing class ValueProvider extends Provider {
-        protected final Object value;
+    public inherited sharing class ValueProvider extends Provider {
+        private final Object value;
 
         /**
          * Creates a value provider binding a string token to a value.
@@ -3540,8 +3520,8 @@ public virtual inherited sharing class Di {
      * container and optional runtime arguments, so it can resolve collaborators and build
      * configured instances.
      */
-    public virtual inherited sharing class FactoryProvider extends Provider {
-        protected final Factory factory;
+    public inherited sharing class FactoryProvider extends Provider {
+        private final Factory factory;
 
         /**
          * Creates a factory provider from a factory instance.
@@ -3629,8 +3609,8 @@ public virtual inherited sharing class Di {
      * executable provider: the target's scope and instance behavior apply. Resolve aliases through
      * the container, not by calling `resolve()` directly.
      */
-    public virtual inherited sharing class ExistingProvider extends Provider {
-        protected final String existing;
+    public inherited sharing class ExistingProvider extends Provider {
+        private final String existing;
 
         /**
          * Creates an alias from a string token to a target token.
@@ -3707,8 +3687,8 @@ public virtual inherited sharing class Di {
      * `MetadataSource`) by DeveloperName at resolution time, then delegates to the matching class,
      * value, or factory provider. Its scope follows the metadata configuration.
      */
-    public virtual inherited sharing class CustomMetadataTypesProvider extends Provider {
-        protected final String developerName;
+    public inherited sharing class CustomMetadataTypesProvider extends Provider {
+        private final String developerName;
 
         // <editor-fold desc="Provider API">
         /**
@@ -3790,7 +3770,7 @@ public virtual inherited sharing class Di {
             return ProviderKind.METADATA_PROVIDER;
         }
 
-        protected Scope getScope(final ApplicationContext context) {
+        private Scope getScope(final ApplicationContext context) {
             ProviderDefinition definition = context.getProviderDefinitions().get(developerName);
             if (String.isBlank(definition?.scope)) {
                 return super.getScope();
@@ -3798,7 +3778,7 @@ public virtual inherited sharing class Di {
             return parseMetadataScope(definition);
         }
 
-        protected String getExisting(final ApplicationContext context) {
+        private String getExisting(final ApplicationContext context) {
             ProviderDefinition definition = getDefinition(context);
             return definition.type == 'Existing' ? definition.value : null;
         }
@@ -3848,8 +3828,8 @@ public virtual inherited sharing class Di {
      *
      * @see Di.ScopeRef
      */
-    public virtual class ModuleRef extends Container {
-        protected String registryToken;
+    public inherited sharing class ModuleRef extends Container {
+        private String registryToken;
 
         private ModuleRef(final ApplicationContext context, final Module module, final ModuleVisibility visibility) {
             super(context, null, module, visibility);
@@ -3864,7 +3844,7 @@ public virtual inherited sharing class Di {
          *
          * @return new scope handle
          */
-        public virtual ScopeRef createScope() {
+        public ScopeRef createScope() {
             return createScope(new ScopeContext());
         }
 
@@ -3876,7 +3856,7 @@ public virtual inherited sharing class Di {
          * @return new scope handle
          * @throws InvalidScopeException when scopeContext is null
          */
-        public virtual ScopeRef createScope(final ScopeContext scopeContext) {
+        public ScopeRef createScope(final ScopeContext scopeContext) {
             isTrue(scopeContext != null, InvalidScopeException.class, NULL_SCOPE_CONTEXT_MESSAGE);
             validateContextGeneration();
             return new ScopeRef(this, scopeContext);
@@ -3890,7 +3870,7 @@ public virtual inherited sharing class Di {
          * @param args runtime arguments for a factory provider, or null
          * @return resolved instance bound to token
          */
-        public virtual override Object resolve(final String token, final Object args) {
+        public override Object resolve(final String token, final Object args) {
             return super.resolve(token, args);
         }
 
@@ -3900,13 +3880,13 @@ public virtual inherited sharing class Di {
          *
          * @throws InvalidContextException when the handle belongs to a cleared lifecycle generation
          */
-        public virtual void clearCache() {
+        public void clearCache() {
             validateContextGeneration();
             clearSingletons();
         }
         // </editor-fold>
 
-        protected virtual override Object getInstance(final Provider provider, final Object args) {
+        protected override Object getInstance(final Provider provider, final Object args) {
             Scope providerScope = getProviderScope(provider);
             isTrue(
                 providerScope !== Scope.SCOPED,
@@ -3953,14 +3933,6 @@ public virtual inherited sharing class Di {
             super.validateAndAddPath(token);
         }
 
-        protected override Object getInternal(final String token, final Object args) {
-            return super.getInternal(token, args);
-        }
-
-        protected override Object resolveInternal(final String token, final Object args) {
-            return super.resolveInternal(token, args);
-        }
-
         private Boolean isGlobal() {
             return getVisibility() === ModuleVisibility.GLOBAL_MODULE;
         }
@@ -3998,7 +3970,7 @@ public virtual inherited sharing class Di {
      * Di.ScopeRef salesScope = salesRef.createScope(unitOfWork);
      * Di.ScopeRef accountsScope = accountsRef.createScope(unitOfWork);
      */
-    public virtual class ScopeContext {
+    public inherited sharing class ScopeContext {
         private final Map<String, Map<String, Object>> scopedCacheByOwner = new Map<String, Map<String, Object>>();
         private ApplicationContext context;
         private Integer graphRevision;
@@ -4008,7 +3980,7 @@ public virtual inherited sharing class Di {
         /**
          * Resets the shared unit of work: discards all `SCOPED` instances cached in this context.
          */
-        public virtual void clear() {
+        public void clear() {
             scopedCacheByOwner.clear();
             graphRevision = context?.graphRevision;
             generation++;
@@ -4077,12 +4049,12 @@ public virtual inherited sharing class Di {
      *
      * @see Di.ScopeContext
      */
-    public virtual class ScopeRef extends Container {
-        protected final ScopeContext scopeContext;
-        protected final Map<String, ScopeRef> ownerScopes = new Map<String, ScopeRef>();
+    public inherited sharing class ScopeRef extends Container {
+        private final ScopeContext scopeContext;
+        private final Map<String, ScopeRef> ownerScopes = new Map<String, ScopeRef>();
         private Integer scopeGeneration;
 
-        protected ScopeRef(final ModuleRef parent, final ScopeContext scopeContext) {
+        private ScopeRef(final ModuleRef parent, final ScopeContext scopeContext) {
             super(parent.context, parent, parent.getModule(), parent.getVisibility());
             adoptRuntime(parent);
             this.scopeContext = scopeContext;
@@ -4100,17 +4072,11 @@ public virtual inherited sharing class Di {
          * @return cached instance bound to token
          */
         public override Object get(final String token, final Object args) {
-            validateContextGeneration();
-            Boolean isTopLevelResolution = !inCall;
-            if (isTopLevelResolution) {
-                synchronizeScopeContext();
-            }
+            Boolean isTopLevelResolution = beginScopedResolution();
             try {
                 return super.get(token, args);
             } finally {
-                if (isTopLevelResolution) {
-                    scopeContext.acceptCurrentRevision();
-                }
+                endScopedResolution(isTopLevelResolution);
             }
         }
 
@@ -4123,17 +4089,11 @@ public virtual inherited sharing class Di {
          * @return resolved instance bound to token
          */
         public override Object resolve(final String token, final Object args) {
-            validateContextGeneration();
-            Boolean isTopLevelResolution = !inCall;
-            if (isTopLevelResolution) {
-                synchronizeScopeContext();
-            }
+            Boolean isTopLevelResolution = beginScopedResolution();
             try {
                 return super.resolve(token, args);
             } finally {
-                if (isTopLevelResolution) {
-                    scopeContext.acceptCurrentRevision();
-                }
+                endScopedResolution(isTopLevelResolution);
             }
         }
 
@@ -4145,17 +4105,11 @@ public virtual inherited sharing class Di {
          * @return cached instance bound to token, or null when token is not visible
          */
         public override Object tryGet(final String token) {
-            validateContextGeneration();
-            Boolean isTopLevelResolution = !inCall;
-            if (isTopLevelResolution) {
-                synchronizeScopeContext();
-            }
+            Boolean isTopLevelResolution = beginScopedResolution();
             try {
                 return super.tryGet(token);
             } finally {
-                if (isTopLevelResolution) {
-                    scopeContext.acceptCurrentRevision();
-                }
+                endScopedResolution(isTopLevelResolution);
             }
         }
 
@@ -4168,17 +4122,11 @@ public virtual inherited sharing class Di {
          * @return resolved instance bound to token, or null when token is not visible
          */
         public override Object tryResolve(final String token, final Object args) {
-            validateContextGeneration();
-            Boolean isTopLevelResolution = !inCall;
-            if (isTopLevelResolution) {
-                synchronizeScopeContext();
-            }
+            Boolean isTopLevelResolution = beginScopedResolution();
             try {
                 return super.tryResolve(token, args);
             } finally {
-                if (isTopLevelResolution) {
-                    scopeContext.acceptCurrentRevision();
-                }
+                endScopedResolution(isTopLevelResolution);
             }
         }
 
@@ -4188,7 +4136,7 @@ public virtual inherited sharing class Di {
          *
          * @throws InvalidContextException when the handle belongs to a cleared lifecycle generation
          */
-        public virtual void clearCache() {
+        public void clearCache() {
             validateContextGeneration();
             scopeContext.clear();
             ownerScopes.clear();
@@ -4196,7 +4144,7 @@ public virtual inherited sharing class Di {
         }
         // </editor-fold>
 
-        protected virtual override Object getInstance(final Provider provider, final Object args) {
+        protected override Object getInstance(final Provider provider, final Object args) {
             if (getProviderScope(provider) !== Scope.SCOPED) {
                 return parent.getInstance(provider, args);
             }
@@ -4214,14 +4162,6 @@ public virtual inherited sharing class Di {
                 scopeContext.remove(ownerModule, key);
                 throw e;
             }
-        }
-
-        protected override Object getInternal(final String token, final Object args) {
-            return super.getInternal(token, args);
-        }
-
-        protected override Object resolveInternal(final String token, final Object args) {
-            return super.resolveInternal(token, args);
         }
 
         protected override Boolean hasInCache(final String token) {
@@ -4250,6 +4190,21 @@ public virtual inherited sharing class Di {
         }
 
         // <editor-fold desc="Helpers">
+        private Boolean beginScopedResolution() {
+            validateContextGeneration();
+            Boolean isTopLevelResolution = !inCall;
+            if (isTopLevelResolution) {
+                synchronizeScopeContext();
+            }
+            return isTopLevelResolution;
+        }
+
+        private void endScopedResolution(final Boolean isTopLevelResolution) {
+            if (isTopLevelResolution) {
+                scopeContext.acceptCurrentRevision();
+            }
+        }
+
         private void synchronizeScopeContext() {
             scopeContext.synchronize();
             if (scopeGeneration != scopeContext.generation) {
@@ -4267,18 +4222,18 @@ public virtual inherited sharing class Di {
      *
      * @see Di.Module
      */
-    public virtual class ModuleImport {
-        protected ApplicationContext context;
-        protected final String token;
-        protected Boolean isEager = false;
+    public inherited sharing class ModuleImport {
+        private final String token;
         private final Boolean metadataImport;
-        protected Module cachedModule;
+        private final ApplicationContext context;
+        private final Module cachedModule;
+        private Boolean isEager = false;
 
-        protected ModuleImport(final String token) {
+        private ModuleImport(final String token) {
             this(DEFAULT_CONTEXT, token, false);
         }
 
-        protected ModuleImport(final ApplicationContext context, final String token) {
+        private ModuleImport(final ApplicationContext context, final String token) {
             this(context, token, false);
         }
 
@@ -4290,11 +4245,11 @@ public virtual inherited sharing class Di {
             this.metadataImport = metadataImport;
         }
 
-        protected ModuleImport(final Module module) {
+        private ModuleImport(final Module module) {
             this(DEFAULT_CONTEXT, module);
         }
 
-        protected ModuleImport(final ApplicationContext context, final Module module) {
+        private ModuleImport(final ApplicationContext context, final Module module) {
             isTrue(module != null, InvalidModuleException.class, NULL_MODULE_MESSAGE);
 
             this.context = context ?? DEFAULT_CONTEXT;
@@ -4309,7 +4264,7 @@ public virtual inherited sharing class Di {
          *
          * @return this marker for fluent chaining
          */
-        public virtual ModuleImport immediately() {
+        public ModuleImport immediately() {
             isEager = true;
             return this;
         }
@@ -4319,7 +4274,7 @@ public virtual inherited sharing class Di {
          *
          * @return the imported module
          */
-        public virtual Module resolve() {
+        public Module resolve() {
             return context.resolveImport(this);
         }
 
@@ -4373,64 +4328,64 @@ public virtual inherited sharing class Di {
     /**
      * Thrown when a module token, instance, or registration is invalid, missing, or conflicting.
      */
-    public virtual class InvalidModuleException extends DiException {
+    public class InvalidModuleException extends DiException {
     }
 
     /**
      * Thrown when a module token does not resolve to a registered or instantiable module.
      */
-    public virtual class UnknownModuleException extends DiException {
+    public class UnknownModuleException extends DiException {
     }
 
     /**
      * Thrown when no visible provider matches a requested token.
      */
-    public virtual class UnknownProviderException extends DiException {
+    public class UnknownProviderException extends DiException {
     }
 
     /**
      * Thrown when a module exports or re-exports a token it does not provide.
      */
-    public virtual class UnknownExportException extends DiException {
+    public class UnknownExportException extends DiException {
     }
 
     /**
      * Thrown when a provider is misconfigured or misused, including ambiguous bindings and runtime
      * arguments passed to a non-factory provider.
      */
-    public virtual class InvalidProviderException extends DiException {
+    public class InvalidProviderException extends DiException {
     }
 
     /**
      * Thrown when a class or factory cannot be instantiated or is not the expected type.
      */
-    public virtual class InvalidClassException extends DiException {
+    public class InvalidClassException extends DiException {
     }
 
     /**
      * Thrown on scope violations, such as a null scope, getting a prototype, or resolving a scoped
      * provider at the module root.
      */
-    public virtual class InvalidScopeException extends DiException {
+    public class InvalidScopeException extends DiException {
     }
 
     /**
      * Thrown when a handle from a cleared or superseded lifecycle generation is used.
      */
-    public virtual class InvalidContextException extends DiException {
+    public class InvalidContextException extends DiException {
     }
 
     /**
      * Thrown when an unresolvable circular dependency is detected during resolution or compilation.
      */
-    public virtual class CircularDependencyException extends DiException {
+    public class CircularDependencyException extends DiException {
     }
 
-    private class BindingExplanation {
+    private inherited sharing class BindingExplanation {
+        private final List<String> conflictingModules = new List<String>();
         private ResolutionStatus status = ResolutionStatus.NOT_FOUND;
         private ResolutionSource source = ResolutionSource.NONE;
         private ProviderBinding binding;
-        private final List<String> conflictingModules = new List<String>();
 
         private void resolve(final ResolutionSource source, final ProviderBinding binding) {
             status = ResolutionStatus.RESOLVED;
@@ -4459,7 +4414,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    private class ProviderBinding {
+    private inherited sharing class ProviderBinding {
         private final Provider provider;
         private final ModuleRef owner;
 
@@ -4477,7 +4432,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    private class ModuleDefinition {
+    private inherited sharing class ModuleDefinition {
         private final Map<String, Provider> providers;
         private final Set<String> exports;
         private final Set<ModuleImport> imports;
@@ -4496,7 +4451,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    private class MetadataOverrideSource implements MetadataSource {
+    private inherited sharing class MetadataOverrideSource implements MetadataSource {
         private final MetadataSource delegate;
         private Map<String, MetadataModuleDefinition> modules;
         private Map<String, ProviderDefinition> providers;
@@ -4524,7 +4479,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    private class MetadataState {
+    private inherited sharing class MetadataState {
         private final Map<String, String> moduleTokenByAlias = new Map<String, String>();
         private MetadataSource source;
         private Map<String, MetadataModuleDefinition> moduleDefinitionByDeveloperName;
@@ -4535,7 +4490,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    private class ResolutionContext {
+    private inherited sharing class ResolutionContext {
         private final Boolean inCall;
         private final List<String> resolutionPath;
 
@@ -4545,7 +4500,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    private class ModuleRuntime {
+    private inherited sharing class ModuleRuntime {
         private final Module module;
         private final ModuleVisibility visibility;
         private final Set<String> metadataAliases = new Set<String>();
@@ -4579,7 +4534,7 @@ public virtual inherited sharing class Di {
         }
     }
 
-    private class ResolvedPlan {
+    private inherited sharing class ResolvedPlan {
         private final Provider provider;
         private final ModuleRef owner;
         private final Scope scope;
