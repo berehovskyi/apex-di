@@ -33,7 +33,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22.x
+          node-version: 20.x
 
       - name: Install Global Dependencies
         run: npm i -g @salesforce/cli
@@ -51,7 +51,9 @@ jobs:
         run: npm run sfca:check
 
       - name: Create Auth File
-        run: echo ${{ secrets.SF_DEV_HUB_AUTH_URL }} > authFile
+        env:
+          SF_DEV_HUB_AUTH_URL: ${{ secrets.SF_DEV_HUB_AUTH_URL }}
+        run: printf '%s' "$SF_DEV_HUB_AUTH_URL" > authFile
 
       - name: Authorize DevHub
         run: sf org login sfdx-url -f authFile -d
@@ -148,4 +150,4 @@ jobs:
 
       - name: Delete Auth File
         if: always()
-        run: rm authFile
+        run: rm -f authFile
