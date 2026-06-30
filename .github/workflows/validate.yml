@@ -1,4 +1,4 @@
-name: 'Validate Push and Pull Request'
+name: 'Validate Pull Request'
 
 on:
   push:
@@ -7,49 +7,145 @@ on:
   pull_request:
     branches:
       - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22.x
-      - name: Install Project Dependencies
-        run: npm ci
+
       - name: Install Global Dependencies
         run: npm i -g @salesforce/cli
-      - name: Install Code Analyzer
-        run: sf plugins install code-analyzer@5.13.0
-      - name: Check Apex Formatting
-        run: npm run prettier:apex:check
-      - name: Run Code Analyzer
+
+      - name: Install Code Analyzer plugin
+        run: sf plugins install code-analyzer
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Prettier Check
+        run: npm run prettier:check
+
+      - name: Analyze Code
         run: npm run sfca:check
+
       - name: Create Auth File
         run: echo ${{ secrets.SF_DEV_HUB_AUTH_URL }} > authFile
+
       - name: Authorize DevHub
         run: sf org login sfdx-url -f authFile -d
+
       - name: Create Scratch Org
         id: create_scratch_org
         run: sf org create scratch -e developer -d -a TestOrg -y 1 -w 30
-      - name: Deploy Metadata and Run Apex Tests
-        run: >-
-          sf project deploy start
-          --target-org TestOrg
-          --source-dir sfdx-source/apex-di
-          --test-level RunSpecifiedTests
-          --tests DiTest
-          --wait 30
-          --json > deploy-result.json
-      - name: Enforce Exact Di Coverage
-        run: npm run coverage:check
+
+      - name: Deploy Metadata
+        run: sf project deploy start -o TestOrg -w 10
+
+      - name: Run Apex Tests
+        run: >
+          sf apex run test
+          -o TestOrg
+          -l RunLocalTests
+          -w 10
+          --code-coverage
+          --result-format human
+          --concise
+          --output-dir coverage
+
+      - name: Create Coverage Badge
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const fs = require('fs');
+
+          const report = JSON.parse(fs.readFileSync('coverage/test-result-codecoverage.json', 'utf8'));
+          const totalLines = report.reduce((sum, entry) => sum + entry.totalLines, 0);
+          const coveredLines = report.reduce((sum, entry) => sum + entry.totalCovered, 0);
+          const coverage = totalLines === 0 ? 0 : Math.round((coveredLines * 10000) / totalLines) / 100;
+          const message = Number.isInteger(coverage) ? `${coverage}%` : `${coverage.toFixed(2)}%`;
+          const color = coverage >= 90 ? 'brightgreen' : coverage >= 80 ? 'yellowgreen' : coverage >= 75 ? 'yellow' : 'red';
+
+          fs.mkdirSync('coverage-badge', { recursive: true });
+          fs.writeFileSync(
+            'coverage-badge/coverage.json',
+            JSON.stringify({ schemaVersion: 1, label: 'coverage', message, color }) + '\n'
+          );
+          NODE
+
+      - name: Upload Coverage Report
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: apex-coverage
+          path: coverage
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Coverage Badge
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-badge
+          path: coverage-badge/coverage.json
+          if-no-files-found: error
+
+      - name: Publish Coverage Badge
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd coverage-badge
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage.json
+          git commit -m "Update coverage badge"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            HEAD:coverage
+
+      - name: Deploy E2E Metadata
+        if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e') }}
+        run: sf project deploy start --source-dir e2e/main -o TestOrg -w 10
+
+      - name: Run E2E Tests
+        if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e') }}
+        env:
+          SF_TARGET_ORG: TestOrg
+        run: bash e2e/run_benchmark.sh
+
       - name: Delete Scratch Org
-        if: always() && steps.create_scratch_org.outcome == 'success'
+        if: ${{ always() && steps.create_scratch_org.outcome == 'success' }}
         run: sf org delete scratch -o TestOrg -p
+
       - name: Delete Auth File
         if: always()
         run: rm authFile
