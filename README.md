@@ -12,6 +12,7 @@ Apex DI lets you organize application code into modules, bind tokens to provider
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Dependency Injection](#dependency-injection)
 - [Modules](#modules)
     - [Feature Modules](#feature-modules)
     - [Imports](#imports)
@@ -32,6 +33,7 @@ Apex DI lets you organize application code into modules, bind tokens to provider
     - [Metadata Providers](#metadata-providers)
     - [Metadata Sources](#metadata-sources)
 - [Dependency Resolution](#dependency-resolution)
+    - [ModuleRef](#moduleref)
     - [get()](#get)
     - [resolve()](#resolve)
     - [tryGet() and tryResolve()](#tryget-and-tryresolve)
@@ -104,6 +106,58 @@ public with sharing class AccountController {
 ```
 
 `Di.getModuleRef(...)` uses the default [application context](#application-context). This is the simplest entry-point pattern for controllers, trigger handlers, and other top-level Apex code.
+
+## Dependency Injection
+
+**Dependency injection** is a way to build objects without making each object create all of its own collaborators. Instead of a service deciding which repository, gateway, logger, or configuration value to instantiate, the application declares those dependencies in one place and asks a container to assemble them.
+
+```mermaid
+flowchart TB
+    subgraph WithoutDI["Without dependency injection"]
+        ServiceA["Service"] -->|creates| ConcreteA["Concrete dependency"]
+    end
+
+    subgraph WithDI["With dependency injection"]
+        Composer["Composition boundary"] -->|creates| ConcreteB["Concrete dependency"]
+        Composer -->|passes in| ServiceB["Service"]
+        ServiceB -->|uses contract| Contract["Dependency contract"]
+        ConcreteB -. implements .-> Contract
+    end
+```
+
+Without DI, a service tends to hard-code its dependencies:
+
+```apex
+public class AccountService {
+    private AccountRepository repository = new AccountRepository();
+}
+```
+
+With DI, the module owns that wiring:
+
+```apex
+public override Set<Di.Provider> providers() {
+    return new Set<Di.Provider>{
+        provide(IAccountRepository.class).useClass(AccountRepository.class),
+        provide(IAccountService.class).useClass(AccountService.class)
+    };
+}
+```
+
+That shift matters in Apex because controllers, trigger handlers, Queueables, and batch jobs often sit at hard-to-test entry points. DI keeps those entry points small, moves wiring into modules, and lets tests replace a provider or module without rewriting production code.
+
+> [!IMPORTANT]
+> Dependency injection is not mainly about avoiding `new`. It is about moving construction decisions to a composition boundary, so application code depends on stable contracts instead of hard-coded concrete classes.
+
+In Apex DI, the main pieces are:
+
+- **Modules** group related providers and choose what they export.
+- **Providers** describe how a token is created: class, value, factory, alias, or metadata.
+- **ModuleRef** resolves providers from a module-aware container.
+- **ApplicationContext** owns a graph when you need isolation, tests, or custom metadata sources.
+
+> [!TIP]
+> Treat controllers, trigger handlers, Queueables, batches, and tests as composition boundaries. They should acquire a `ModuleRef`, call application services, and avoid owning service wiring themselves.
 
 ## Modules
 
@@ -396,6 +450,9 @@ ILogger logger = (ILogger) ref.get(ILogger.class);
 
 String tokens are exact and case-sensitive. `provide('Foo')` and `get('foo')` are different tokens. Prefer `Type` tokens for Apex classes and interfaces. Use string tokens for configuration keys or deliberate aliases.
 
+> [!NOTE]
+> The provider token is the lookup key. The implementation is the thing created for that key: `provide(IAccountService.class).useClass(AccountService.class)` resolves by `IAccountService`, not by `AccountService`.
+
 ### Class Providers
 
 `useClass()` binds a token to a class. The class must be instantiable by Apex.
@@ -499,7 +556,9 @@ The framework core consumes normalized `MetadataModuleDefinition` and `ProviderD
 
 ## Dependency Resolution
 
-`Di.ModuleRef` is the main runtime handle. It represents a registered module inside an application context and exposes provider resolution, injection, scopes, diagnostics, and module inspection.
+### ModuleRef
+
+`Di.ModuleRef` is the runtime handle for a registered module. A `Di.Module` declares providers, imports, exports, and re-exports; a `ModuleRef` is what application code uses to resolve providers from that module's visibility context.
 
 ```apex
 Di.ModuleRef ref = Di.getModuleRef(AppModule.class);
@@ -507,6 +566,9 @@ OrderService orders = (OrderService) ref.get(OrderService.class);
 ```
 
 Do not construct `ModuleRef` directly. Get it from `Di` or from an explicit `ApplicationContext`.
+
+> [!NOTE]
+> A `ModuleRef` is module-scoped, not a generic global injector. Imported providers still resolve in their owner module's context, so private dependencies and singleton caches stay owner-aware.
 
 ### get()
 
@@ -564,6 +626,8 @@ public class OrderService implements Di.Injectable {
 ```
 
 This two-phase instantiation supports circular object references between class providers that are wired through `inject()`.
+
+`Di.Container` is the limited resolver passed into `Di.Injectable.inject()` and `Di.Factory.newInstance()`. Use it inside those callbacks to request dependencies; application entry points should use `ModuleRef` instead.
 
 ### Manual Injection
 
@@ -686,6 +750,9 @@ flowchart TD
 ### Singleton Scope
 
 Singleton is the default. A singleton is cached by the module that owns the provider, not by the module that consumes it. If two modules import the same exported singleton, both receive the same owner-cached instance.
+
+> [!IMPORTANT]
+> Singleton means one instance per owning module runtime in the current Apex transaction. It is not a cross-transaction cache.
 
 ### Prototype Scope
 
